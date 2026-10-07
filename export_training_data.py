@@ -229,5 +229,18 @@ def export_data(memory_path="ingatan_shiro.json", base_output_dir="training_data
     print("🚀 Dataset Chat & Vision BERHASIL DIPISAH dan siap digunakan untuk Fine-Tuning!")
     print("=" * 60)
 
+    # 4. Sinkronkan otomatis ke Google Drive jika Drive aktif
+    import shutil
+    drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
+    if not drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):
+        drive_dir = "/content/drive/MyDrive/Shiro_Memory"
+    if drive_dir and os.path.exists(drive_dir):
+        try:
+            drive_training = os.path.join(drive_dir, "training_data")
+            shutil.copytree(base_output_dir, drive_training, dirs_exist_ok=True)
+            print(f"✓ Dataset training otomatis disinkronkan ke Google Drive: {drive_training}")
+        except Exception as e_drv:
+            print(f"Warning: Gagal sync dataset ke Drive: {e_drv}")
+
 if __name__ == "__main__":
     export_data()

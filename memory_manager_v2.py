@@ -195,6 +195,93 @@ class AdvancedMemoryManager:
             except Exception as e:
                 print(f"Warning: Could not load memory: {e}")
                 print("Starting with fresh memory")
+        
+        # Otomatis baca data training (Alpaca/ShareGPT) dari folder training_data atau Google Drive
+        self.load_training_data()
+    
+    def load_training_data(self, training_dir: str = "training_data"):
+        """Load and integrate fine-tuning dataset / training pairs into Shiro's active learned patterns"""
+        # Pulihkan dataset training dari Google Drive jika ada di Drive dan lokal kosong/lama
+        if self.drive_dir and os.path.exists(self.drive_dir):
+            drive_train = os.path.join(self.drive_dir, "training_data")
+            if os.path.exists(drive_train):
+                if not os.path.exists(training_dir) or len(os.listdir(training_dir)) == 0:
+                    try:
+                        shutil.copytree(drive_train, training_dir, dirs_exist_ok=True)
+                        print(f"[Memory] Dataset training dipulihkan dari Google Drive: {drive_train}")
+                    except Exception as e_cp:
+                        print(f"Warning: Gagal menyalin dataset dari Drive: {e_cp}")
+
+        if not os.path.exists(training_dir):
+            return
+
+        loaded_count = 0
+        existing_users = {p.get("user", "").strip().lower() for p in getattr(self, "learned_patterns", [])}
+
+        candidate_files = [
+            os.path.join(training_dir, "shiro_alpaca_train.json"),
+            os.path.join(training_dir, "chat", "shiro_alpaca_train.json"),
+            os.path.join(training_dir, "vision", "shiro_vision_alpaca.json"),
+            os.path.join(training_dir, "shiro_sharegpt_train.json"),
+            os.path.join(training_dir, "chat", "shiro_sharegpt_train.json"),
+            os.path.join(training_dir, "vision", "shiro_vision_sharegpt.json"),
+        ]
+
+        for filepath in candidate_files:
+            if not os.path.exists(filepath):
+                continue
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    samples = json.load(f)
+                if not isinstance(samples, list):
+                    continue
+                for item in samples:
+                    u, a, img = None, None, None
+                    # Format Alpaca
+                    if "instruction" in item and "output" in item:
+                        u = (item.get("instruction") or "").strip()
+                        a = (item.get("output") or "").strip()
+                        img = item.get("image")
+                    # Format ShareGPT
+                    elif "conversations" in item:
+                        convs = item.get("conversations", [])
+                        for i in range(len(convs) - 1):
+                            if convs[i].get("from") in ["human", "user"] and convs[i+1].get("from") in ["gpt", "assistant"]:
+                                u = convs[i].get("value", "").strip()
+                                a = convs[i+1].get("value", "").strip()
+                                img = item.get("image")
+                                break
+                    if not u or not a:
+                        continue
+                    # Bersihkan tag <image> jika ada di teks
+                    u_clean = re.sub(r'<image>\s*', '', u).strip()
+                    if not u_clean:
+                        continue
+                    u_lower = u_clean.lower()
+                    if u_lower not in existing_users:
+                        keywords = list(set(re.findall(r'\b\w{3,}\b', u_lower)))
+                        pattern = {
+                            "user": u_clean,
+                            "assistant": a,
+                            "keywords": keywords,
+                            "quality": 1.0,
+                            "timestamp": datetime.now().isoformat(),
+                            "source": "training_data"
+                        }
+                        if img:
+                            pattern["image"] = img
+                        self.learned_patterns.append(pattern)
+                        existing_users.add(u_lower)
+                        loaded_count += 1
+            except Exception as e:
+                print(f"Warning: Gagal memuat file training {filepath}: {e}")
+
+        # Batas maksimal pola pembelajaran diperluas hingga 500
+        if len(self.learned_patterns) > 500:
+            self.learned_patterns = self.learned_patterns[-500:]
+
+        if loaded_count > 0:
+            print(f"[Memory] [Training] {loaded_count} data training baru berhasil dimuat & diintegrasikan ke memori aktif Shiro!")
     
     def _migrate_from_v1(self, old_data: Dict):
         """Migrate from v1 format to v2"""

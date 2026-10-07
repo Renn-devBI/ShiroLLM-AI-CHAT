@@ -267,6 +267,33 @@ def init_vision_handler(model_path):
 
     return None
 
+def find_active_lora_path():
+    """
+    Mendeteksi file bobot LoRA adapter (.gguf atau .bin) hasil fine-tuning jika tersedia:
+    - Di environment variable SHIRO_LORA_PATH
+    - Di folder lora/
+    - Di folder model/lora/
+    - Di Google Drive /content/drive/MyDrive/Shiro_Memory/lora/
+    """
+    custom_lora = os.environ.get("SHIRO_LORA_PATH", "").strip()
+    if custom_lora and os.path.exists(custom_lora):
+        return custom_lora
+
+    drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
+    if not drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):
+        drive_dir = "/content/drive/MyDrive/Shiro_Memory"
+
+    search_dirs = ["lora", os.path.join(MODEL_DIR, "lora")]
+    if drive_dir and os.path.exists(os.path.join(drive_dir, "lora")):
+        search_dirs.append(os.path.join(drive_dir, "lora"))
+
+    for d in search_dirs:
+        if os.path.exists(d):
+            lora_files = sorted(glob.glob(os.path.join(d, "*.gguf")) + glob.glob(os.path.join(d, "*.bin")))
+            if lora_files:
+                return lora_files[0]
+    return None
+
 # Model configuration
 def load_model_config():
     """Load model config, return dict dengan available models & current model"""
@@ -1631,19 +1658,33 @@ def switch_model():
                 llama_kwargs["chat_handler"] = vision_handler
             else:
                 llama_kwargs["chat_format"] = detect_chat_format(model_path)
+            
+            active_lora = find_active_lora_path()
+            if active_lora:
+                llama_kwargs["lora_path"] = active_lora
+                print(f"🎯 LoRA Adapter Training Terdeteksi & Dimuat: {os.path.basename(active_lora)}")
                 
             try:
                 new_llm = Llama(**llama_kwargs)
             except Exception as load_err:
-                if vision_handler:
-                    print(f"⚠️ Gagal memuat dengan Vision Chat Handler: {load_err}")
-                    print("🔄 Mencoba fallback memuat model dalam mode teks standar...")
-                    llama_kwargs.pop("chat_handler", None)
-                    llama_kwargs["chat_format"] = detect_chat_format(model_path)
-                    new_llm = Llama(**llama_kwargs)
-                    vision_handler = None
-                else:
-                    raise load_err
+                # Jika gagal saat memakai LoRA, coba fallback tanpa LoRA
+                if "lora_path" in llama_kwargs:
+                    print(f"⚠️ Gagal memuat LoRA adapter ({load_err}). Mencoba tanpa LoRA...")
+                    llama_kwargs.pop("lora_path", None)
+                    try:
+                        new_llm = Llama(**llama_kwargs)
+                    except Exception as retry_err:
+                        load_err = retry_err
+                if 'new_llm' not in locals():
+                    if vision_handler:
+                        print(f"⚠️ Gagal memuat dengan Vision Chat Handler: {load_err}")
+                        print("🔄 Mencoba fallback memuat model dalam mode teks standar...")
+                        llama_kwargs.pop("chat_handler", None)
+                        llama_kwargs["chat_format"] = detect_chat_format(model_path)
+                        new_llm = Llama(**llama_kwargs)
+                        vision_handler = None
+                    else:
+                        raise load_err
             
             # Update global llm instance
             llm = new_llm
@@ -1717,17 +1758,31 @@ if __name__ == '__main__':
         else:
             llama_kwargs["chat_format"] = detect_chat_format(current_model_path)
             
+        active_lora = find_active_lora_path()
+        if active_lora:
+            llama_kwargs["lora_path"] = active_lora
+            print(f"🎯 LoRA Adapter Training Terdeteksi & Dimuat: {os.path.basename(active_lora)}")
+            
         try:
             llm = Llama(**llama_kwargs)
         except Exception as startup_vis_err:
-            if vision_handler:
-                print(f"⚠️ Gagal memuat Vision Handler saat startup ({startup_vis_err}). Fallback ke mode teks standar...")
-                llama_kwargs.pop("chat_handler", None)
-                llama_kwargs["chat_format"] = detect_chat_format(current_model_path)
-                llm = Llama(**llama_kwargs)
-                vision_handler = None
-            else:
-                raise startup_vis_err
+            if "lora_path" in llama_kwargs:
+                print(f"⚠️ Gagal memuat LoRA adapter saat startup ({startup_vis_err}). Mencoba tanpa LoRA...")
+                llama_kwargs.pop("lora_path", None)
+                try:
+                    llm = Llama(**llama_kwargs)
+                    startup_vis_err = None
+                except Exception as retry_err:
+                    startup_vis_err = retry_err
+            if startup_vis_err:
+                if vision_handler:
+                    print(f"⚠️ Gagal memuat Vision Handler saat startup ({startup_vis_err}). Fallback ke mode teks standar...")
+                    llama_kwargs.pop("chat_handler", None)
+                    llama_kwargs["chat_format"] = detect_chat_format(current_model_path)
+                    llm = Llama(**llama_kwargs)
+                    vision_handler = None
+                else:
+                    raise startup_vis_err
         model_name = os.path.basename(current_model_path)
         print(f"✓ Model loaded: {model_name}")
         print(f"✓ Context Window: {CONTEXT_SIZE} tokens")
