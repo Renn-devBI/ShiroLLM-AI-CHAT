@@ -199,10 +199,15 @@ class AdvancedMemoryManager:
                     
                     loaded_patterns = data.get("learned_patterns", getattr(self, "learned_patterns", []))
                     clean_patterns = []
+                    seen_asst = set()
                     for p in loaded_patterns:
-                        a_txt = p.get("assistant", "").lower()
+                        a_txt = p.get("assistant", "").lower().strip()
                         if "<think>" in a_txt or "</think>" in a_txt or "let me break this down" in a_txt or "possible responses" in a_txt:
                             continue
+                        # Hindari duplikasi pola respon yang identik
+                        if a_txt in seen_asst:
+                            continue
+                        seen_asst.add(a_txt)
                         clean_patterns.append(p)
                     self.learned_patterns = clean_patterns
                     self.short_term_history = data.get("short_term_history", [])
@@ -1145,6 +1150,16 @@ class AdvancedMemoryManager:
                 and "let me break this down" not in p.get("assistant", "").lower()
                 and not any(x in p.get("assistant", "").lower() for x in ["possible responses", "let's craft", "the user is"])
             ]
+            
+            # Jika query berkaitan dengan visual/gambar/kamera, jangan gunakan exemplar gambar spesifik lama
+            # agar model tidak mengulang deskripsi objek gambar terdahulu (seperti 'poster')
+            q_lower = query.lower()
+            if any(k in q_lower for k in ["[gambar", "kamera", "visual", "foto"]):
+                clean_candidates = [
+                    p for p in clean_candidates
+                    if not p.get("image") and not any(k in p.get("user", "").lower() for k in ["[gambar", "kamera", "visual", "foto"])
+                ]
+
             if not clean_candidates:
                 return []
             

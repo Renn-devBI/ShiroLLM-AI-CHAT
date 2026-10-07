@@ -550,7 +550,8 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
     nodes = []
     try:
         active_model_name = os.path.basename(getattr(llm, 'model_path', '')).lower() if hasattr(llm, 'model_path') else ""
-        has_vision = bool(vision_chat_handler is not None or "vl" in active_model_name)
+        # Pastikan engine multimodal vision benar-benar aktif pada instance model
+        has_vision = bool(getattr(llm, 'chat_handler', None) is not None or vision_chat_handler is not None)
         
         # -------------------------------------------------------------
         # NODE 1: Input Ingestion
@@ -599,7 +600,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
                     except Exception as gemini_err:
                         print(f"Gemini visual bridge: {gemini_err}")
                 else:
-                    fallback_vision = "*melihat foto yang Kakak perlihatkan* Wah, Kakak memperlihatkan gambar ya? Saat ini Shiro sedang memakai model teks biasa. Supaya mata visual Shiro bisa melihat gambarnya langsung dengan jelas, Kakak bisa pilih model Vision **Qwen2.5-VL-7B** di Pengaturan Model ya, Kak! (//∇//)"
+                    fallback_vision = "*melihat foto yang Kakak perlihatkan* Wah, Kakak memperlihatkan gambar baru ya? Tapi mata visual Shiro (Vision Projector mmproj) belum aktif atau sedang memakai model teks biasa. Pastikan file 'mmproj-F16.gguf' sudah ada di folder model/ dan pilih model Vision **Qwen2.5-VL-7B** di Pengaturan Model ya, Kak! (//∇//)"
                     if return_trace:
                         return fallback_vision, latest_pipeline_trace
                     return fallback_vision
@@ -732,10 +733,32 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
                 "content": content
             })
 
+        # Sanitasi konteks visual jika Kakak mengirim gambar baru:
+        # Hapus deskripsi spesifik gambar lama agar model tidak terbiasa mengulang kata-kata dari gambar sebelumnya (seperti 'poster tersebut')
+        if has_image:
+            sanitized_context = []
+            for msg in clean_context:
+                m_copy = dict(msg)
+                if m_copy.get("role") == "user" and ("[gambar" in m_copy.get("content", "").lower() or "[visual" in m_copy.get("content", "").lower()):
+                    m_copy["content"] = "[Kakak memperlihatkan gambar visual pada obrolan sebelumnya]"
+                elif m_copy.get("role") == "assistant":
+                    txt = m_copy.get("content", "")
+                    if any(w in txt.lower() for w in ["memandang gambar", "poster tersebut", "gambar visual ini", "poster"]):
+                        m_copy["content"] = "*tersenyum manis* Shiro sudah melihat gambar Kakak yang sebelumnya. Nah, sekarang gambar baru apa yang Kakak bawa ini?"
+                sanitized_context.append(m_copy)
+            clean_context = sanitized_context
+
         facts = memory.knowledge_base.get("facts", [])
         relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.8][:5]
         traits = memory.user_profile.get("personality_traits", [])
-        exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
+
+        # PENTING: Jika Kakak mengirim gambar visual, filter agar TIDAK menyertakan exemplar gambar lama
+        # yang bisa menyebabkan model meniru/mengulang deskripsi gambar sebelumnya!
+        if has_image:
+            exemplars = [ex for ex in memory.get_relevant_exemplars(user_input, max_count=2) 
+                         if not ex.get("image") and not any(k in ex.get("user", "").lower() for k in ["[gambar", "kamera", "visual", "foto"])]
+        else:
+            exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
         
         # Cross-Session Memory Recall
         cross_session_addon = memory.get_cross_session_context(normalized_input)
@@ -803,7 +826,19 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
 
         if image_base64 and has_vision:
             img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
-            prompt_text = user_input.strip() if user_input.strip() else "Kakak memperlihatkan gambar ini kepadamu, Shiro. Jelaskan apa yang kamu lihat dengan gaya bicaramu yang ceria dan penuh perhatian!"
+            custom_q = user_input.strip() if user_input.strip() and not user_input.startswith("Kakak memperlihatkan gambar") else ""
+            if custom_q:
+                prompt_text = (
+                    f"[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini sambil bertanya: \"{custom_q}\".\n"
+                    f"TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, dan detail visual di dalam GAMBAR TERBARU INI secara langsung. "
+                    f"Jawab pertanyaan Kakak secara spesifik sesuai apa yang benar-benar ada di gambar baru ini (jangan pernah mengulang atau mengaitkan dengan gambar dari obrolan sebelumnya)!"
+                )
+            else:
+                prompt_text = (
+                    "[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini kepadamu, Shiro!\n"
+                    "TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, orang/benda, dan suasana yang terlihat di dalam GAMBAR BARU INI secara langsung. "
+                    "Jelaskan apa yang kamu lihat sekarang secara segar, unik, dan mendetail dengan gaya bicaramu yang manja, cerdas, dan hangat khas Shiro (jangan pernah mengulang deskripsi gambar sebelumnya)!"
+                )
             msgs.append({
                 "role": "user",
                 "content": [
@@ -841,9 +876,10 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         # -------------------------------------------------------------
         t0 = time.perf_counter()
         gen_params = {
-            "temperature": 0.65,
-            "repeat_penalty": 1.2,
-            "frequency_penalty": 0.3,
+            "temperature": 0.72 if has_image else 0.65,
+            "repeat_penalty": 1.25 if has_image else 1.2,
+            "frequency_penalty": 0.5 if has_image else 0.3,
+            "presence_penalty": 0.3 if has_image else 0.0,
             "top_p": 0.92,
             "top_k": 40,
             "max_tokens": 450,
@@ -908,23 +944,32 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             last_responses = [m['content'] for m in memory.short_term_history[-3:] if m['role'] == 'assistant']
             for last_resp in last_responses:
                 similarity = ConversationAnalyzer.calculate_similarity(cleaned_reply, last_resp)
-                if similarity >= SIMILARITY_THRESHOLD or cleaned_reply.strip().lower() == last_resp.strip().lower():
-                    emotion = ResponseGenerator.detect_emotion_category(user_input)
-                    if emotion == "romantic":
-                        cleaned_reply = random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
-                    elif emotion == "jealous":
-                        cleaned_reply = random.choice(ResponseGenerator.JEALOUS_RESPONSES)
-                    elif emotion == "happy":
-                        cleaned_reply = random.choice(ResponseGenerator.HAPPY_RESPONSES)
-                    elif emotion == "sad":
-                        cleaned_reply = random.choice(ResponseGenerator.SAD_RESPONSES)
-                    else:
-                        variations = [
-                            f"*tersenyum manis* {cleaned_reply}",
-                            f"*mengangguk senang* {cleaned_reply}",
-                            f"*memeluk lengan Kakak* {cleaned_reply}"
+                is_repetitive = (similarity >= SIMILARITY_THRESHOLD or cleaned_reply.strip().lower() == last_resp.strip().lower())
+                # Deteksi jika respon mengandung kata kunci spesifik gambar lama yang berulang (seperti 'poster')
+                if has_image and "poster tersebut" in cleaned_reply.lower() and "poster tersebut" in last_resp.lower():
+                    is_repetitive = True
+
+                if is_repetitive:
+                    print(f"⚠️ [Anti-Repetition] Respons terdeteksi duplikat/mirip ({similarity:.2f}) dengan giliran sebelumnya! Mengganti dengan respon segar...")
+                    if has_image:
+                        visual_fallbacks = [
+                            "*memperhatikan gambar baru dengan seksama* Wah, gambar yang ini beda dari sebelumnya ya Kak! Shiro melihat visual baru ini... coba Kakak kasih tahu Shiro, bagian mana dari gambar ini yang paling Kakak suka?",
+                            "*tersenyum manis sambil mengamati gambar* Hehe, Kakak bawa gambar baru lagi! Menarik banget gambarnya, Kak! Mau Shiro jelaskan detail apa dari gambar ini?",
+                            "*menatap antusias* Wah, ini gambar yang baru ya Kak? Tampilannya unik dan beda dari yang tadi! Shiro siap nemenin Kakak bahas gambar ini~"
                         ]
-                        cleaned_reply = random.choice(variations)
+                        cleaned_reply = random.choice(visual_fallbacks)
+                    else:
+                        emotion = ResponseGenerator.detect_emotion_category(user_input)
+                        if emotion == "romantic":
+                            cleaned_reply = random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
+                        elif emotion == "jealous":
+                            cleaned_reply = random.choice(ResponseGenerator.JEALOUS_RESPONSES)
+                        elif emotion == "happy":
+                            cleaned_reply = random.choice(ResponseGenerator.HAPPY_RESPONSES)
+                        elif emotion == "sad":
+                            cleaned_reply = random.choice(ResponseGenerator.SAD_RESPONSES)
+                        else:
+                            cleaned_reply = random.choice(ResponseGenerator.DEFAULT_RESPONSES)
                     break
 
         t_filter_dur = (time.perf_counter() - t0) * 1000
@@ -1241,7 +1286,9 @@ def chat():
             memory.update_mood_from_emotions()
             
             # Simpan interaksi berkualitas untuk in-context few-shot learning
-            memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
+            # (hindari menyimpan jika respon mengandung pengulangan poster lama)
+            if not image_base64 or "poster tersebut" not in reply.lower():
+                memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             
             # Compress & save memory tiap turn
             compress_old_messages(memory, keep_count=15)
@@ -1453,7 +1500,8 @@ def openai_chat_completions():
             memory.add_message("user", log_msg, image_path=saved_img_rel)
             reply = get_shiro_reply(user_message, image_base64=image_base64)
             memory.add_message("assistant", reply)
-            memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
+            if not image_base64 or "poster tersebut" not in reply.lower():
+                memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
             compress_old_messages(memory, keep_count=15)
@@ -1725,6 +1773,7 @@ def switch_model():
             
             # Update global llm instance
             llm = new_llm
+            vision_chat_handler = vision_handler
             
             # Update configuration
             config["current_model"] = model_path
@@ -1818,8 +1867,10 @@ if __name__ == '__main__':
                     llama_kwargs["chat_format"] = detect_chat_format(current_model_path)
                     llm = Llama(**llama_kwargs)
                     vision_handler = None
+                    vision_chat_handler = None
                 else:
                     raise startup_vis_err
+        vision_chat_handler = vision_handler
         model_name = os.path.basename(current_model_path)
         print(f"✓ Model loaded: {model_name}")
         print(f"✓ Context Window: {CONTEXT_SIZE} tokens")

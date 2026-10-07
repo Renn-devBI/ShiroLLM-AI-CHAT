@@ -29,5 +29,43 @@ class TestMemoryManager(unittest.TestCase):
             data = json.load(f)
         self.assertGreaterEqual(len(data.get("knowledge_base", {}).get("facts", [])), 1)
 
+    def test_visual_exemplars_filtered_for_visual_queries(self):
+        mm = AdvancedMemoryManager(memory_file=self.mem_file, world_file=self.world_file)
+        # Rekam pola respon gambar lama (seperti poster)
+        mm.record_learned_pattern(
+            "[Gambar/Kamera Dikirim] Kakak memperlihatkan gambar poster anime.",
+            "Wah poster anime yang keren banget Kakak!",
+            image_path="images/poster.jpg"
+        )
+        # Rekam pola obrolan teks biasa
+        mm.record_learned_pattern(
+            "Shiro suka sarapan apa?",
+            "Shiro suka sarapan roti panggang buatan Kakak!"
+        )
+
+        # Ketika user mengirim gambar visual baru, jangan berikan exemplar gambar lama
+        visual_exemplars = mm.get_relevant_exemplars("[Gambar/Kamera Dikirim] Kakak memperlihatkan gambar kucing.")
+        for ex in visual_exemplars:
+            self.assertNotIn("poster", ex.get("assistant", "").lower())
+            self.assertFalse(ex.get("image"))
+
+    def test_learned_patterns_deduplication(self):
+        # Buat file json dengan pola ganda
+        dummy_data = {
+            "system_metadata": {"version": "2.0"},
+            "knowledge_base": {"facts": []},
+            "learned_patterns": [
+                {"user": "halo 1", "assistant": "Wah poster tersebut bagus!"},
+                {"user": "halo 2", "assistant": "Wah poster tersebut bagus!"}
+            ]
+        }
+        with open(self.mem_file, "w", encoding="utf-8") as f:
+            json.dump(dummy_data, f)
+
+        mm = AdvancedMemoryManager(memory_file=self.mem_file, world_file=self.world_file)
+        # Harus ter-deduplikasi menjadi 1
+        self.assertEqual(len(mm.learned_patterns), 1)
+
 if __name__ == "__main__":
     unittest.main()
+
