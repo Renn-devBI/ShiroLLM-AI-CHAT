@@ -1,10 +1,39 @@
+import os
+import sys
+import glob
+import ctypes
+
+# Auto-configure and pre-load CUDA runtime libraries on Linux / Google Colab
+if sys.platform.startswith("linux"):
+    cuda_dirs = [
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12/lib64",
+        "/usr/local/cuda-12.2/lib64",
+        "/usr/local/cuda-12.4/lib64",
+        "/usr/lib/x86_64-linux-gnu"
+    ]
+    # Search in nvidia pip packages (e.g. nvidia-cuda-runtime-cu12)
+    for p in glob.glob("/usr/local/lib/python*/dist-packages/nvidia/*/lib") + \
+             glob.glob("/usr/lib/python*/dist-packages/nvidia/*/lib") + \
+             glob.glob(os.path.expanduser("~/.local/lib/python*/dist-packages/nvidia/*/lib")):
+        cuda_dirs.append(p)
+    
+    # Update LD_LIBRARY_PATH
+    valid_dirs = [d for d in cuda_dirs if os.path.isdir(d)]
+    if valid_dirs:
+        os.environ["LD_LIBRARY_PATH"] = ":".join(valid_dirs) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+        for d in valid_dirs:
+            for f in glob.glob(os.path.join(d, "libcudart.so*")):
+                try:
+                    ctypes.CDLL(f, mode=ctypes.RTLD_GLOBAL)
+                except Exception:
+                    pass
+
 from flask import Flask, render_template, request, jsonify, send_file
 from llama_cpp import Llama
 from werkzeug.utils import secure_filename
 from memory_manager_v2 import AdvancedMemoryManager
 import json
-import os
-import sys
 import random
 import base64
 from pathlib import Path

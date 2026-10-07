@@ -3,3 +3,4 @@ Flask>=3.0.0
 Werkzeug>=3.0.0
 pyngrok>=7.0.0
 flask-cors>=4.0.0
+nvidia-cuda-runtime-cu12
