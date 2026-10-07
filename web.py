@@ -200,6 +200,7 @@ def init_vision_handler(model_path):
         
     mmproj_candidates = [
         os.path.join(MODEL_DIR, "mmproj-F16.gguf"),
+        os.path.join(MODEL_DIR, "mmproj-BF16.gguf"),
         os.path.join(MODEL_DIR, "mmproj-model-f16.gguf"),
     ]
     if os.path.exists(MODEL_DIR):
@@ -219,20 +220,27 @@ def init_vision_handler(model_path):
         print(f"⚠️ Warning: Model {name} adalah vision model, tapi file mmproj-*.gguf belum ditemukan di {MODEL_DIR}")
         return None
         
-    try:
-        from llama_cpp.llama_chat_format import Qwen2VLChatHandler
-        vision_chat_handler = Qwen2VLChatHandler(clip_model_path=mmproj_file)
-        print(f"👁️ Vision Chat Handler (Qwen2VL) aktif dengan projector: {mmproj_file}")
-        return vision_chat_handler
-    except Exception as e1:
+    # 1. Khusus Qwen2.5-VL: Gunakan Qwen25VLChatHandler
+    if "qwen" in name or "vl" in name:
+        try:
+            from llama_cpp.llama_chat_format import Qwen25VLChatHandler
+            vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file)
+            print(f"👁️ Vision Chat Handler (Qwen25VL) aktif dengan projector: {mmproj_file}")
+            return vision_chat_handler
+        except Exception as e1:
+            print(f"⚠️ Qwen25VLChatHandler tidak dapat diinisialisasi: {e1}")
+
+    # 2. Khusus Llava: Gunakan Llava15ChatHandler
+    if "llava" in name:
         try:
             from llama_cpp.llama_chat_format import Llava15ChatHandler
             vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file)
             print(f"👁️ Vision Chat Handler (Llava15) aktif dengan projector: {mmproj_file}")
             return vision_chat_handler
         except Exception as e2:
-            print(f"⚠️ Gagal inisialisasi vision chat handler: {e1} / {e2}")
-            return None
+            print(f"⚠️ Llava15ChatHandler tidak dapat diinisialisasi: {e2}")
+
+    return None
 
 # Model configuration
 def load_model_config():
@@ -1543,7 +1551,7 @@ def switch_model():
         
         # Validasi model path
         if not model_path or not os.path.exists(model_path):
-            return jsonify({"error": f"Model '{model_path}' tidak ditemukan"}), 400
+            return jsonify({"error": f"Model '{model_path}' tidak ditemukan di disk"}), 400
         
         # Cek apakah model ada dalam list yang tersedia
         config = load_model_config()
@@ -1551,22 +1559,54 @@ def switch_model():
             return jsonify({"error": f"Model tidak dalam daftar tersedia"}), 400
         
         model_name = os.path.basename(model_path)
-        print(f"\n⚙️  Switching model ke: {model_name}")
+        file_size_gb = os.path.getsize(model_path) / (1024 * 1024 * 1024)
+        print(f"\n⚙️  Switching model ke: {model_name} ({file_size_gb:.2f} GB)")
+        
+        if file_size_gb < 0.1:
+            return jsonify({"error": f"File model '{model_name}' rusak atau belum selesai diunduh ({file_size_gb:.2f} GB)"}), 400
+
+        # Simpan backup referensi
+        old_llm = llm
         
         try:
+            # 1. Bebaskan VRAM GPU & RAM dari model sebelumnya agar tidak OOM
+            if llm is not None:
+                try:
+                    if hasattr(llm, 'close'):
+                        llm.close()
+                except Exception as e_close:
+                    print(f"Warning closing previous LLM: {e_close}")
+                del llm
+                llm = None
+                import gc
+                gc.collect()
+                print("🧹 VRAM GPU & Memori model sebelumnya berhasil dibersihkan.")
+
             vision_handler = init_vision_handler(model_path)
             llama_kwargs = {
                 "model_path": model_path,
                 "n_ctx": CONTEXT_SIZE,
                 "n_threads": 4,
                 "n_gpu_layers": GPU_LAYERS,
-                "verbose": False,
-                "chat_format": detect_chat_format(model_path)
+                "verbose": True,
             }
             if vision_handler:
                 llama_kwargs["chat_handler"] = vision_handler
+            else:
+                llama_kwargs["chat_format"] = detect_chat_format(model_path)
                 
-            new_llm = Llama(**llama_kwargs)
+            try:
+                new_llm = Llama(**llama_kwargs)
+            except Exception as load_err:
+                if vision_handler:
+                    print(f"⚠️ Gagal memuat dengan Vision Chat Handler: {load_err}")
+                    print("🔄 Mencoba fallback memuat model dalam mode teks standar...")
+                    llama_kwargs.pop("chat_handler", None)
+                    llama_kwargs["chat_format"] = detect_chat_format(model_path)
+                    new_llm = Llama(**llama_kwargs)
+                    vision_handler = None
+                else:
+                    raise load_err
             
             # Update global llm instance
             llm = new_llm
@@ -1586,7 +1626,10 @@ def switch_model():
         
         except Exception as load_error:
             print(f"❌ Error loading model: {load_error}")
-            return jsonify({"error": f"Gagal load model: {str(load_error)[:100]}"}), 500
+            # Kembalikan old_llm jika new_llm gagal
+            if llm is None and old_llm is not None:
+                llm = old_llm
+            return jsonify({"error": f"Gagal load model: {str(load_error)[:120]}"}), 500
     
     except Exception as e:
         print(f"Error in switch_model endpoint: {e}")
@@ -1630,13 +1673,24 @@ if __name__ == '__main__':
             "n_ctx": CONTEXT_SIZE,
             "n_threads": 4,
             "n_gpu_layers": GPU_LAYERS,
-            "verbose": False,
-            "chat_format": detect_chat_format(current_model_path)
+            "verbose": True,
         }
         if vision_handler:
             llama_kwargs["chat_handler"] = vision_handler
+        else:
+            llama_kwargs["chat_format"] = detect_chat_format(current_model_path)
             
-        llm = Llama(**llama_kwargs)
+        try:
+            llm = Llama(**llama_kwargs)
+        except Exception as startup_vis_err:
+            if vision_handler:
+                print(f"⚠️ Gagal memuat Vision Handler saat startup ({startup_vis_err}). Fallback ke mode teks standar...")
+                llama_kwargs.pop("chat_handler", None)
+                llama_kwargs["chat_format"] = detect_chat_format(current_model_path)
+                llm = Llama(**llama_kwargs)
+                vision_handler = None
+            else:
+                raise startup_vis_err
         model_name = os.path.basename(current_model_path)
         print(f"✓ Model loaded: {model_name}")
         print(f"✓ Context Window: {CONTEXT_SIZE} tokens")
