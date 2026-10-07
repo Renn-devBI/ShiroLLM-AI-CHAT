@@ -182,20 +182,24 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     if (imageUrl) {
         const jsImgUrl = imageUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         attachmentHTML += `
-            <div class="chat-img-wrapper" onclick="openImageLightbox('${jsImgUrl}', 'Foto Lampiran Chat')" title="Klik untuk memperbesar gambar">
+            <div class="chat-img-wrapper" onclick="openImageLightbox('${jsImgUrl}', 'Foto Lampiran Chat')" title="Klik untuk membuka gambar">
                 <img src="${imageUrl}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">
-                <div class="chat-img-overlay">
-                    <i class="ph ph-arrows-out-simple"></i>
-                    <span>Perbesar</span>
-                </div>
             </div>
         `;
     }
 
-    // Render HTML Message (tanpa spasi/newline berlebih di dalam bubble)
+    // Render HTML Message (struktur terpisah antara lampiran dan teks agar rapi)
+    let innerBubbleHTML = '';
+    if (attachmentHTML) {
+        innerBubbleHTML += `<div class="msg-attachment-wrap">${attachmentHTML}</div>`;
+    }
+    if (formattedContent) {
+        innerBubbleHTML += `<div class="msg-text">${formattedContent}</div>`;
+    }
+
     messageDiv.innerHTML = `
         ${role === 'assistant' ? avatarHTML : ''}
-        <div class="bubble" data-original-text="${escapedContent}">${attachmentHTML}${formattedContent}</div>
+        <div class="bubble" data-original-text="${escapedContent}">${innerBubbleHTML}</div>
         ${role === 'user' ? avatarHTML : ''}
     `;
     
