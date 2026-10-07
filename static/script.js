@@ -196,7 +196,20 @@ async function sendMessage() {
             signal: abortController.signal
         });
 
-        if (!response.ok) throw new Error('Network error');
+        if (!response.ok) {
+            let errorMsg = 'Gagal terhubung ke Shiro.';
+            try {
+                const errData = await response.json();
+                if (errData.reply) {
+                    showTyping(false);
+                    addMessage('assistant', errData.reply);
+                    status.textContent = 'Siap';
+                    return;
+                }
+                if (errData.error) errorMsg = errData.error;
+            } catch (_) {}
+            throw new Error(errorMsg);
+        }
 
         const data = await response.json();
         
@@ -222,8 +235,8 @@ async function sendMessage() {
         } else {
             console.error('Error:', error);
             showTyping(false);
-            addMessage('system', '⚠️ Error: Gagal terhubung ke Shiro.');
-            status.textContent = 'Terputus';
+            addMessage('system', `⚠️ Error: ${error.message || 'Gagal terhubung ke Shiro.'}`);
+            status.textContent = 'Siap';
         }
     } finally {
         clearPipelineSimulation();

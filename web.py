@@ -1219,10 +1219,10 @@ def chat():
         if not user_message and image_base64:
             user_message = "Kakak memperlihatkan gambar ini kepadamu, Shiro."
         
-        if len(user_message) > 800:
+        if len(user_message) > 6000:
             return jsonify({
-                "error": "Message too long",
-                "reply": "*bingung* Kakak ngomong banyak banget... Shiro pusing! Singkat aja dong!"
+                "error": "Message too long (Maksimal 6000 karakter)",
+                "reply": "*bingung* Kakak ngomong panjang banget lebih dari 6000 karakter... Shiro pusing! Singkat sedikit ya, Kak!"
             }), 400
         
         saved_img_rel = None
