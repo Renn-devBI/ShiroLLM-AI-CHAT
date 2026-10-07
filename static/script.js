@@ -1227,9 +1227,6 @@ function renderModalPipeline(trace) {
     const stage1Nodes = trace.nodes.slice(0, 4);
     const stage2Nodes = trace.nodes.slice(4, 8);
 
-    const stage1Chips = ['pesan teks', 'tone emosi', 'fakta RDF'];
-    const stage2Chips = ['raw token', '100% ID', 'sync memori'];
-
     const renderCard = (node, idx) => {
         const isSelected = selectedModalNodeId === node.id || (!selectedModalNodeId && idx === 0);
         if (isSelected && !selectedModalNodeId) selectedModalNodeId = node.id;
@@ -1261,13 +1258,12 @@ function renderModalPipeline(trace) {
         `;
     };
 
-    const renderArrow = (active, chip) => {
+    const renderArrow = (active) => {
         return `
             <div class="flow-arrow-track ${active ? 'active' : ''}">
                 <div class="flow-arrow-line">
                     ${active ? '<div class="flow-pulse-beam"></div>' : ''}
                 </div>
-                <div class="flow-run-chip" title="${chip}">${chip}</div>
             </div>
         `;
     };
@@ -1278,7 +1274,7 @@ function renderModalPipeline(trace) {
 
     let html = `
         <div class="flow-stage-bar">
-            <span class="flow-stage-label"><i class="ph ph-lightning"></i> TAHAP 1: EKSTRAKSI &amp; SINTESIS KONTEKS</span>
+            <span class="flow-stage-label"><i class="ph ph-sliders"></i> Tahap 1: Ekstraksi &amp; Konteks</span>
             <span class="flow-stage-info">${Math.round(stage1Ms)}ms</span>
         </div>
         <div class="flow-stage-row">
@@ -1288,7 +1284,7 @@ function renderModalPipeline(trace) {
         html += renderCard(node, idx);
         if (idx < stage1Nodes.length - 1) {
             const isConnActive = node.status === 'success';
-            html += renderArrow(isConnActive, stage1Chips[idx] || 'data');
+            html += renderArrow(isConnActive);
         }
     });
 
@@ -1296,14 +1292,13 @@ function renderModalPipeline(trace) {
         </div>
         <div class="flow-bridge-row">
             <div class="flow-bridge-track ${stage1Done ? 'active' : ''}">
-                <span>Kirim Prompt Terstruktur</span>
                 <div class="bridge-pulse-dot ${stage1Done ? 'pulsing' : ''}"></div>
                 <i class="ph ph-arrow-down-right"></i>
-                <span>Injeksi ke GPU Neural Engine</span>
+                <span>Tahap 2</span>
             </div>
         </div>
         <div class="flow-stage-bar">
-            <span class="flow-stage-label"><i class="ph ph-cpu"></i> TAHAP 2: INFERENSI NEURAL &amp; SANITASI OUTPUT</span>
+            <span class="flow-stage-label"><i class="ph ph-cpu"></i> Tahap 2: Inferensi &amp; Sanitasi</span>
             <span class="flow-stage-info">${Math.round(stage2Ms)}ms</span>
         </div>
         <div class="flow-stage-row">
@@ -1313,7 +1308,7 @@ function renderModalPipeline(trace) {
         html += renderCard(node, idx + 4);
         if (idx < stage2Nodes.length - 1) {
             const isConnActive = node.status === 'success';
-            html += renderArrow(isConnActive, stage2Chips[idx] || 'data');
+            html += renderArrow(isConnActive);
         }
     });
 

@@ -3,23 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shiro AI • Neural Workflow (n8n Real-Time Inspector)</title>
+    <title>Shiro AI • Workflow Inspector</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            overflow: auto !important;
-            background-color: #0b0f19;
-            color: #f8fafc;
-            font-family: 'Inter', sans-serif;
+            overflow: hidden !important;
+            background-color: #080c14;
+            color: #f1f5f9;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             margin: 0;
             padding: 0;
             height: 100vh;
-            display: flex;
-            flex-direction: column;
+            width: 100vw;
         }
 
         .pipeline-app {
@@ -27,67 +30,82 @@
             flex-direction: column;
             width: 100vw;
             height: 100vh;
-            background-color: #090d16;
-            background-image: radial-gradient(circle, #1e293b 1px, transparent 1px);
-            background-size: 24px 24px;
+            background-color: #080c14;
         }
 
+        /* Top Navigation Bar */
         .wf-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0.85rem 1.5rem;
-            background-color: rgba(17, 24, 39, 0.95);
-            backdrop-filter: blur(10px);
+            padding: 0.65rem 1.25rem;
+            background-color: #0d131f;
             border-bottom: 1px solid #1e293b;
-            z-index: 20;
+            z-index: 50;
+            height: 56px;
+            flex-shrink: 0;
         }
 
         .wf-brand {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
         }
 
         .wf-brand-icon {
-            width: 36px;
-            height: 36px;
+            width: 32px;
+            height: 32px;
             border-radius: 8px;
-            background: linear-gradient(135deg, #2563eb, #06b6d4);
+            background: linear-gradient(135deg, #2563eb, #38bdf8);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
+            font-size: 18px;
             color: white;
-            box-shadow: 0 0 16px rgba(37, 99, 235, 0.4);
+            box-shadow: 0 0 12px rgba(37, 99, 235, 0.35);
         }
 
         .wf-brand-titles {
             display: flex;
-            flex-direction: column;
+            align-items: center;
+            gap: 8px;
         }
 
         .wf-title {
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 700;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.4px;
             color: #f8fafc;
         }
 
-        .wf-subtitle {
-            font-size: 11px;
-            color: #94a3b8;
+        .wf-pill-tag {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 4px;
+            background: rgba(56, 189, 248, 0.12);
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
+        /* Test Query Input Bar */
         .wf-test-bar {
             display: flex;
             align-items: center;
-            gap: 8px;
-            background: #0f172a;
-            border: 1px solid #334155;
+            gap: 6px;
+            background: #090e17;
+            border: 1px solid #1e293b;
             border-radius: 8px;
-            padding: 4px 6px;
-            width: 440px;
+            padding: 3px 5px 3px 10px;
+            width: 380px;
+            transition: border-color 0.15s;
+        }
+
+        .wf-test-bar:focus-within {
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 1px #38bdf8;
         }
 
         .wf-test-input {
@@ -96,7 +114,6 @@
             border: none;
             color: #f8fafc;
             font-size: 13px;
-            padding: 6px 8px;
             outline: none;
         }
 
@@ -107,7 +124,7 @@
         .wf-header-actions {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
         }
 
         .wf-status-badge {
@@ -116,114 +133,360 @@
             gap: 6px;
             font-size: 12px;
             font-weight: 500;
-            padding: 5px 10px;
-            border-radius: 9999px;
-            background: #1e293b;
+            padding: 4px 10px;
+            border-radius: 6px;
+            background: #0f172a;
             color: #94a3b8;
-            border: 1px solid #334155;
+            border: 1px solid #1e293b;
         }
 
         .wf-status-badge.live {
-            background: rgba(16, 185, 129, 0.12);
             color: #10b981;
             border-color: rgba(16, 185, 129, 0.3);
+            background: rgba(16, 185, 129, 0.08);
         }
 
         .wf-status-dot {
-            width: 8px;
-            height: 8px;
+            width: 7px;
+            height: 7px;
             border-radius: 50%;
             background: #10b981;
-            animation: pulse-dot 2s infinite ease-in-out;
+            box-shadow: 0 0 8px #10b981;
         }
 
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.4; transform: scale(0.85); }
-        }
-
+        /* Workspace Main Layout */
         .wf-main {
             flex: 1;
             display: flex;
             position: relative;
             overflow: hidden;
+            height: calc(100vh - 56px);
         }
 
-        .wf-canvas {
+        /* Interactive Canvas Viewport */
+        .wf-canvas-viewport {
             flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-start;
             position: relative;
+            overflow: hidden;
+            background-color: #080c14;
+            background-image: radial-gradient(circle, #1e293b 1px, transparent 1px);
+            background-size: 24px 24px;
+            cursor: grab;
+            user-select: none;
         }
 
-        /* Inspector Drawer */
-        .wf-inspector {
-            width: 440px;
-            background: #0f172a;
-            border-left: 1px solid #1e293b;
-            display: flex;
-            flex-direction: column;
+        .wf-canvas-viewport.panning {
+            cursor: grabbing;
+        }
+
+        /* Canvas Surface that scales and translates */
+        .wf-canvas-surface {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3200px;
+            height: 2400px;
+            transform-origin: 0 0;
+            will-change: transform;
+        }
+
+        /* SVG Wire Connection Layer */
+        .connections-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .wire-path {
+            fill: none;
+            stroke: #1e293b;
+            stroke-width: 2.2px;
+            stroke-linecap: round;
+            transition: stroke 0.2s, stroke-width 0.2s;
+        }
+
+        .wire-path.active {
+            stroke: #38bdf8;
+            stroke-width: 2.5px;
+            filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.6));
+        }
+
+        .wire-pulse {
+            fill: none;
+            stroke: #ffffff;
+            stroke-width: 3px;
+            stroke-linecap: round;
+            stroke-dasharray: 8 24;
+            animation: flowDash 1.2s linear infinite;
+        }
+
+        @keyframes flowDash {
+            from { stroke-dashoffset: 64; }
+            to { stroke-dashoffset: 0; }
+        }
+
+        /* Nodes Layer */
+        .nodes-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
             z-index: 10;
         }
 
-        .insp-top {
-            padding: 16px 20px;
+        /* Modern Draggable Flowchart Node Card */
+        .wf-node {
+            position: absolute;
+            width: 200px;
+            background: #0d131f;
+            border: 1px solid #1e293b;
+            border-radius: 10px;
+            padding: 10px 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+            cursor: pointer;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            user-select: none;
+        }
+
+        .wf-node:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.2);
+        }
+
+        .wf-node.selected {
+            border-color: #38bdf8;
+            background: #111a2c;
+            box-shadow: 0 0 0 1px #38bdf8, 0 8px 24px rgba(56, 189, 248, 0.25);
+        }
+
+        .wf-node.running {
+            border-color: #f59e0b;
+            box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
+            animation: nodePulse 1.5s infinite ease-in-out;
+        }
+
+        @keyframes nodePulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+            50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+        }
+
+        .wf-node.dragging {
+            opacity: 0.95;
+            cursor: grabbing !important;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5) !important;
+            z-index: 100 !important;
+        }
+
+        /* Ports on Node Edges */
+        .wf-port {
+            position: absolute;
+            top: 50%;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #0f172a;
+            border: 2px solid #64748b;
+            transform: translateY(-50%);
+            transition: all 0.15s;
+        }
+
+        .wf-port.port-in {
+            left: -6px;
+        }
+
+        .wf-port.port-out {
+            right: -6px;
+        }
+
+        .wf-node:hover .wf-port,
+        .wf-node.selected .wf-port {
+            border-color: #38bdf8;
+            background: #38bdf8;
+            box-shadow: 0 0 8px #38bdf8;
+        }
+
+        /* Node Inner Content */
+        .wf-node-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .wf-node-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #ffffff;
+            flex-shrink: 0;
+        }
+
+        .wf-node-badge {
+            font-size: 10px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #1e293b;
+            color: #94a3b8;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .wf-node-badge.success {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+        }
+
+        .wf-node-badge.running {
+            background: rgba(245, 158, 11, 0.18);
+            color: #f59e0b;
+        }
+
+        .wf-node-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #f8fafc;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.3;
+        }
+
+        .wf-node-summary {
+            font-size: 11px;
+            color: #94a3b8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-top: 3px;
+        }
+
+        /* Floating Canvas Toolbar Controls */
+        .canvas-toolbar {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            padding: 4px;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            z-index: 40;
+        }
+
+        .canvas-tool-btn {
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .canvas-tool-btn:hover {
+            color: #f8fafc;
+            background: #1e293b;
+        }
+
+        .canvas-toolbar-divider {
+            width: 1px;
+            height: 18px;
+            background: #1e293b;
+            margin: 0 2px;
+        }
+
+        .canvas-zoom-text {
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: #94a3b8;
+            padding: 0 6px;
+        }
+
+        /* Right Side Data Inspector Panel */
+        .wf-inspector {
+            width: 420px;
+            background: #0b0f19;
+            border-left: 1px solid #1e293b;
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+            flex-shrink: 0;
+        }
+
+        .insp-header {
+            padding: 14px 18px;
             border-bottom: 1px solid #1e293b;
-            background: #111827;
+            background: #0d131f;
         }
 
         .insp-tag {
             font-size: 10px;
             font-weight: 700;
             color: #38bdf8;
-            letter-spacing: 0.8px;
+            letter-spacing: 0.6px;
             text-transform: uppercase;
         }
 
-        .insp-title {
+        .insp-node-name {
             font-size: 15px;
             font-weight: 700;
             color: #f8fafc;
-            margin: 4px 0;
+            margin: 3px 0 2px 0;
         }
 
-        .insp-sub {
-            font-size: 12px;
+        .insp-node-meta {
+            font-size: 11.5px;
             color: #94a3b8;
         }
 
-        .insp-tabs-bar {
+        .insp-nav {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 20px;
+            padding: 8px 16px;
             border-bottom: 1px solid #1e293b;
-            background: #0b0f19;
+            background: #090e17;
         }
 
         .insp-tabs {
             display: flex;
-            gap: 6px;
+            gap: 4px;
         }
 
-        .insp-btn {
+        .insp-tab-btn {
             background: transparent;
             border: none;
             color: #94a3b8;
             font-size: 12px;
             font-weight: 500;
-            padding: 6px 12px;
-            border-radius: 6px;
+            padding: 5px 10px;
+            border-radius: 5px;
             cursor: pointer;
             transition: all 0.15s;
         }
 
-        .insp-btn.active {
+        .insp-tab-btn.active {
             background: #1e293b;
             color: #f8fafc;
         }
@@ -231,15 +494,15 @@
         .insp-body {
             flex: 1;
             overflow: auto;
-            padding: 16px;
+            padding: 14px;
         }
 
-        .insp-code {
+        .insp-json-view {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
-            color: #e2e8f0;
-            background: #090d16;
-            padding: 14px;
+            font-size: 11.5px;
+            color: #cbd5e1;
+            background: #06090f;
+            padding: 12px;
             border-radius: 8px;
             border: 1px solid #1e293b;
             white-space: pre-wrap;
@@ -247,82 +510,478 @@
             line-height: 1.5;
             margin: 0;
         }
+
+        /* Buttons & Utility */
+        .btn-primary.btn-sm, .btn-secondary.btn-sm {
+            padding: 5px 10px;
+            font-size: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: #ffffff;
+            border: none;
+            transition: background 0.15s;
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+        }
+
+        .btn-secondary {
+            background: #1e293b;
+            color: #f1f5f9;
+            border: 1px solid #334155;
+            transition: background 0.15s;
+        }
+
+        .btn-secondary:hover {
+            background: #334155;
+        }
     </style>
 </head>
 <body>
     <div class="pipeline-app">
-        <!-- Workflow Top Bar -->
+        <!-- Minimalist Top Bar -->
         <header class="wf-header">
             <div class="wf-brand">
                 <div class="wf-brand-icon">
                     <i class="ph ph-tree-structure"></i>
                 </div>
                 <div class="wf-brand-titles">
-                    <span class="wf-title">SHIRO NEURAL WORKFLOW</span>
-                    <span class="wf-subtitle">n8n Real-Time Execution Inspector</span>
+                    <span class="wf-title">SHIRO WORKFLOW</span>
+                    <span class="wf-pill-tag">Flowchart Canvas</span>
                 </div>
             </div>
 
-            <!-- Quick Test Bar -->
+            <!-- Quick Execution Bar -->
             <form id="test-run-form" class="wf-test-bar" onsubmit="runTestQuery(event)">
-                <input type="text" id="test-input" class="wf-test-input" placeholder="Ketik pesan uji coba untuk memicu neuron AI..." autocomplete="off">
-                <button type="submit" id="test-submit-btn" class="btn-primary btn-sm" title="Jalankan Alur">
-                    <i class="ph ph-play"></i> Eksekusi
+                <input type="text" id="test-input" class="wf-test-input" placeholder="Ketik pesan untuk simulasi alur..." autocomplete="off">
+                <button type="submit" id="test-submit-btn" class="btn-primary btn-sm">
+                    <i class="ph ph-play"></i> Jalankan
                 </button>
             </form>
 
             <div class="wf-header-actions">
                 <div class="wf-status-badge live">
                     <span class="wf-status-dot"></span>
-                    <span id="sse-status-text">Live Stream Aktif</span>
+                    <span id="sse-status-text">Live Stream</span>
                 </div>
                 <div class="wf-status-badge">
                     <i class="ph ph-timer"></i>
                     <span id="total-time-badge">0 ms</span>
                 </div>
-                <a href="/" class="btn-secondary btn-sm" title="Kembali ke Web Chat Shiro">
+                <a href="/" class="btn-secondary btn-sm" title="Kembali ke antarmuka obrolan">
                     <i class="ph ph-chat-circle-dots"></i> Kembali ke Chat
                 </a>
             </div>
         </header>
 
-        <!-- Main Workflow Canvas -->
+        <!-- Main Interactive Workspace -->
         <div class="wf-main">
-            <div class="wf-canvas">
-                <div id="nodes-flow-container" class="flowchart-canvas" style="max-width: 920px; width: 100%;">
-                    <!-- Populated dynamically via JavaScript -->
+            <!-- Draggable & Pannable Canvas Viewport -->
+            <div class="wf-canvas-viewport" id="canvas-viewport">
+                <div class="wf-canvas-surface" id="canvas-surface">
+                    <svg id="connections-svg" class="connections-layer"></svg>
+                    <div id="nodes-layer" class="nodes-layer"></div>
+                </div>
+
+                <!-- Floating Canvas Controls -->
+                <div class="canvas-toolbar">
+                    <button type="button" class="canvas-tool-btn" onclick="zoomIn()" title="Perbesar (Zoom In)">
+                        <i class="ph ph-plus"></i>
+                    </button>
+                    <button type="button" class="canvas-tool-btn" onclick="zoomOut()" title="Perkecil (Zoom Out)">
+                        <i class="ph ph-minus"></i>
+                    </button>
+                    <span class="canvas-zoom-text" id="zoom-level-text">100%</span>
+                    <div class="canvas-toolbar-divider"></div>
+                    <button type="button" class="canvas-tool-btn" onclick="resetView()" title="Tengahkan Tampilan (Reset Pan/Zoom)">
+                        <i class="ph ph-arrows-out-cardinal"></i>
+                    </button>
+                    <button type="button" class="canvas-tool-btn" onclick="autoLayoutNodes()" title="Tata Ulang Posisi Flowchart Otomatis">
+                        <i class="ph ph-magic-wand"></i>
+                    </button>
                 </div>
             </div>
 
-            <!-- Side Node Inspector -->
-            <div class="wf-inspector">
-                <div class="insp-top">
-                    <span class="insp-tag">NODE TELEMETRY & DATA</span>
-                    <h3 id="side-node-name" class="insp-title">Pilih Node</h3>
-                    <p id="side-node-summary" class="insp-sub">Klik node mana saja di alur sebelah kiri untuk memeriksa payload input dan output secara terperinci.</p>
+            <!-- Right Inspector Panel -->
+            <aside class="wf-inspector">
+                <div class="insp-header">
+                    <span class="insp-tag">NODE TELEMETRY</span>
+                    <h3 id="side-node-name" class="insp-node-name">Pilih Node</h3>
+                    <p id="side-node-meta" class="insp-node-meta">Klik node pada flowchart untuk melihat rincian payload data.</p>
                 </div>
-                <div class="insp-tabs-bar">
+                <div class="insp-nav">
                     <div class="insp-tabs">
-                        <button type="button" class="insp-btn active" id="tab-out-btn" onclick="switchInspectorTab('output')">Data Output</button>
-                        <button type="button" class="insp-btn" id="tab-in-btn" onclick="switchInspectorTab('input')">Data Input</button>
+                        <button type="button" class="insp-tab-btn active" id="tab-out-btn" onclick="switchInspectorTab('output')">Data Output</button>
+                        <button type="button" class="insp-tab-btn" id="tab-in-btn" onclick="switchInspectorTab('input')">Data Input</button>
                     </div>
-                    <button type="button" class="btn-secondary btn-sm" onclick="copyCurrentJson()" title="Salin Payload">
+                    <button type="button" class="btn-secondary btn-sm" onclick="copyCurrentJson()" title="Salin Data JSON">
                         <i class="ph ph-copy"></i> Salin
                     </button>
                 </div>
                 <div class="insp-body">
-                    <pre class="insp-code"><code id="side-code-view">// Menunggu eksekusi alur...</code></pre>
+                    <pre class="insp-json-view"><code id="side-code-view">// Menunggu eksekusi alur...</code></pre>
                 </div>
-            </div>
+            </aside>
         </div>
     </div>
 
     <script>
+        // Default Flowchart Node Positions (Grid: 2 rows of 4 nodes, clean left-to-right flow)
+        const DEFAULT_LAYOUT = {
+            "node_input":   { x: 60,  y: 80 },
+            "node_emotion": { x: 310, y: 80 },
+            "node_memory":  { x: 560, y: 80 },
+            "node_prompt":  { x: 810, y: 80 },
+            "node_llm":     { x: 60,  y: 260 },
+            "node_filter":  { x: 310, y: 260 },
+            "node_state":   { x: 560, y: 260 },
+            "node_output":  { x: 810, y: 260 }
+        };
+
+        // Execution Pipeline Sequences (Directed Edges)
+        const FLOW_EDGES = [
+            { from: "node_input",   to: "node_emotion" },
+            { from: "node_emotion", to: "node_memory" },
+            { from: "node_memory",  to: "node_prompt" },
+            { from: "node_prompt",  to: "node_llm" },
+            { from: "node_llm",     to: "node_filter" },
+            { from: "node_filter",  to: "node_state" },
+            { from: "node_state",   to: "node_output" }
+        ];
+
+        // State Variables
+        let nodePositions = loadSavedPositions();
         let currentTrace = null;
-        let selectedNodeId = null;
-        let activeTab = 'output';
+        let selectedNodeId = "node_input";
+        let activeTab = "output";
         let simTimers = [];
 
+        // Viewport Transform (Pan & Zoom)
+        let panX = 0;
+        let panY = 0;
+        let zoom = 1.0;
+        const MIN_ZOOM = 0.45;
+        const MAX_ZOOM = 2.0;
+
+        // Dragging State
+        let isPanningCanvas = false;
+        let startPanMouseX = 0;
+        let startPanMouseY = 0;
+        let startPanX = 0;
+        let startPanY = 0;
+
+        let isDraggingNode = false;
+        let draggedNodeId = null;
+        let dragStartMouseX = 0;
+        let dragStartMouseY = 0;
+        let dragNodeStartX = 0;
+        let dragNodeStartY = 0;
+        let hasNodeMoved = false;
+
+        // Elements
+        const viewportEl = document.getElementById('canvas-viewport');
+        const surfaceEl = document.getElementById('canvas-surface');
+        const svgEl = document.getElementById('connections-svg');
+        const nodesLayerEl = document.getElementById('nodes-layer');
+        const zoomTextEl = document.getElementById('zoom-level-text');
+
+        // Load / Save positions
+        function loadSavedPositions() {
+            try {
+                const saved = localStorage.getItem('shiro_flowchart_layout_v2');
+                if (saved) return { ...DEFAULT_LAYOUT, ...JSON.parse(saved) };
+            } catch (e) {}
+            return { ...DEFAULT_LAYOUT };
+        }
+
+        function savePositions() {
+            try {
+                localStorage.setItem('shiro_flowchart_layout_v2', JSON.stringify(nodePositions));
+            } catch (e) {}
+        }
+
+        function autoLayoutNodes() {
+            nodePositions = { ...DEFAULT_LAYOUT };
+            savePositions();
+            updateNodePositionsInDOM();
+            updateConnectionLines();
+        }
+
+        function resetView() {
+            panX = 0;
+            panY = 0;
+            zoom = 1.0;
+            applyViewportTransform();
+        }
+
+        function zoomIn() {
+            setZoom(zoom * 1.15);
+        }
+
+        function zoomOut() {
+            setZoom(zoom / 1.15);
+        }
+
+        function setZoom(newZoom, focalX, focalY) {
+            const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+            if (focalX !== undefined && focalY !== undefined) {
+                const rect = viewportEl.getBoundingClientRect();
+                const mouseX = focalX - rect.left;
+                const mouseY = focalY - rect.top;
+                panX -= (mouseX - panX) * (clamped / zoom - 1);
+                panY -= (mouseY - panY) * (clamped / zoom - 1);
+            }
+            zoom = clamped;
+            applyViewportTransform();
+        }
+
+        function applyViewportTransform() {
+            surfaceEl.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+            viewportEl.style.backgroundPosition = `${panX}px ${panY}px`;
+            zoomTextEl.textContent = `${Math.round(zoom * 100)}%`;
+        }
+
+        // Initialize Pan & Zoom Handlers
+        viewportEl.addEventListener('pointerdown', (e) => {
+            if (e.target === viewportEl || e.target === surfaceEl || e.target === svgEl) {
+                isPanningCanvas = true;
+                viewportEl.classList.add('panning');
+                startPanMouseX = e.clientX;
+                startPanMouseY = e.clientY;
+                startPanX = panX;
+                startPanY = panY;
+            }
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (isPanningCanvas) {
+                panX = startPanX + (e.clientX - startPanMouseX);
+                panY = startPanY + (e.clientY - startPanMouseY);
+                applyViewportTransform();
+            } else if (isDraggingNode && draggedNodeId) {
+                const dx = (e.clientX - dragStartMouseX) / zoom;
+                const dy = (e.clientY - dragStartMouseY) / zoom;
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                    hasNodeMoved = true;
+                }
+                const newX = Math.max(20, Math.round(dragNodeStartX + dx));
+                const newY = Math.max(20, Math.round(dragNodeStartY + dy));
+                nodePositions[draggedNodeId] = { x: newX, y: newY };
+
+                const nodeEl = document.getElementById(draggedNodeId);
+                if (nodeEl) {
+                    nodeEl.style.left = `${newX}px`;
+                    nodeEl.style.top = `${newY}px`;
+                }
+                updateConnectionLines();
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            if (isPanningCanvas) {
+                isPanningCanvas = false;
+                viewportEl.classList.remove('panning');
+            }
+            if (isDraggingNode) {
+                const nodeEl = document.getElementById(draggedNodeId);
+                if (nodeEl) nodeEl.classList.remove('dragging');
+                isDraggingNode = false;
+                draggedNodeId = null;
+                savePositions();
+            }
+        });
+
+        viewportEl.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 1.1 : 0.9;
+            setZoom(zoom * delta, e.clientX, e.clientY);
+        }, { passive: false });
+
+        // Node Dragging PointerDown Setup
+        function attachNodeDragListeners(nodeEl, nodeId) {
+            nodeEl.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                isDraggingNode = true;
+                draggedNodeId = nodeId;
+                hasNodeMoved = false;
+                dragStartMouseX = e.clientX;
+                dragStartMouseY = e.clientY;
+                dragNodeStartX = nodePositions[nodeId]?.x || 0;
+                dragNodeStartY = nodePositions[nodeId]?.y || 0;
+                nodeEl.classList.add('dragging');
+            });
+
+            nodeEl.addEventListener('click', (e) => {
+                if (!hasNodeMoved) {
+                    selectNode(nodeId);
+                }
+            });
+        }
+
+        // Generate Smooth Cubic Bezier Curves between Ports
+        function getSmoothBezier(x1, y1, x2, y2) {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+
+            if (dx >= 40) {
+                const offset = Math.max(45, dx * 0.45);
+                return `M ${x1} ${y1} C ${x1 + offset} ${y1}, ${x2 - offset} ${y2}, ${x2} ${y2}`;
+            } else {
+                const curveDrop = 45;
+                const midY = (y1 + y2) / 2;
+                return `M ${x1} ${y1} C ${x1 + curveDrop} ${y1}, ${x1 + curveDrop} ${midY}, ${(x1 + x2) / 2} ${midY} C ${x2 - curveDrop} ${midY}, ${x2 - curveDrop} ${y2}, ${x2} ${y2}`;
+            }
+        }
+
+        // Render Connection Wires in SVG
+        function updateConnectionLines() {
+            if (!svgEl) return;
+            let svgContent = '';
+
+            FLOW_EDGES.forEach(edge => {
+                const fromPos = nodePositions[edge.from] || { x: 0, y: 0 };
+                const toPos = nodePositions[edge.to] || { x: 0, y: 0 };
+
+                const x1 = fromPos.x + 200;
+                const y1 = fromPos.y + 34;
+                const x2 = toPos.x;
+                const y2 = toPos.y + 34;
+
+                const pathData = getSmoothBezier(x1, y1, x2, y2);
+
+                const fromNode = currentTrace?.nodes?.find(n => n.id === edge.from);
+                const toNode = currentTrace?.nodes?.find(n => n.id === edge.to);
+
+                const isActive = (fromNode?.status === 'success' || fromNode?.status === 'running') &&
+                                 (toNode?.status === 'success' || toNode?.status === 'running');
+                const isRunning = toNode?.status === 'running';
+
+                svgContent += `
+                    <path class="wire-path ${isActive ? 'active' : ''}" d="${pathData}"></path>
+                    ${isRunning ? `<path class="wire-pulse" d="${pathData}"></path>` : ''}
+                `;
+            });
+
+            svgEl.innerHTML = svgContent;
+        }
+
+        function updateNodePositionsInDOM() {
+            Object.keys(nodePositions).forEach(nodeId => {
+                const nodeEl = document.getElementById(nodeId);
+                if (nodeEl) {
+                    nodeEl.style.left = `${nodePositions[nodeId].x}px`;
+                    nodeEl.style.top = `${nodePositions[nodeId].y}px`;
+                }
+            });
+        }
+
+        // Render All Nodes in Flowchart
+        function renderWorkflow(trace) {
+            currentTrace = trace;
+            const totalTimeBadge = document.getElementById('total-time-badge');
+            if (trace.total_duration_ms) {
+                totalTimeBadge.textContent = `${Math.round(trace.total_duration_ms)} ms`;
+            }
+
+            if (!trace.nodes || trace.nodes.length === 0) return;
+
+            let nodesHtml = '';
+            trace.nodes.forEach(node => {
+                const pos = nodePositions[node.id] || DEFAULT_LAYOUT[node.id] || { x: 100, y: 100 };
+                const isSelected = selectedNodeId === node.id;
+                const isRunning = node.status === 'running';
+                const isSuccess = node.status === 'success';
+
+                let badgeText = '';
+                if (isRunning) {
+                    badgeText = `<i class="ph ph-spinner ph-spin"></i> Proses`;
+                } else if (isSuccess) {
+                    const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
+                    badgeText = `✓ ${dur}`;
+                } else {
+                    badgeText = `○ Idle`;
+                }
+
+                let summaryClean = node.summary || '';
+                if (summaryClean.length > 28) summaryClean = summaryClean.slice(0, 27) + '...';
+
+                nodesHtml += `
+                    <div class="wf-node ${isSelected ? 'selected' : ''} ${node.status || ''}" id="${node.id}" style="left: ${pos.x}px; top: ${pos.y}px;">
+                        <div class="wf-port port-in"></div>
+                        <div class="wf-port port-out"></div>
+                        <div class="wf-node-top">
+                            <div class="wf-node-icon" style="background: ${node.color || '#3b82f6'};">
+                                <i class="ph ${node.icon || 'ph-gear'}"></i>
+                            </div>
+                            <span class="wf-node-badge ${node.status}">${badgeText}</span>
+                        </div>
+                        <div class="wf-node-title" title="${node.name}">${node.name}</div>
+                        <div class="wf-node-summary">${summaryClean}</div>
+                    </div>
+                `;
+            });
+
+            nodesLayerEl.innerHTML = nodesHtml;
+
+            // Bind drag & selection events
+            trace.nodes.forEach(node => {
+                const nodeEl = document.getElementById(node.id);
+                if (nodeEl) attachNodeDragListeners(nodeEl, node.id);
+            });
+
+            updateConnectionLines();
+            updateInspector();
+        }
+
+        // Select Node
+        function selectNode(nodeId) {
+            selectedNodeId = nodeId;
+            document.querySelectorAll('.wf-node').forEach(el => {
+                el.classList.toggle('selected', el.id === nodeId);
+            });
+            updateInspector();
+        }
+
+        // Inspector View & Tabs
+        function switchInspectorTab(tab) {
+            activeTab = tab;
+            document.getElementById('tab-out-btn').classList.toggle('active', tab === 'output');
+            document.getElementById('tab-in-btn').classList.toggle('active', tab === 'input');
+            updateInspector();
+        }
+
+        function updateInspector() {
+            if (!currentTrace || !currentTrace.nodes) return;
+            const node = currentTrace.nodes.find(n => n.id === selectedNodeId) || currentTrace.nodes[0];
+            if (!node) return;
+
+            document.getElementById('side-node-name').textContent = node.name;
+            const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
+            document.getElementById('side-node-meta').textContent = `${node.summary || 'Node aktif'} • Latensi: ${dur}`;
+
+            const codeView = document.getElementById('side-code-view');
+            const dataToView = activeTab === 'output' ? node.data_out : node.data_in;
+            codeView.textContent = JSON.stringify(dataToView || {}, null, 2);
+        }
+
+        function copyCurrentJson() {
+            const code = document.getElementById('side-code-view').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                alert("Data JSON berhasil disalin!");
+            });
+        }
+
+        // Simulation Runner
         function clearSim() {
             simTimers.forEach(t => clearTimeout(t));
             simTimers = [];
@@ -334,59 +993,59 @@
                 total_duration_ms: 0,
                 nodes: [
                     { id: "node_input", name: "Input Ingestion", type: "trigger", icon: "ph-chat-circle-dots", color: "#3b82f6", status: "running", duration_ms: 0, summary: "Menerima input query...", data_in: { message: inputText }, data_out: {} },
-                    { id: "node_emotion", name: "Emotion & Tone Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#ec4899", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_memory", name: "Cognitive Memory & RDF Retrieval", type: "database", icon: "ph-brain", color: "#8b5cf6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_prompt", name: "Dynamic Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#06b6d4", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_llm", name: "Neural Inference Engine", type: "ai_model", icon: "ph-cpu", color: "#f59e0b", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_filter", name: "Anti-Hallucination & CoT Filter", type: "filter", icon: "ph-shield-check", color: "#10b981", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_state", name: "State & Persistence Sync", type: "persistence", icon: "ph-database", color: "#6366f1", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_output", name: "Response Delivery Stream", type: "output", icon: "ph-paper-plane-right", color: "#3b82f6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} }
+                    { id: "node_emotion", name: "Emotion Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#ec4899", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_memory", name: "Cognitive Memory", type: "database", icon: "ph-brain", color: "#8b5cf6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_prompt", name: "Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#06b6d4", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_llm", name: "Neural Inference", type: "ai_model", icon: "ph-cpu", color: "#f59e0b", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_filter", name: "Safety Filter", type: "filter", icon: "ph-shield-check", color: "#10b981", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_state", name: "State & Persistence", type: "persistence", icon: "ph-database", color: "#6366f1", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_output", name: "Response Stream", type: "output", icon: "ph-paper-plane-right", color: "#3b82f6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} }
                 ]
             };
             renderWorkflow(currentTrace);
 
             simTimers.push(setTimeout(() => {
-                if (!currentTrace || !currentTrace.nodes) return;
+                if (!currentTrace) return;
                 currentTrace.nodes[0].status = 'success';
-                currentTrace.nodes[0].duration_ms = 14;
+                currentTrace.nodes[0].duration_ms = 12;
                 currentTrace.nodes[0].summary = `${(inputText || '').length} Karakter`;
                 currentTrace.nodes[1].status = 'running';
-                currentTrace.nodes[1].summary = 'Menganalisis emosi & tone...';
+                currentTrace.nodes[1].summary = 'Analisis emosi & tone...';
                 renderWorkflow(currentTrace);
             }, 120));
 
             simTimers.push(setTimeout(() => {
-                if (!currentTrace || !currentTrace.nodes) return;
+                if (!currentTrace) return;
                 currentTrace.nodes[1].status = 'success';
                 currentTrace.nodes[1].duration_ms = 10;
-                currentTrace.nodes[1].summary = 'Emosi terklasifikasi';
+                currentTrace.nodes[1].summary = 'Tone terklasifikasi';
                 currentTrace.nodes[2].status = 'running';
-                currentTrace.nodes[2].summary = 'Mengambil fakta RDF & memori...';
+                currentTrace.nodes[2].summary = 'Mengambil fakta RDF...';
                 renderWorkflow(currentTrace);
-            }, 280));
+            }, 260));
 
             simTimers.push(setTimeout(() => {
-                if (!currentTrace || !currentTrace.nodes) return;
+                if (!currentTrace) return;
                 currentTrace.nodes[2].status = 'success';
-                currentTrace.nodes[2].duration_ms = 28;
-                currentTrace.nodes[2].summary = 'Memori & RDF dimuat';
+                currentTrace.nodes[2].duration_ms = 24;
+                currentTrace.nodes[2].summary = 'Fakta & memori dimuat';
                 currentTrace.nodes[3].status = 'running';
                 currentTrace.nodes[3].summary = 'Menyusun system prompt...';
                 renderWorkflow(currentTrace);
-            }, 480));
+            }, 440));
 
             simTimers.push(setTimeout(() => {
-                if (!currentTrace || !currentTrace.nodes) return;
+                if (!currentTrace) return;
                 currentTrace.nodes[3].status = 'success';
-                currentTrace.nodes[3].duration_ms = 18;
-                currentTrace.nodes[3].summary = 'Prompt tersintesis';
+                currentTrace.nodes[3].duration_ms = 16;
+                currentTrace.nodes[3].summary = 'Prompt siap';
                 currentTrace.nodes[4].status = 'running';
-                currentTrace.nodes[4].summary = 'Sedang inferensi neural di GPU...';
+                currentTrace.nodes[4].summary = 'Inferensi LLM GGUF...';
                 renderWorkflow(currentTrace);
-            }, 700));
+            }, 640));
         }
 
-        // Initialize SSE (Server-Sent Events) listener
+        // Live Server Events (SSE)
         function initSSE() {
             const statusText = document.getElementById('sse-status-text');
             const evtSource = new EventSource('/api/pipeline/events');
@@ -396,11 +1055,10 @@
                     const data = JSON.parse(event.data);
                     if (data && data.nodes) {
                         clearSim();
-                        currentTrace = data;
                         renderWorkflow(data);
                     }
                 } catch (e) {
-                    console.error("Error parsing pipeline event:", e);
+                    console.error("Pipeline SSE error:", e);
                 }
             };
 
@@ -409,174 +1067,24 @@
             };
 
             evtSource.onopen = function() {
-                statusText.textContent = "Live Stream Aktif";
+                statusText.textContent = "Live Stream";
             };
         }
 
-        // Fetch latest trace on page load
+        // Fetch Initial Trace
         async function fetchLatestTrace() {
             try {
                 const res = await fetch('/api/pipeline/latest');
                 if (res.ok) {
                     const data = await res.json();
-                    currentTrace = data;
                     renderWorkflow(data);
                 }
             } catch (err) {
-                console.error("Fetch latest pipeline error:", err);
+                console.error("Fetch latest trace error:", err);
             }
         }
 
-        // Render nodes and connectors in 2-Stage Flowchart
-        function renderWorkflow(trace) {
-            const container = document.getElementById('nodes-flow-container');
-            const totalTimeBadge = document.getElementById('total-time-badge');
-            
-            if (trace.total_duration_ms) {
-                totalTimeBadge.textContent = `${Math.round(trace.total_duration_ms)} ms`;
-            }
-
-            if (!trace.nodes || trace.nodes.length === 0) return;
-
-            const stage1Nodes = trace.nodes.slice(0, 4);
-            const stage2Nodes = trace.nodes.slice(4, 8);
-
-            const stage1Chips = ['pesan teks', 'tone emosi', 'fakta RDF'];
-            const stage2Chips = ['raw token', '100% ID', 'sync memori'];
-
-            const renderCard = (node, idx) => {
-                const isSelected = selectedNodeId === node.id || (!selectedNodeId && idx === 0);
-                if (isSelected && !selectedNodeId) selectedNodeId = node.id;
-
-                const isRunning = node.status === 'running';
-                const isSuccess = node.status === 'success';
-
-                let badgeHtml = '';
-                if (isRunning) {
-                    badgeHtml = `<span class="flow-node-badge running"><i class="ph ph-spinner ph-spin"></i> Proses...</span>`;
-                } else if (isSuccess) {
-                    const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
-                    badgeHtml = `<span class="flow-node-badge success">✓ ${dur}</span>`;
-                } else {
-                    badgeHtml = `<span class="flow-node-badge idle"><i class="ph ph-clock"></i> Tunggu</span>`;
-                }
-
-                return `
-                    <div class="flow-node-card ${isSelected ? 'selected' : ''} ${node.status || ''}" onclick="selectNode('${node.id}')">
-                        <div class="flow-node-top">
-                            <div class="flow-node-icon" style="background: ${node.color || '#3b82f6'};">
-                                <i class="ph ${node.icon || 'ph-gear'}"></i>
-                            </div>
-                            ${badgeHtml}
-                        </div>
-                        <div class="flow-node-title" title="${node.name}">${node.name}</div>
-                        <div class="flow-node-summary">${node.summary || ''}</div>
-                    </div>
-                `;
-            };
-
-            const renderArrow = (active, chip) => {
-                return `
-                    <div class="flow-arrow-track ${active ? 'active' : ''}">
-                        <div class="flow-arrow-line">
-                            ${active ? '<div class="flow-pulse-beam"></div>' : ''}
-                        </div>
-                        <div class="flow-run-chip" title="${chip}">${chip}</div>
-                    </div>
-                `;
-            };
-
-            const stage1Ms = stage1Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
-            const stage2Ms = stage2Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
-            const stage1Done = stage1Nodes.every(n => n.status === 'success');
-
-            let html = `
-                <div class="flow-stage-bar">
-                    <span class="flow-stage-label"><i class="ph ph-lightning"></i> TAHAP 1: EKSTRAKSI &amp; SINTESIS KONTEKS</span>
-                    <span class="flow-stage-info">${Math.round(stage1Ms)}ms</span>
-                </div>
-                <div class="flow-stage-row">
-            `;
-
-            stage1Nodes.forEach((node, idx) => {
-                html += renderCard(node, idx);
-                if (idx < stage1Nodes.length - 1) {
-                    const isConnActive = node.status === 'success';
-                    html += renderArrow(isConnActive, stage1Chips[idx] || 'data');
-                }
-            });
-
-            html += `
-                </div>
-                <div class="flow-bridge-row">
-                    <div class="flow-bridge-track ${stage1Done ? 'active' : ''}">
-                        <span>Kirim Prompt Terstruktur</span>
-                        <div class="bridge-pulse-dot ${stage1Done ? 'pulsing' : ''}"></div>
-                        <i class="ph ph-arrow-down-right"></i>
-                        <span>Injeksi ke GPU Neural Engine</span>
-                    </div>
-                </div>
-                <div class="flow-stage-bar">
-                    <span class="flow-stage-label"><i class="ph ph-cpu"></i> TAHAP 2: INFERENSI NEURAL &amp; SANITASI OUTPUT</span>
-                    <span class="flow-stage-info">${Math.round(stage2Ms)}ms</span>
-                </div>
-                <div class="flow-stage-row">
-            `;
-
-            stage2Nodes.forEach((node, idx) => {
-                html += renderCard(node, idx + 4);
-                if (idx < stage2Nodes.length - 1) {
-                    const isConnActive = node.status === 'success';
-                    html += renderArrow(isConnActive, stage2Chips[idx] || 'data');
-                }
-            });
-
-            html += `</div>`;
-
-            container.innerHTML = html;
-            updateInspector();
-        }
-
-        // Select node
-        function selectNode(nodeId) {
-            selectedNodeId = nodeId;
-            document.querySelectorAll('.flow-node-card').forEach(card => card.classList.remove('selected'));
-            if (currentTrace) {
-                renderWorkflow(currentTrace);
-            }
-        }
-
-        // Switch Inspector Tab
-        function switchInspectorTab(tab) {
-            activeTab = tab;
-            document.getElementById('tab-out-btn').classList.toggle('active', tab === 'output');
-            document.getElementById('tab-in-btn').classList.toggle('active', tab === 'input');
-            updateInspector();
-        }
-
-        // Update inspector view
-        function updateInspector() {
-            if (!currentTrace || !currentTrace.nodes) return;
-            const node = currentTrace.nodes.find(n => n.id === selectedNodeId) || currentTrace.nodes[0];
-            if (!node) return;
-
-            document.getElementById('side-node-name').textContent = node.name;
-            document.getElementById('side-node-summary').textContent = `${node.summary || ''} • Durasi: ${node.duration_ms || 0}ms`;
-
-            const codeView = document.getElementById('side-code-view');
-            const dataToView = activeTab === 'output' ? node.data_out : node.data_in;
-            codeView.textContent = JSON.stringify(dataToView || {}, null, 2);
-        }
-
-        // Copy JSON
-        function copyCurrentJson() {
-            const code = document.getElementById('side-code-view').textContent;
-            navigator.clipboard.writeText(code).then(() => {
-                alert("JSON berhasil disalin ke clipboard!");
-            });
-        }
-
-        // Test Query Runner
+        // Test Query Submission
         async function runTestQuery(event) {
             event.preventDefault();
             const input = document.getElementById('test-input');
@@ -585,7 +1093,7 @@
             if (!query) return;
 
             btn.disabled = true;
-            btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Berpikir...';
+            btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Proses...';
             startSim(query);
 
             try {
@@ -597,8 +1105,7 @@
                 const data = await res.json();
                 clearSim();
                 if (data.pipeline_trace) {
-                    currentTrace = data.pipeline_trace;
-                    renderWorkflow(currentTrace);
+                    renderWorkflow(data.pipeline_trace);
                 }
             } catch (err) {
                 clearSim();
@@ -606,15 +1113,21 @@
             } finally {
                 clearSim();
                 btn.disabled = false;
-                btn.innerHTML = '<i class="ph ph-play"></i> Eksekusi';
+                btn.innerHTML = '<i class="ph ph-play"></i> Jalankan';
                 input.value = '';
             }
         }
 
-        // On page load
+        // Window Resize Wire Recompute
+        window.addEventListener('resize', () => {
+            updateConnectionLines();
+        });
+
+        // Initialize on Load
         window.addEventListener('DOMContentLoaded', () => {
             fetchLatestTrace();
             initSSE();
+            resetView();
         });
     </script>
 </body>
