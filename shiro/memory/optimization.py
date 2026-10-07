@@ -126,6 +126,21 @@ def diagnose_memory_status(memory, context_window=4096):
     }
 
 
+def calculate_token_budget(context_window=4096, max_response=800, system_overhead=250):
+    """
+    Calculate available token budget for conversation history and memory facts.
+    
+    Args:
+        context_window: Total context window size (default: 4096)
+        max_response: Allocated tokens for model generation (default: 800)
+        system_overhead: Approximate tokens for system prompt and instructions (default: 250)
+        
+    Returns:
+        Available token budget
+    """
+    return max(500, context_window - max_response - system_overhead)
+
+
 # Usage Examples:
 """
 # In web.py, replace this:
