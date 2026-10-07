@@ -1,0 +1,54 @@
+{
+  "system_metadata": {
+    "version": "2.0",
+    "created_date": "2026-02-09T01:47:08.040336",
+    "last_interaction": null,
+    "total_turns": 0,
+    "token_usage_approx": 0,
+    "session_count": 0,
+    "user_name": "Kakak",
+    "topics_discussed": []
+  },
+  "user_profile": {
+    "name": "Kakak",
+    "aliases": [],
+    "personality_traits": [],
+    "preferences": {
+      "interaction_style": "",
+      "favorite_topics": [],
+      "dislikes": []
+    },
+    "relationship_info": {
+      "role": "User",
+      "importance": "High"
+    }
+  },
+  "agent_persona": {
+    "name": "Shiro",
+    "current_mood": "Ceria & Menunggu",
+    "emotional_state": {
+      "happiness": 70,
+      "anxiety": 0,
+      "arousal": 0,
+      "confidence": 70,
+      "longing": 50
+    },
+    "relationship_status": {
+      "label": "Unknown",
+      "intimacy_level": 0,
+      "commitment": ""
+    },
+    "internal_thought": "",
+    "recent_actions": []
+  },
+  "knowledge_base": {
+    "facts": [],
+    "concepts": {},
+    "relationships": {}
+  },
+  "episodic_memory": {
+    "sessions": []
+  },
+  "learned_patterns": [],
+  "short_term_history": []
+}

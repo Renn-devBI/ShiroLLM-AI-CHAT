@@ -1,0 +1,116 @@
+=====================================================================
+  PLANNING: MERAPIKAN STRUKTUR SHIRO-LLMA
+  Dibuat: 2026-10-07 | Status: SELESAI (Phase 1-6 Implemented & Tested)
+=====================================================================
+
+KONDISI SEBELUMNYA (hasil survei repo)
+---------------------------------------------------------------------
+- web.py ~84 KB: Flask route, prompt builder, cleaner, trace, vision.
+- memory_manager_v2.py ~42 KB: memori + training data + sync Drive.
+- 10+ file dokumentasi redundant di root.
+- System prompt Shiro ditulis ulang di 3 tempat berbeda.
+- Data pribadi belum memiliki starter template bersih.
+- Belum ada unit test suite.
+
+=====================================================================
+FASE 0 - PRIVASI & CADANGAN DATA (SELESAI)
+=====================================================================
+[x] 0.1 Pulihkan data asli ke komputer lokal:
+        backup/ingatan_shiro.json, backup/training_data/*
+        Folder backup/ aman di komputer lokal dan masuk .gitignore.
+[x] 0.2 Tambahkan backup/ ke .gitignore.
+[x] 0.3 Sediakan starter template bersih:
+        data/templates/ingatan_shiro.template.json (0 turn).
+[x] 0.4 Pastikan ingatan_shiro.json dan training_data/ di git berstatus bersih.
+[x] 0.5 api_key.json terlindungi dan tidak memuat kredensial pribadi.
+
+=====================================================================
+FASE 1 - STRUKTUR PAKET MODULAR SHIRO (SELESAI)
+=====================================================================
+Shiro-LLMA/
+├── web.py                      # Main Flask runner & backward-compatibility shim
+├── typo_helper.py              # Shim -> shiro.nlp.typo
+├── web_reader.py               # Shim -> shiro.web.reader
+├── memory_manager_v2.py        # Shim -> shiro.memory.manager
+├── memory_optimization.py      # Shim -> shiro.memory.optimization
+├── export_training_data.py     # CLI export dataset -> shiro.training.exporter
+│
+├── shiro/                      # 📦 Paket Inti Modular
+│   ├── __init__.py             # Versi 2.5.0
+│   ├── config.py               # Path, context size, environment
+│   ├── persona.py              # SATU sumber system prompt Shiro
+│   ├── llm/
+│   │   ├── cleaner.py          # Response sanitization & anti-CoT
+│   │   └── loader.py           # Preload CUDA Linux & loader Llama GGUF
+│   ├── nlp/
+│   │   ├── typo.py             # Normalizer typo & kamus chat gaul
+│   │   └── emotion.py          # Deteksi emosi & sentiment classifier
+│   ├── memory/
+│   │   ├── manager.py          # AdvancedMemoryManager (RDF, Episodic, History)
+│   │   ├── optimization.py     # Kompresi riwayat & alokasi token budget
+│   │   └── drive_sync.py       # Atomic file write & Drive sync/restore
+│   ├── web/
+│   │   └── reader.py           # MediaWiki API bypass (Fandom/Wiki) & HTML extractor
+│   ├── training/
+│   │   └── exporter.py         # Exporter Alpaca, ChatML, ShareGPT
+│   └── pipeline/
+│       └── trace.py            # SSE trace node visualizer
+│
+├── data/
+│   └── templates/              # ingatan_shiro.template.json
+├── docs/                       # ARCHITECTURE.md, CONFIGURATION.md, DOCKER.md
+├── tests/                      # Unit test suite (14 test cases)
+├── templates/ & static/        # Frontend UI Chat & assets
+└── README.md                   # Ringkas & profesional
+
+=====================================================================
+FASE 2 - MODULARISASI & KOMPATIBILITAS (SELESAI)
+=====================================================================
+[x] 2.1 persona.py - System prompt dipusatkan di shiro.persona;
+        web.py dan export_training_data.py mengimpor dari persona.py.
+[x] 2.2 llm/cleaner.py - Logika sanitasi, filter <think>, preservasi newline.
+[x] 2.3 nlp/emotion.py - Klasifikasi emosi terisolasi dan mudah diuji.
+[x] 2.4 config.py - Sentralisasi konstanta paths dan environment.
+[x] 2.5 pipeline/trace.py - Tracer eksekusi real-time berbasis SSE.
+[x] 2.6 Backward Compatibility: Seluruh runner root (web.py, notebook Colab,
+        docker, script CLI) 100% tetap berjalan tanpa breaking changes.
+
+=====================================================================
+FASE 3 - PENINGKATAN SISTEM MEMORI & SYNC (SELESAI)
+=====================================================================
+[x] 3.1 drive_sync.py memusatkan logika pencadangan dan pemulihan Google Drive.
+[x] 3.2 Atomic Write: Menyimpan memori via tempfile + os.replace agar file
+        tidak pernah korup saat proses penulisan terputus.
+[x] 3.3 Drive Auto-Restore cerdas: Memulihkan memori dari Drive jika memori
+        lokal masih 0-turn atau Drive memiliki timestamp interaksi lebih baru.
+
+=====================================================================
+FASE 4 - PERBAIKAN KUALITAS KODE (SELESAI)
+=====================================================================
+[x] 4.1 Perbaikan kamus typo:
+        - "buat" -> "untuk" dihapus agar tidak merusak kata kerja "membuat".
+        - "kangen" dipertahankan agar deteksi emosi rindu tetap akurat.
+[x] 4.2 Logging terstruktur pada modul shiro.*.
+[x] 4.3 Type hints dan docstrings lengkap pada paket shiro.
+
+=====================================================================
+FASE 5 - PENGUJIAN UNIT (UNIT TESTS) (SELESAI)
+=====================================================================
+[x] 5.1 tests/test_cleaner.py - Preservasi \n\n (Shift+Enter) & pembersihan <think>.
+[x] 5.2 tests/test_typo.py - URL web aman, typo dinormalisasi dengan benar.
+[x] 5.3 tests/test_web_reader.py - Parsing MediaWiki Fandom & Wikipedia URL.
+[x] 5.4 tests/test_memory.py - Atomic save/load & starter template.
+Hasil: 14/14 tests PASSED (0 regressions).
+
+=====================================================================
+FASE 6 - KONSOLIDASI DOKUMENTASI & PEMBERSIHAN (SELESAI)
+=====================================================================
+[x] 6.1 Konsolidasi 10+ berkas dokumentasi redundant ke folder docs/:
+        - docs/ARCHITECTURE.md (diagram neural pipeline & arsitektur modul)
+        - docs/CONFIGURATION.md (env vars, model configs, OpenAI API)
+        - docs/DOCKER.md (panduan container, docker-compose, script helper)
+[x] 6.2 Hapus file redundant di root (COMPARISON.txt, DOCKER_*.md/.txt,
+        MEMORY_SUMMARY.txt, QUICK_START.txt, README_CONFIGURATION.md,
+        README_DOCKER.md, install.txt).
+[x] 6.3 README.md bersih, modern, dan lengkap dengan badge status.
+=====================================================================

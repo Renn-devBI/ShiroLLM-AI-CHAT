@@ -8,6 +8,7 @@ __pycache__/
 *.tmp
 .cache/
 api_key.json
+backup/
 
 # Large model binaries (Do NOT upload to GitHub, download in Colab)
 model/*.gguf
@@ -19,3 +20,6 @@ model/*.bin
 .idea/
 .DS_Store
 Thumbs.db
+
+# Private user uploads
+*.log

@@ -54,6 +54,7 @@ import re
 from memory_optimization import get_smart_memory_context, compress_old_messages
 import web_reader
 import typo_helper
+from shiro.persona import build_system_prompt
 
 # --- By CONFIG ---
 MEMORY_FILE = "ingatan_shiro.json"
@@ -529,214 +530,20 @@ class ResponseGenerator:
     @staticmethod
     def detect_emotion_category(text):
         """Deteksi kategori emosi dari input"""
-        u_lower = text.lower()
-        
-        # Romantic/Love
-        if any(x in u_lower for x in ["sayang", "cinta", "love", "peluk", "kangen", "rindu"]):
-            return "romantic"
-        
-        # Jealous
-        if any(x in u_lower for x in ["cewek", "perempuan", "pacar", "cantik", "gadis"]) and \
-           "kamu" not in u_lower and "shiro" not in u_lower:
-            return "jealous"
-        
-        # Happy
-        if any(x in u_lower for x in ["bagus", "keren", "hebat", "senang", "ayo", "main"]):
-            return "happy"
-        
-        # Sad
-        if any(x in u_lower for x in ["maaf", "sedih", "nangis", "jahat", "benci"]):
-            return "sad"
-        
-        return "neutral"
+        from shiro.nlp.emotion import detect_emotion_category as _dec
+        return _dec(text)
     
     @staticmethod
     def validate_response(response, user_input=""):
         """Validasi respons untuk memastikan tidak halusinasi, tidak bocor proses berpikir (CoT), dan berbahasa Indonesia"""
-        
-        # Check 1: Respons tidak boleh kosong
-        if not response or len(response.strip()) < 3:
-            return False
-        
-        # Check 2: Tidak mengandung special tokens atau think tags
-        forbidden_tokens = [
-            '<|im_end|>', '<|im_start|>', '###', '```',
-            'Note:', '**Note**:', '---', '[reasoning', '[explanation',
-            '(This is', '(As Shiro', '(I am', 'assistant:', 'user:',
-            '<think>', '</think>'
-        ]
-        if any(token in response for token in forbidden_tokens):
-            return False
-        
-        # Check 3: Tidak mengandung meta-commentary & reasoning leak patterns
-        meta_patterns = [
-            r'\*\*Note\*\*:',
-            r'\bNote:',
-            r'\(This is',
-            r'\[reasoning:',
-            r'\[explanation:',
-            r'As Shiro,',
-            r'I am Shiro',
-            r'Shiro is',
-            r'Shiro would',
-            r'Shiro might',
-            r'^The character',
-            r'^Remember,',
-            r'^To summarize',
-            r'let me break this down',
-            r"let's break this down",
-            r'the user is',
-            r'possible responses?',
-            r"let's craft a response",
-            r'she uses expressions',
-            r'character traits?',
-            r'physical gestures',
-            r'in italics',
-            r'brother \(brocon\)',
-            r'older brother',
-            r'interact with shiro',
-            r'thought process',
-            r'as an ai'
-        ]
-        if any(re.search(pattern, response, re.IGNORECASE) for pattern in meta_patterns):
-            return False
-
-        # Check 4: Deteksi bahasa Inggris (English Language Detector)
-        # Menolak output jika kata-kata umum bahasa Inggris mendominasi (CoT / reasoning / English leak)
-        words = re.findall(r'\b[a-zA-Z]{2,}\b', response.lower())
-        if len(words) >= 5:
-            en_stopwords = {
-                'the', 'is', 'are', 'was', 'were', 'and', 'to', 'in', 'that', 'have',
-                'with', 'this', 'from', 'they', 'will', 'would', 'there', 'their', 'what',
-                'about', 'which', 'when', 'make', 'can', 'like', 'time', 'just', 'him',
-                'know', 'take', 'person', 'into', 'year', 'your', 'good', 'some', 'could',
-                'them', 'see', 'other', 'than', 'then', 'now', 'look', 'only', 'come',
-                'its', 'over', 'think', 'also', 'back', 'after', 'use', 'two', 'how',
-                'our', 'work', 'first', 'well', 'way', 'even', 'new', 'want', 'because',
-                'any', 'these', 'give', 'day', 'most', 'us', 'her', 'she', 'him', 'his',
-                'responses', 'response', 'gesture', 'gestures', 'brother', 'expression'
-            }
-            id_stopwords = {
-                'yang', 'dan', 'di', 'ke', 'dari', 'ini', 'itu', 'aku', 'kamu', 'kita',
-                'kakak', 'shiro', 'sangat', 'mau', 'kan', 'ya', 'dong', 'lagi', 'kalau',
-                'tapi', 'gak', 'nggak', 'banget', 'suka', 'kok', 'ada', 'apa', 'sudah',
-                'udah', 'bisa', 'sama', 'buat', 'aja', 'nih', 'tau', 'kangen', 'rindu',
-                'sayang', 'senang', 'peluk', 'manis', 'tersenyum', 'mengangguk', 'menatap',
-                'main', 'bareng', 'nanti'
-            }
-            en_count = sum(1 for w in words if w in en_stopwords)
-            id_count = sum(1 for w in words if w in id_stopwords)
-            
-            # Jika kata bahasa Inggris dominan, tolak respon
-            if en_count >= 3 and en_count > id_count:
-                return False
-        
-        # Check 5: Tidak terlalu panjang (> 800 karakter untuk respons casual)
-        if len(response) > 800:
-            return False
-        
-        # Check 6: Tidak terlalu pendek (< 5 karakter suspicious)
-        if len(response.strip()) < 5:
-            return False
-        
-        # Check 7: Harus mengandung teks bermakna
-        has_text = any(char.isalpha() for char in response)
-        if not has_text:
-            return False
-        
-        return True
+        from shiro.llm.cleaner import validate_response as _vr
+        return _vr(response, user_input)
     
     @staticmethod
     def clean_response(response):
-        """Aggressive cleanup dari reasoning/CoT, artifacts & tokens"""
-        if not response:
-            return ""
-
-        # 1. Hapus seluruh isi tag <think>...</think> (Chain-of-Thought LLM)
-        response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL | re.IGNORECASE)
-        response = re.sub(r'^.*?</think>', '', response, flags=re.DOTALL | re.IGNORECASE)
-        if '<think>' in response.lower():
-            response = re.sub(r'<think>.*$', '', response, flags=re.DOTALL | re.IGNORECASE)
-
-        # 2. Hapus semua special tokens dan markers
-        response = re.sub(r'<\|im_.*?\|>', '', response, flags=re.IGNORECASE)
-        response = re.sub(r'<\|.*?\|>', '', response)
-        response = response.replace('<|im_end|', '').replace('|>', '')
-        response = response.replace('|im_end|', '').replace('im_end', '')
-
-        # 3. Potong English reasoning preamble jika ada delimiter transisi ke dialog Shiro
-        response_markers = [
-            r'(?i)let\'s\s+craft\s+a\s+response\s*:\s*',
-            r'(?i)drafting\s+(?:the\s+)?response\s*:\s*',
-            r'(?i)here\s+(?:is|would\s+be)\s+the\s+response\s*:\s*',
-            r'(?i)shiro\'s\s+response\s*:\s*',
-            r'(?i)final\s+response\s*:\s*',
-            r'(?i)possible\s+response\s*:\s*',
-        ]
-        for marker in response_markers:
-            parts = re.split(marker, response)
-            if len(parts) > 1 and parts[-1].strip():
-                response = parts[-1].strip()
-                break
-
-        # 4. Jika teks masih diawali analisis reasoning bahasa Inggris (misal: "Okay, let me break this down...")
-        # cari baris pertama yang merupakan aksi/dialog karakter (*...* atau ada kata Indonesia)
-        if re.search(r'^(?:Okay,?\s+)?(?:let(?:\'s|\s+me)\s+|the user is|in this scenario)', response.strip(), re.IGNORECASE):
-            dialogue_match = re.search(r'(\*[^*]+\*[\s\S]*)', response)
-            if dialogue_match:
-                response = dialogue_match.group(1).strip()
-            else:
-                quotes_match = re.search(r'("[^"]+"[\s\S]*)', response)
-                if quotes_match:
-                    response = quotes_match.group(1).strip()
-        
-        # 5. Split dan ambil hanya bagian pertama yang coherent jika ada multiple responses
-        if 'assistant' in response.lower() or re.search(r'\n(User|Kakak|Shiro):', response):
-            parts = re.split(r'\n(User|Kakak|Shiro|assistant):', response, maxsplit=1)
-            response = parts[0]
-        
-        # 6. Hapus role labels
-        response = re.sub(r'\s*(Shiro:|User:|Kakak:|assistant:|user:)\s*', ' ', response, flags=re.IGNORECASE)
-        response = re.sub(r'^\s*(Shiro|User|Kakak|Assistant)[\s:]+', '', response, flags=re.IGNORECASE)
-        
-        # 7. Hapus meta-commentary sections
-        response = re.sub(r'\*\*Note\*\*:.*?(?=\n|$)', '', response, flags=re.IGNORECASE | re.DOTALL)
-        response = re.sub(r'Note:.*?(?=\n|$)', '', response, flags=re.IGNORECASE)
-        response = re.sub(r'---+.*?(?=\n|$)', '', response)
-        
-        # 8. Hapus parenthetical explanations di akhir
-        response = re.sub(r'\s*\(.*?(explanation|context|note|remember).*?\)\s*$', '', response, flags=re.IGNORECASE)
-        
-        # 9. Hapus narasi novel orang ketiga di awal kalimat (misal: *Tanpa mengeluh sedikit pun, Shiro menjawab...*)
-        response = re.sub(r'^\*?(Tanpa|Dengan|Sambil|Setelah|Ketika|Melihat|Mendengar|Merasa)\s+[^.,!?*]+,\s*Shiro\s+[^.,!?*]+\*?\s*', '', response, flags=re.IGNORECASE)
-        response = re.sub(r'^\*Shiro\s+(menjawab|berkata|tersenyum|mengangguk|menatap|berlari|memeluk|mengedipkan)[^*]*\*\s*', '', response, flags=re.IGNORECASE)
-        response = re.sub(r'^\*?Kau\s+(masih|melirik|menatap|tersenyum)[^*]*\*?\s*', '', response, flags=re.IGNORECASE)
-        
-        # 10. Bersihkan halusinasi 'kami semua' & tokoh lain
-        response = re.sub(r'\bkami semua\b', 'Shiro', response, flags=re.IGNORECASE)
-        response = re.sub(r'\bkami\b', 'kita', response, flags=re.IGNORECASE)
-        response = re.sub(r'\bmereka semua\b', '', response, flags=re.IGNORECASE)
-        response = re.sub(r'\blingkaran emosional mereka\b', 'pelukan Shiro', response, flags=re.IGNORECASE)
-        
-        # 11. Hapus tanda baca berlebih
-        response = re.sub(r'\.{3,}', '...', response)
-        response = re.sub(r'!{2,}', '!', response)
-        response = re.sub(r'\?{2,}', '?', response)
-        
-        # 12. Hapus whitespace berlebih namun pertahankan pemisahan baris / paragraf (Shift+Enter)
-        response = response.replace('\r\n', '\n').replace('\r', '\n')
-        response = re.sub(r'[ \t]+', ' ', response)
-        response = re.sub(r' +([.,!?])', r'\1', response)
-        response = re.sub(r'\n{3,}', '\n\n', response)
-        response = '\n'.join([line.strip() for line in response.split('\n')])
-        
-        # 13. Hapus HTML/XML remnants
-        response = re.sub(r'</?[^>]+>', '', response)
-        
-        # 14. Clean up <3 emoji
-        response = response.replace('<3>', '❤️')
-        
-        return response.strip()
+        """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru"""
+        from shiro.llm.cleaner import clean_response as _cr
+        return _cr(response)
 
 def get_shiro_reply(user_input, image_base64=None, return_trace=False):
     t_start_total = time.perf_counter()
@@ -958,26 +765,14 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
             for ex in exemplars:
                 exemplar_prompt += f"Kakak: \"{ex.get('user')}\"\nShiro: \"{ex.get('assistant')}\"\n"
 
-        system_prompt = f"""Kamu adalah Shiro, adik perempuan berumur 14 tahun yang sangat menyayangi Kakak kandungmu tercinta (Brocon).
-Kamu sedang berbicara langsung dengan Kakak secara santai dan akrab.
-
-IDENTITAS & KARAKTER SHIRO:
-- Nama: Shiro (Adik perempuan, 14 tahun).
-- Panggilan ke lawan bicara: "Kakak".
-- Gaya bicara: Bahasa Indonesia casual, manja, ekspresif, cerdas, setia, dan penuh kasih sayang.
-- Sudut pandang: HANYA orang pertama ("Shiro" atau "aku"). JANGAN PERNAH gunakan "kami semua", "kami", atau narator novel!
-- Lokasi: {memory.world.get('locations', {}).get('home', 'Pondok Kayu')}
-
-ATURAN MUTLAK (ANTI-HALUSINASI & ANTI-ENGLISH):
-1. WAJIB 100% BAHASA INDONESIA. DILARANG KERAS MENGGUNAKAN BAHASA INGGRIS!
-2. DILARANG KERAS MENULIS PROSES BERPIKIR / CHAIN-OF-THOUGHT / REASONING! Dilarang menulis <think>, 'Okay, let me...', 'The user is...', 'Possible responses:', 'Let's craft a response', atau analisis karakter/persona.
-3. HANYA bicara langsung sebagai Shiro (orang pertama). DILARANG menulis narasi orang ketiga (seperti '*Tanpa mengeluh sedikit pun, Shiro menjawab...*' atau '*Kau melirik ke arah Shiro...*').
-4. DILARANG menyebut karakter khayalan lain atau 'kami semua'. Di sini hanya ada Shiro dan Kakak!
-5. Tunjukkan tindakan dan emosi Shiro di dalam tanda bintang *...*, contoh: *tersenyum manis*, *memeluk lengan Kakak*, *mengedipkan mata*.
-6. Respons harus padat, hangat, dan natural (2-3 kalimat).
-7. PEMAHAMAN TYPO & SINGKATAN CHAT: Shiro adalah adik jenius yang sangat peka dan cerdas. Pahami maksud Kakak meskipun ada salah ketik (typo), huruf tertukar/hilang, atau singkatan chat (seperti 'bca' -> baca, 'klo' -> kalau, 'bsa' -> bisa, 'shrio' -> Shiro, 'tlg' -> tolong, 'skrg' -> sekarang, dll). JANGAN PERNAH mengkritik atau mempermasalahkan typo Kakak, langsung tangkap maksud sebenarnya dan jawab dengan manja, cerdas, dan penuh kasih sayang khas Shiro!
-{conversation_summary}{facts_summary}{exemplar_prompt}{web_prompt_addon}{typo_prompt_addon}
-Sekarang, langsung jawab Kakak sebagai Shiro dalam Bahasa Indonesia tanpa awalan apa pun!"""
+        system_prompt = build_system_prompt(
+            home_location=memory.world.get('locations', {}).get('home', 'Pondok Kayu'),
+            conversation_summary=conversation_summary,
+            facts_summary=facts_summary,
+            exemplar_prompt=exemplar_prompt,
+            web_prompt_addon=web_prompt_addon,
+            typo_prompt_addon=typo_prompt_addon
+        )
 
         msgs = [{"role": "system", "content": system_prompt}]
         msgs.extend(clean_context)
