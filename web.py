@@ -1588,7 +1588,7 @@ def switch_model():
                 "n_ctx": CONTEXT_SIZE,
                 "n_threads": 4,
                 "n_gpu_layers": GPU_LAYERS,
-                "verbose": True,
+                "verbose": False,
             }
             if vision_handler:
                 llama_kwargs["chat_handler"] = vision_handler
@@ -1673,7 +1673,7 @@ if __name__ == '__main__':
             "n_ctx": CONTEXT_SIZE,
             "n_threads": 4,
             "n_gpu_layers": GPU_LAYERS,
-            "verbose": True,
+            "verbose": False,
         }
         if vision_handler:
             llama_kwargs["chat_handler"] = vision_handler
