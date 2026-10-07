@@ -126,35 +126,147 @@ if not os.path.exists(PROFILE_DIR):
 if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
+# Vision Chat Handler instance
+vision_chat_handler = None
+
+def is_running_in_colab():
+    """Deteksi apakah server berjalan di Google Colab atau komputer lokal"""
+    return os.path.exists('/content') or 'COLAB_GPU' in os.environ or 'COLAB_RELEASE_TAG' in os.environ
+
+def get_available_gguf_models():
+    """Scan folder model/ secara dinamis untuk file .gguf (termasuk yang dimasukkan secara manual)"""
+    models = []
+    if os.path.exists(MODEL_DIR):
+        for f in sorted(os.listdir(MODEL_DIR)):
+            if f.endswith('.gguf') and not f.startswith('.'):
+                models.append(f"{MODEL_DIR}/{f}".replace("\\", "/"))
+    return models
+
+def init_vision_handler(model_path):
+    """
+    Inisialisasi vision chat handler jika model adalah model vision (seperti Qwen2.5-VL atau Llava)
+    dan file mmproj tersedia di folder model/.
+    """
+    global vision_chat_handler
+    vision_chat_handler = None
+    
+    name = os.path.basename(model_path).lower()
+    is_vision = "vl" in name or "vision" in name or "llava" in name
+    if not is_vision:
+        return None
+        
+    mmproj_candidates = [
+        os.path.join(MODEL_DIR, "mmproj-F16.gguf"),
+        os.path.join(MODEL_DIR, "mmproj-model-f16.gguf"),
+    ]
+    if os.path.exists(MODEL_DIR):
+        for f in os.listdir(MODEL_DIR):
+            if "mmproj" in f.lower() and f.endswith(".gguf"):
+                cand = os.path.join(MODEL_DIR, f)
+                if cand not in mmproj_candidates:
+                    mmproj_candidates.append(cand)
+                    
+    mmproj_file = None
+    for cand in mmproj_candidates:
+        if os.path.exists(cand):
+            mmproj_file = cand
+            break
+            
+    if not mmproj_file:
+        print(f"⚠️ Warning: Model {name} adalah vision model, tapi file mmproj-*.gguf belum ditemukan di {MODEL_DIR}")
+        return None
+        
+    try:
+        from llama_cpp.llama_chat_format import Qwen2VLChatHandler
+        vision_chat_handler = Qwen2VLChatHandler(clip_model_path=mmproj_file)
+        print(f"👁️ Vision Chat Handler (Qwen2VL) aktif dengan projector: {mmproj_file}")
+        return vision_chat_handler
+    except Exception as e1:
+        try:
+            from llama_cpp.llama_chat_format import Llava15ChatHandler
+            vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file)
+            print(f"👁️ Vision Chat Handler (Llava15) aktif dengan projector: {mmproj_file}")
+            return vision_chat_handler
+        except Exception as e2:
+            print(f"⚠️ Gagal inisialisasi vision chat handler: {e1} / {e2}")
+            return None
+
 # Model configuration
 def load_model_config():
     """Load model config, return dict dengan available models & current model"""
+    scanned_models = get_available_gguf_models()
+    
+    config = {
+        "current_model": "",
+        "local_default_model": "model/Qwen3-4B-Q4_K_M.gguf",
+        "available_models": [],
+        "model_info": {}
+    }
+    
     if os.path.exists(MODEL_CONFIG_FILE):
         try:
             with open(MODEL_CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                # Validasi model path ada
-                if config.get("current_model"):
-                    model_path = config["current_model"]
-                    if not os.path.exists(model_path):
-                        print(f"Warning: Model {model_path} not found in {MODEL_DIR}")
-                return config
+                saved = json.load(f)
+                if isinstance(saved, dict):
+                    config.update(saved)
         except Exception as e:
             print(f"Error loading model config: {e}")
+
+    # Gabungkan file .gguf yang baru dimasukkan secara manual ke folder model/
+    current_list = list(config.get("available_models", []))
+    for m in scanned_models:
+        if m not in current_list:
+            current_list.append(m)
+    config["available_models"] = current_list
     
-    # Default config jika belum ada
-    return {
-        "current_model": f"{MODEL_DIR}/Qwen3-32B-Q4_K_M.gguf",
-        "available_models": [
-            f"{MODEL_DIR}/Qwen3-32B-Q4_K_M.gguf",
-            f"{MODEL_DIR}/Qwen2.5-7B-Instruct-Q5_K_M.gguf",
-            f"{MODEL_DIR}/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
-            f"{MODEL_DIR}/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
-            f"{MODEL_DIR}/Qwen3-4B-Q4_K_M.gguf",
-            f"{MODEL_DIR}/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf",
-            f"{MODEL_DIR}/Phi-3-mini-4k-instruct-q4.gguf"
-        ]
-    }
+    # Auto-generate metadata untuk model manual baru
+    if "model_info" not in config:
+        config["model_info"] = {}
+    for m in config["available_models"]:
+        if m not in config["model_info"]:
+            basename = os.path.basename(m).replace(".gguf", "")
+            size_gb = 0
+            if os.path.exists(m):
+                size_gb = os.path.getsize(m) / (1024 * 1024 * 1024)
+            size_str = f"~{size_gb:.1f} GB" if size_gb > 0 else "GGUF"
+            config["model_info"][m] = {
+                "name": basename,
+                "size": size_str,
+                "quantization": "Manual/Auto",
+                "description": f"Model Lokal (Manual): {basename} ({size_str})"
+            }
+
+    # Penentuan model aktif otomatis:
+    in_colab = is_running_in_colab()
+    current_model = config.get("current_model", "")
+    
+    if not in_colab:
+        # NON-COLAB (Local PC / Komputer Biasa):
+        # Auto-default ke model rendah agar tidak membebani PC
+        local_default = config.get("local_default_model", "model/Qwen3-4B-Q4_K_M.gguf")
+        
+        # Jika model belum dipilih atau model saat ini (misal 32B Colab) tidak tersedia di disk
+        if not current_model or not os.path.exists(current_model) or ("32b" in current_model.lower() and not os.path.exists(current_model)):
+            if os.path.exists(local_default):
+                config["current_model"] = local_default
+            elif scanned_models:
+                # Cari model dengan ukuran terkecil di folder model/
+                sorted_by_size = sorted(scanned_models, key=lambda p: os.path.getsize(p) if os.path.exists(p) else 999999999999)
+                config["current_model"] = sorted_by_size[0]
+            else:
+                config["current_model"] = local_default
+    else:
+        # GOOGLE COLAB:
+        colab_default = "model/Qwen3-32B-Q4_K_M.gguf"
+        if not current_model or not os.path.exists(current_model):
+            if os.path.exists(colab_default):
+                config["current_model"] = colab_default
+            elif scanned_models:
+                config["current_model"] = scanned_models[0]
+            else:
+                config["current_model"] = colab_default
+                
+    return config
 
 def save_model_config(config):
     """Save model config"""
@@ -169,7 +281,9 @@ GPU_LAYERS = int(os.environ.get("N_GPU_LAYERS", "0"))
 def detect_chat_format(model_path):
     """Deteksi chat_format yang tepat berdasarkan nama file model"""
     name = os.path.basename(model_path).lower()
-    if "llama-3" in name or "llama3" in name or "lumimaid" in name:
+    if "vl" in name or "vision" in name:
+        return "chatml"
+    elif "llama-3" in name or "llama3" in name or "lumimaid" in name:
         return "llama-3"
     elif "qwen" in name:
         return "chatml"
@@ -436,8 +550,39 @@ class ResponseGenerator:
         
         return response.strip()
 
-def get_shiro_reply(user_input):
+def get_shiro_reply(user_input, image_base64=None):
     try:
+        active_model_name = os.path.basename(getattr(llm, 'model_path', '')).lower() if hasattr(llm, 'model_path') else ""
+        has_vision = bool(vision_chat_handler is not None or "vl" in active_model_name)
+        
+        # Penanganan khusus jika Kakak mengirim gambar:
+        if image_base64:
+            if not has_vision:
+                # Cek apakah ada GEMINI_API_KEY di environment untuk visual bridge
+                gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+                if gemini_key:
+                    try:
+                        import urllib.request
+                        clean_b64 = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
+                        req_data = {
+                            "contents": [{
+                                "parts": [
+                                    {"text": "Deskripsikan secara detail dan padat apa saja yang terlihat di gambar ini dalam 1-2 kalimat bahasa Indonesia untuk konteks visual Shiro."},
+                                    {"inline_data": {"mime_type": "image/jpeg", "data": clean_b64}}
+                                ]
+                            }]
+                        }
+                        req_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+                        req = urllib.request.Request(req_url, data=json.dumps(req_data).encode('utf-8'), headers={"Content-Type": "application/json"})
+                        with urllib.request.urlopen(req, timeout=10) as resp:
+                            resp_json = json.loads(resp.read().decode('utf-8'))
+                            vis_desc = resp_json['candidates'][0]['content']['parts'][0]['text'].strip()
+                            user_input = f"[Shiro melihat gambar yang diperlihatkan Kakak: {vis_desc}]\n{user_input if user_input.strip() else 'Bagaimana menurutmu, Shiro?'}"
+                    except Exception as gemini_err:
+                        print(f"Gemini visual bridge: {gemini_err}")
+                else:
+                    return "*melihat foto yang Kakak perlihatkan* Wah, Kakak memperlihatkan gambar ya? Saat ini Shiro sedang memakai model teks biasa. Supaya mata visual Shiro bisa melihat gambarnya langsung dengan jelas, Kakak bisa pilih model Vision **Qwen2.5-VL-7B** di Pengaturan Model ya, Kak! (//∇//)"
+
         # Smart memory context: prioritaskan pesan terkini + emosi tinggi
         recent_context = get_smart_memory_context(memory, limit=8)
         
@@ -495,7 +640,19 @@ Sekarang, jawab Kakak secara langsung sebagai Shiro!"""
         # Prepare messages — hanya role & content yang bersih
         msgs = [{"role": "system", "content": system_prompt}]
         msgs.extend(clean_context)
-        msgs.append({"role": "user", "content": user_input})
+        
+        if image_base64 and has_vision:
+            img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
+            prompt_text = user_input.strip() if user_input.strip() else "Kakak memperlihatkan gambar ini kepadamu, Shiro. Jelaskan apa yang kamu lihat dengan gaya bicaramu yang ceria dan penuh perhatian!"
+            msgs.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt_text},
+                    {"type": "image_url", "image_url": {"url": img_url}}
+                ]
+            })
+        else:
+            msgs.append({"role": "user", "content": user_input})
         
         res = llm.create_chat_completion(
             messages=msgs,
@@ -644,11 +801,15 @@ def chat():
     try:
         data = request.json or {}
         user_message = data.get('message', '').strip()
+        image_base64 = data.get('image', None)
         
-        if not user_message:
+        if not user_message and not image_base64:
             return jsonify({"error": "Empty message"}), 400
+            
+        if not user_message and image_base64:
+            user_message = "Kakak memperlihatkan gambar ini kepadamu, Shiro."
         
-        if len(user_message) > 500:
+        if len(user_message) > 800:
             return jsonify({
                 "error": "Message too long",
                 "reply": "*bingung* Kakak ngomong banyak banget... Shiro pusing! Singkat aja dong!"
@@ -661,10 +822,11 @@ def chat():
             user_emotion = ResponseGenerator.detect_emotion_category(user_message)
             
             # Add user message to memory
-            memory.add_message("user", user_message)
+            log_msg = user_message if not image_base64 else f"[Gambar/Kamera Dikirim] {user_message}"
+            memory.add_message("user", log_msg)
             
             # Generate reply
-            reply = get_shiro_reply(user_message)
+            reply = get_shiro_reply(user_message, image_base64=image_base64)
             
             # Add assistant message to memory
             memory.add_message("assistant", reply)
@@ -674,7 +836,7 @@ def chat():
             memory.update_mood_from_emotions()
             
             # Simpan interaksi berkualitas untuk in-context few-shot learning
-            memory.record_learned_pattern(user_message, reply)
+            memory.record_learned_pattern(log_msg, reply)
             
             # Compress & save memory tiap turn
             compress_old_messages(memory, keep_count=15)
@@ -685,7 +847,8 @@ def chat():
                 "count": memory.system_metadata["total_turns"],
                 "emotion": user_emotion,
                 "mood": memory.agent_persona.get("current_mood", "Neutral"),
-                "topics": memory.system_metadata.get("topics_discussed", [])
+                "topics": memory.system_metadata.get("topics_discussed", []),
+                "has_image": bool(image_base64)
             })
     
     except Exception as e:
@@ -728,21 +891,39 @@ def openai_chat_completions():
                 }
             }), 400
             
-        # Ambil pesan user terakhir
+        # Ambil pesan user terakhir & ekstrak teks serta gambar multimodal (OpenAI format)
         user_message = ""
+        image_base64 = None
         for msg in reversed(messages):
             if msg.get("role") == "user":
-                user_message = msg.get("content", "").strip()
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            p_type = part.get("type", "")
+                            if p_type == "text":
+                                text_parts.append(part.get("text", ""))
+                            elif p_type == "image_url":
+                                img_url_obj = part.get("image_url", {})
+                                if isinstance(img_url_obj, dict):
+                                    image_base64 = img_url_obj.get("url", "")
+                                elif isinstance(img_url_obj, str):
+                                    image_base64 = img_url_obj
+                    user_message = " ".join(text_parts).strip()
+                elif isinstance(content, str):
+                    user_message = content.strip()
                 break
                 
-        if not user_message:
-            user_message = messages[-1].get("content", "").strip()
+        if not user_message and not image_base64:
+            user_message = messages[-1].get("content", "").strip() if messages else "Halo Shiro!"
             
         with memory.lock:
-            memory.add_message("user", user_message)
-            reply = get_shiro_reply(user_message)
+            log_msg = user_message if not image_base64 else f"[Visual VTuber/Webcam] {user_message}"
+            memory.add_message("user", log_msg)
+            reply = get_shiro_reply(user_message, image_base64=image_base64)
             memory.add_message("assistant", reply)
-            memory.record_learned_pattern(user_message, reply)
+            memory.record_learned_pattern(log_msg, reply)
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
             compress_old_messages(memory, keep_count=15)
@@ -915,14 +1096,16 @@ def get_models():
     config = load_model_config()
     return jsonify({
         "current_model": config.get("current_model"),
-        "available_models": config.get("available_models", [])
+        "available_models": config.get("available_models", []),
+        "model_info": config.get("model_info", {}),
+        "is_colab": is_running_in_colab()
     })
 
 @app.route('/api/models/switch', methods=['POST'])
 def switch_model():
     try:
         global llm
-        data = request.json
+        data = request.json or {}
         model_path = data.get('model')
         
         # Validasi model path
@@ -938,14 +1121,19 @@ def switch_model():
         print(f"\n⚙️  Switching model ke: {model_name}")
         
         try:
-            new_llm = Llama(
-                model_path=model_path,
-                n_ctx=CONTEXT_SIZE,
-                n_threads=4,
-                n_gpu_layers=GPU_LAYERS,
-                verbose=False,
-                chat_format=detect_chat_format(model_path)
-            )
+            vision_handler = init_vision_handler(model_path)
+            llama_kwargs = {
+                "model_path": model_path,
+                "n_ctx": CONTEXT_SIZE,
+                "n_threads": 4,
+                "n_gpu_layers": GPU_LAYERS,
+                "verbose": False,
+                "chat_format": detect_chat_format(model_path)
+            }
+            if vision_handler:
+                llama_kwargs["chat_handler"] = vision_handler
+                
+            new_llm = Llama(**llama_kwargs)
             
             # Update global llm instance
             llm = new_llm
@@ -959,7 +1147,8 @@ def switch_model():
             return jsonify({
                 "success": True,
                 "message": f"Model switched to {model_name}",
-                "current_model": model_path
+                "current_model": model_path,
+                "has_vision": bool(vision_handler is not None)
             })
         
         except Exception as load_error:
@@ -987,13 +1176,13 @@ if __name__ == '__main__':
     
     os.environ['PYTHONIOENCODING'] = 'utf-8'
     
-    # Load model configuration
+    # Load model configuration (auto scan & fallback for local PC)
     config = load_model_config()
     current_model_path = config.get("current_model")
     
     if not current_model_path or not os.path.exists(current_model_path):
         # Auto-fallback: jika model utama belum diunduh, gunakan model lain yang tersedia di folder model/
-        existing_models = [os.path.join(MODEL_DIR, f) for f in os.listdir(MODEL_DIR) if f.endswith('.gguf')]
+        existing_models = get_available_gguf_models()
         if existing_models:
             current_model_path = existing_models[0]
             print(f"⚠️ Model di config ({config.get('current_model')}) belum tersedia di disk, otomatis beralih ke: {current_model_path}")
@@ -1002,17 +1191,24 @@ if __name__ == '__main__':
             sys.exit(1)
     
     try:
-        llm = Llama(
-            model_path=current_model_path,
-            n_ctx=CONTEXT_SIZE,
-            n_threads=4,
-            n_gpu_layers=GPU_LAYERS,
-            verbose=False,
-            chat_format=detect_chat_format(current_model_path)
-        )
+        vision_handler = init_vision_handler(current_model_path)
+        llama_kwargs = {
+            "model_path": current_model_path,
+            "n_ctx": CONTEXT_SIZE,
+            "n_threads": 4,
+            "n_gpu_layers": GPU_LAYERS,
+            "verbose": False,
+            "chat_format": detect_chat_format(current_model_path)
+        }
+        if vision_handler:
+            llama_kwargs["chat_handler"] = vision_handler
+            
+        llm = Llama(**llama_kwargs)
         model_name = os.path.basename(current_model_path)
         print(f"✓ Model loaded: {model_name}")
         print(f"✓ Context Window: {CONTEXT_SIZE} tokens")
+        if vision_handler:
+            print("👁️ Multimodal Vision Mode: AKTIF (Mendukung Kamera Real-Time & Analisis Gambar)")
         if GPU_LAYERS != 0:
             print(f"🚀 Akselerasi GPU AKTIF (Layers: {GPU_LAYERS})")
         else:

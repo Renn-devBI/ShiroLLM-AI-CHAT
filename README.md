@@ -6,21 +6,23 @@
 
 ## Fitur Unggulan
 
-- **Model Tercanggih & Beragam**:
-  - `Lumimaid-v0.2-8B-Q5_K_M` *(Rekomendasi Utama)*: Fine-tuned khusus roleplay dan percakapan karakter ekspresif.
-  - `Qwen3-4B-Q4_K_M`: Model penalaran cerdas & cepat.
-  - `Llama-3.2-3B-Instruct`: Sangat cepat dan efisien.
-  - `Phi-3-mini-4k-instruct`: Ringan dan hemat memori.
-- **Continuous Self-Learning**:
-  - AI secara otomatis mengekstrak fakta, preferensi pengguna (suka/tidak suka), janji, dan peristiwa dari percakapan maupun responsnya sendiri.
-  - Fakta disimpan secara terstruktur dan diingat lintas sesi percakapan.
-- **Anti-Halusinasi & Konteks Bersih**:
-  - Konteks percakapan diseleksi secara cerdas (`get_smart_memory_context`) tanpa token sampah.
-  - Sistem kompresi memori otomatis (`compress_old_messages`).
-- **Google Colab Ready (Akselerasi GPU)**:
-  - Buka notebook `Shiro_LLMA_Colab.ipynb` untuk menjalankan AI di cloud dengan GPU T4/A100 gratis tanpa membebani komputer lokal Anda!
-- **Antarmuka Web Modern**:
-  - UI responsif, avatar kustom, panel statistik emosi real-time, dan fitur switch model langsung dari browser.
+- **3 Model Resmi Google Colab (GPU Accelerasi)**:
+  - `Qwen3-32B` *(Model Utama ⭐)*: Penalaran tertinggi, sangat cerdas, anti-halusinasi untuk Colab Pro (~19.8 GB).
+  - `Qwen2.5-VL-7B-Instruct` *(Model ke-2 👁️)*: Vision Multimodal untuk pemahaman kamera webcam real-time & kirim gambar (mendukung Web UI & Project VTuber, ~5.6 GB).
+  - `Qwen2.5-7B-Instruct` *(Model ke-3 ⚡)*: Super cepat & efisien di GPU T4 standar Colab gratis (~5.4 GB).
+- **Auto Computer & Manual Model Drop (Versi Non-Colab)**:
+  - Komputer lokal otomatis memilih model berukuran rendah (`Qwen3-4B-Q4_K_M`, `Phi-3-mini`, dsb.) agar CPU tidak berat.
+  - **Manual Model Insertion**: Cukup letakkan file `.gguf` apa saja ke dalam folder `model/`, sistem akan otomatis memindai dan menampilkannya di menu ganti model web UI!
+- **Fitur Visual Kamera & Upload Gambar**:
+  - Ambil foto langsung melalui webcam / kamera real-time atau unggah file gambar di antarmuka web.
+  - Kompatibel dengan endpoint OpenAI Vision `/v1/chat/completions` untuk dihubungkan ke project VTuber.
+- **Sistem API Key Terintegrasi**:
+  - Terhubung ke WhatsApp Bot, Telegram Bot, dan Project VTuber (`/v1/chat/completions` & `/api/chat`).
+- **Continuous Self-Learning & Anti-Halusinasi**:
+  - AI secara otomatis mengekstrak fakta, preferensi pengguna (suka/tidak suka), janji, dan peristiwa dari percakapan.
+  - Bersih dari token sistem, meta-commentary, dan narasi novel orang ketiga.
+- **Antarmuka Web Modern (Clean Dark Blue)**:
+  - Tampilan profesional clean dark blue tanpa glow/slop atau emoji berlebihan.
 
 ---
 

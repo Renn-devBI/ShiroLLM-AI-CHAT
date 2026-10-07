@@ -51,8 +51,11 @@ function parseMessageContent(text) {
     return content;
 }
 
-// Add message ke chat dengan Avatar
-function addMessage(role, content) {
+// Global visual attachment state
+let attachedImage = null; // { dataUrl: string, name: string }
+
+// Add message ke chat dengan Avatar & Visual Attachment
+function addMessage(role, content, imageUrl = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
     
@@ -83,10 +86,16 @@ function addMessage(role, content) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
     
+    let attachmentHTML = '';
+    if (imageUrl) {
+        attachmentHTML = `<img src="${imageUrl}" class="chat-img-attachment" alt="Foto Visual">`;
+    }
+
     // Render HTML Message
     messageDiv.innerHTML = `
         ${role === 'assistant' ? avatarHTML : ''}
         <div class="bubble" data-original-text="${escapedContent}">
+            ${attachmentHTML}
             ${formattedContent}
         </div>
         ${role === 'user' ? avatarHTML : ''}
@@ -144,10 +153,10 @@ function startTriggerTimer() {
     }, naturalDelay);
 }
 
-// Send message main function
+// Send message main function (Teks + Visual Gambar/Kamera)
 async function sendMessage() {
     const message = userInput.value.trim();
-    if (!message || isGenerating) return;
+    if ((!message && !attachedImage) || isGenerating) return;
 
     clearTimeout(triggerTimer); 
     isGenerating = true;
@@ -156,9 +165,14 @@ async function sendMessage() {
     sendBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
     
-    userInput.value = '';
+    const sendingImage = attachedImage;
+    const currentImgUrl = sendingImage ? sendingImage.dataUrl : null;
     
-    addMessage('user', message);
+    userInput.value = '';
+    clearAttachedImage();
+    
+    const displayMsg = message || (sendingImage ? 'Kakak memperlihatkan gambar visual ini.' : '');
+    addMessage('user', displayMsg, currentImgUrl);
     
     status.textContent = 'Shiro sedang berpikir...';
     showTyping(true);
@@ -166,12 +180,17 @@ async function sendMessage() {
     abortController = new AbortController();
 
     try {
+        const payload = { message: message };
+        if (currentImgUrl) {
+            payload.image = currentImgUrl;
+        }
+
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message: message }),
+            body: JSON.stringify(payload),
             signal: abortController.signal
         });
 
@@ -517,6 +536,140 @@ document.getElementById('ai-image').addEventListener('change', (e) => {
     }
 });
 
+// --- Media & Real-Time Camera Management ---
+const imageFileInput = document.getElementById('image-file-input');
+const uploadImageBtn = document.getElementById('upload-image-btn');
+const openCameraBtn = document.getElementById('open-camera-btn');
+const imagePreviewBar = document.getElementById('image-preview-bar');
+const imagePreviewThumb = document.getElementById('image-preview-thumb');
+const imagePreviewName = document.getElementById('image-preview-name');
+const removeImageBtn = document.getElementById('remove-image-btn');
+
+// Camera Elements
+const cameraModal = document.getElementById('camera-modal');
+const closeCameraModalBtn = document.getElementById('close-camera-modal');
+const cameraVideo = document.getElementById('camera-video');
+const cameraCanvas = document.getElementById('camera-canvas');
+const capturePhotoBtn = document.getElementById('capture-photo-btn');
+const switchCameraBtn = document.getElementById('switch-camera-btn');
+const cameraPlaceholder = document.getElementById('camera-placeholder');
+
+let cameraStream = null;
+let currentCameraFacing = 'user'; // 'user' atau 'environment'
+
+function setAttachedImage(dataUrl, name = 'visual_input.jpg') {
+    attachedImage = { dataUrl, name };
+    if (imagePreviewThumb) imagePreviewThumb.src = dataUrl;
+    if (imagePreviewName) imagePreviewName.textContent = name;
+    if (imagePreviewBar) imagePreviewBar.classList.remove('hidden');
+}
+
+function clearAttachedImage() {
+    attachedImage = null;
+    if (imagePreviewBar) imagePreviewBar.classList.add('hidden');
+    if (imagePreviewThumb) imagePreviewThumb.src = '';
+    if (imageFileInput) imageFileInput.value = '';
+}
+
+if (removeImageBtn) {
+    removeImageBtn.addEventListener('click', clearAttachedImage);
+}
+
+if (uploadImageBtn && imageFileInput) {
+    uploadImageBtn.addEventListener('click', () => {
+        imageFileInput.click();
+    });
+
+    imageFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                setAttachedImage(event.target.result, file.name);
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+}
+
+// Camera handlers
+async function startCamera() {
+    if (cameraStream) {
+        stopCamera();
+    }
+    
+    if (cameraModal) cameraModal.classList.remove('hidden');
+    if (cameraPlaceholder) cameraPlaceholder.classList.remove('hidden');
+    if (cameraVideo) cameraVideo.classList.add('hidden');
+    
+    try {
+        const constraints = {
+            video: {
+                facingMode: currentCameraFacing,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: false
+        };
+        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (cameraVideo) {
+            cameraVideo.srcObject = cameraStream;
+            cameraVideo.classList.remove('hidden');
+            if (cameraPlaceholder) cameraPlaceholder.classList.add('hidden');
+        }
+    } catch (err) {
+        console.error("Camera access error:", err);
+        alert("Tidak dapat mengakses kamera: " + (err.message || "Izin kamera ditolak."));
+        closeCamera();
+    }
+}
+
+function stopCamera() {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+    }
+    if (cameraVideo) {
+        cameraVideo.srcObject = null;
+    }
+}
+
+function closeCamera() {
+    stopCamera();
+    if (cameraModal) cameraModal.classList.add('hidden');
+}
+
+if (openCameraBtn) {
+    openCameraBtn.addEventListener('click', startCamera);
+}
+
+if (closeCameraModalBtn) {
+    closeCameraModalBtn.addEventListener('click', closeCamera);
+}
+
+if (switchCameraBtn) {
+    switchCameraBtn.addEventListener('click', () => {
+        currentCameraFacing = currentCameraFacing === 'user' ? 'environment' : 'user';
+        startCamera();
+    });
+}
+
+if (capturePhotoBtn && cameraVideo && cameraCanvas) {
+    capturePhotoBtn.addEventListener('click', () => {
+        if (!cameraStream) return;
+        const video = cameraVideo;
+        const canvas = cameraCanvas;
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        setAttachedImage(dataUrl, `kamera_${new Date().toISOString().slice(11,19).replace(/:/g,'-')}.jpg`);
+        closeCamera();
+    });
+}
+
 // Load models for dropdown
 async function loadModels() {
     try {
@@ -525,39 +678,56 @@ async function loadModels() {
         
         console.log('Models loaded:', data);
         
-        // Extract model filename from path
         const getModelName = (path) => {
             return path.split('/').pop().replace('.gguf', '');
         };
         
-        // Update current model badge
+        // Update current model badge & topbar pill
         const badge = document.getElementById('current-model-badge');
-        if (badge && data.current_model) {
+        const navPill = document.querySelector('.model-pill');
+        if (data.current_model) {
             const modelName = getModelName(data.current_model);
-            badge.textContent = modelName;
+            if (badge) badge.textContent = modelName;
+            if (navPill) navPill.textContent = modelName;
         }
         
-        // Populate dropdown
+        // Populate dropdown & description
         const select = document.getElementById('model-select');
+        const modelDescText = document.getElementById('model-desc-text');
+        
         if (select) {
             select.innerHTML = '';
             if (!data.available_models || data.available_models.length === 0) {
                 const option = document.createElement('option');
-                option.textContent = 'No models found';
+                option.textContent = 'Tidak ada model ditemukan';
                 option.disabled = true;
                 select.appendChild(option);
             } else {
                 data.available_models.forEach(model => {
                     const option = document.createElement('option');
-                    option.value = model; // Send full path
-                    const modelName = getModelName(model);
-                    option.textContent = modelName;
+                    option.value = model;
+                    const info = data.model_info?.[model] || {};
+                    const displayName = info.name || getModelName(model);
+                    const sizeStr = info.size ? ` (${info.size})` : '';
+                    option.textContent = `${displayName}${sizeStr}`;
+                    
                     if (model === data.current_model) {
                         option.selected = true;
+                        if (modelDescText) {
+                            modelDescText.textContent = info.description || `Model aktif: ${displayName}`;
+                        }
                     }
                     select.appendChild(option);
                 });
             }
+            
+            select.onchange = () => {
+                const sel = select.value;
+                const info = data.model_info?.[sel] || {};
+                if (modelDescText) {
+                    modelDescText.textContent = info.description || `Model terpilih: ${getModelName(sel)}`;
+                }
+            };
         }
     } catch (error) {
         console.error('Error loading models:', error);
@@ -574,7 +744,7 @@ async function switchModel() {
     const selectedModel = select.value;
     
     if (!selectedModel) {
-        alert('Please select a model first');
+        alert('Silakan pilih model terlebih dahulu');
         return;
     }
     
@@ -584,7 +754,7 @@ async function switchModel() {
     
     const modelName = getModelName(selectedModel);
     const status = document.getElementById('status');
-    status.textContent = 'Switching model...';
+    status.textContent = 'Sedang memuat model...';
     
     try {
         const response = await fetch('/api/models/switch', {
@@ -598,17 +768,18 @@ async function switchModel() {
         const data = await response.json();
         
         if (data.success) {
-            alert(`✓ Model switched to ${modelName}`);
-            status.textContent = 'Model switched!';
+            const visionTag = data.has_vision ? ' (Multimodal Vision Aktif 👁️)' : '';
+            alert(`✓ Model berhasil dialihkan ke ${modelName}${visionTag}`);
+            status.textContent = 'Model berhasil dialihkan!';
             
             // Reload models to update UI
             setTimeout(() => {
                 loadModels();
                 status.textContent = 'Siap';
-            }, 1000);
+            }, 600);
         } else {
             alert(`Error: ${data.error}`);
-            status.textContent = 'Error switching model';
+            status.textContent = 'Gagal beralih model';
         }
     } catch (error) {
         console.error('Error switching model:', error);
@@ -626,9 +797,9 @@ settingsModal.addEventListener('click', (e) => {
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
-    // Load profiles first (untuk display di chat)
     loadProfiles().then(() => {
         loadChatHistory();
+        loadModels(); // Load model awal agar badge dan model pill terisi
         userInput.focus();
     });
 });

@@ -59,7 +59,29 @@
 
         <!-- Bottom Input Bar -->
         <footer class="input-section">
+            <div id="image-preview-bar" class="image-preview-bar hidden">
+                <div class="image-preview-card">
+                    <img id="image-preview-thumb" src="" alt="Lampiran Visual">
+                    <div class="image-preview-info">
+                        <span class="image-preview-title" id="image-preview-name">visual_input.jpg</span>
+                        <span class="image-preview-sub">Gambar visual siap dianalisis Shiro</span>
+                    </div>
+                    <button type="button" id="remove-image-btn" class="btn-remove-thumb" title="Hapus Gambar">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+
             <div class="input-card">
+                <div class="media-input-buttons">
+                    <button id="upload-image-btn" class="btn-media" title="Kirim Foto / Gambar" type="button">
+                        <i class="ph ph-image"></i>
+                    </button>
+                    <button id="open-camera-btn" class="btn-media" title="Kamera Real-Time / Webcam" type="button">
+                        <i class="ph ph-camera"></i>
+                    </button>
+                    <input type="file" id="image-file-input" accept="image/*" class="hidden">
+                </div>
                 <textarea 
                     id="user-input" 
                     class="chat-input" 
@@ -80,6 +102,39 @@
                 <span id="status">Siap</span>
             </div>
         </footer>
+    </div>
+
+    <!-- Real-Time Camera Modal -->
+    <div id="camera-modal" class="modal-backdrop hidden">
+        <div class="modal-dialog camera-dialog">
+            <div class="modal-header">
+                <div class="camera-header-title">
+                    <i class="ph ph-camera"></i>
+                    <h2>Kamera Real-Time</h2>
+                </div>
+                <button id="close-camera-modal" class="btn-icon" type="button" title="Tutup Kamera">
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="camera-body">
+                <div class="camera-viewfinder">
+                    <video id="camera-video" autoplay playsinline muted></video>
+                    <div id="camera-placeholder" class="camera-placeholder hidden">
+                        <i class="ph ph-video-camera-slash"></i>
+                        <p>Kamera tidak aktif</p>
+                    </div>
+                </div>
+                <canvas id="camera-canvas" class="hidden"></canvas>
+                <div class="camera-controls">
+                    <button type="button" id="switch-camera-btn" class="btn-secondary" title="Ganti Kamera">
+                        <i class="ph ph-arrows-clockwise"></i> Ganti Kamera
+                    </button>
+                    <button type="button" id="capture-photo-btn" class="btn-primary btn-capture" title="Ambil Foto">
+                        <i class="ph ph-camera"></i> Ambil Foto
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Settings Modal -->
@@ -163,19 +218,22 @@
                     </div>
 
                     <div class="form-field">
-                        <label for="model-select">Ganti Model</label>
+                        <label for="model-select">Pilih Model</label>
                         <select id="model-select" class="form-select">
                             <option disabled selected>Memuat daftar model...</option>
                         </select>
-                        <span class="field-help">Pilih model dari daftar untuk beralih instan.</span>
+                        <span class="field-help">Pilih model untuk beralih instan. File .gguf di folder model/ terdeteksi otomatis.</span>
                     </div>
 
                     <div id="model-info" class="info-box">
-                        <p>Model Qwen3-32B adalah model utama cerdas dengan penalaran tertinggi.</p>
-                        <p>Model berukuran besar membutuhkan beberapa saat untuk dimuat ke memori.</p>
+                        <p id="model-desc-text">Memuat detail model...</p>
                     </div>
 
-                    <button type="button" onclick="switchModel()" class="btn-primary">Ganti Model</button>
+                    <div class="model-hint-box">
+                        <span class="model-hint-text">💡 <strong>Tambah Model Manual:</strong> Cukup salin file <code>.gguf</code> ke dalam folder <code>model/</code> di komputer Anda, lalu buka menu ini untuk memilihnya.</span>
+                    </div>
+
+                    <button type="button" onclick="switchModel()" class="btn-primary">Terapkan Pergantian Model</button>
                 </div>
             </div>
         </div>

@@ -96,6 +96,54 @@ def chat_direct_format(user_prompt):
         return None
 
 
+def chat_with_image(user_prompt, image_path):
+    """
+    Format 3: Mengirim Gambar / Screenshot Kamera ke Shiro (Multimodal Vision)
+    Cocok untuk VTuber (deteksi ekspresi/tampilan layar) atau WhatsApp Bot (analisis foto user).
+    """
+    url = f"{BASE_URL.rstrip('/')}/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}"
+    }
+
+    if not os.path.exists(image_path):
+        print(f"File gambar tidak ditemukan: {image_path}")
+        return None
+
+    import base64
+    with open(image_path, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    payload = {
+        "model": "Qwen2.5-VL-7B",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                ]
+            }
+        ]
+    }
+
+    print(f"\n[Vision Format] Mengirim gambar '{image_path}' dengan pesan: '{user_prompt}'")
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=60)
+        if res.status_code == 200:
+            data = res.json()
+            reply = data["choices"][0]["message"]["content"]
+            print(f"[Shiro Vision Reply]: {reply}")
+            return reply
+        else:
+            print(f"Error {res.status_code}: {res.text}")
+            return None
+    except Exception as e:
+        print(f"Gagal koneksi ke {url}: {e}")
+        return None
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("🌸 SHIRO LLMA API CLIENT EXAMPLE")
