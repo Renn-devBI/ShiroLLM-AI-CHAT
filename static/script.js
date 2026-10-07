@@ -9,6 +9,18 @@ const memoryCount = document.getElementById('memory-count');
 const status = document.getElementById('status');
 const typingIndicator = document.getElementById('typing-indicator');
 
+// Session Controls
+const newChatBtn = document.getElementById('new-chat-btn');
+const sessionSelect = document.getElementById('session-select');
+
+// Document Upload Controls
+const uploadDocBtn = document.getElementById('upload-doc-btn');
+const docFileInput = document.getElementById('doc-file-input');
+const docPreviewBar = document.getElementById('document-preview-bar');
+const docPreviewName = document.getElementById('doc-preview-name');
+const docPreviewSub = document.getElementById('doc-preview-sub');
+const removeDocBtn = document.getElementById('remove-doc-btn');
+
 // Profile data (global)
 let userProfile = null;
 let aiProfile = null;
@@ -17,6 +29,8 @@ let triggerTimer;
 // State tracking
 let isGenerating = false;
 let abortController = null;
+let activeSessionId = 'default';
+let attachedDocument = null; // { text: string, filename: string, fileType: string, charCount: number }
 
 // Auto-scroll yang lebih pintar
 function scrollToBottom() {
@@ -80,8 +94,8 @@ function parseMessageContent(text) {
 // Global visual attachment state
 let attachedImage = null; // { dataUrl: string, name: string }
 
-// Add message ke chat dengan Avatar & Visual Attachment
-function addMessage(role, content, imageUrl = null) {
+// Add message ke chat dengan Avatar, Dokumen & Visual Attachment
+function addMessage(role, content, imageUrl = null, docName = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
     
@@ -105,7 +119,7 @@ function addMessage(role, content, imageUrl = null) {
     const formattedContent = parseMessageContent(content);
 
     // Escape content untuk HTML attribute
-    const escapedContent = content
+    const escapedContent = (content || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -113,8 +127,11 @@ function addMessage(role, content, imageUrl = null) {
         .replace(/'/g, '&#39;');
     
     let attachmentHTML = '';
+    if (docName) {
+        attachmentHTML += `<div class="doc-badge-pill"><i class="ph ph-file-text"></i> ${docName}</div>`;
+    }
     if (imageUrl) {
-        attachmentHTML = `<img src="${imageUrl}" class="chat-img-attachment" alt="Foto Visual">`;
+        attachmentHTML += `<img src="${imageUrl}" class="chat-img-attachment" alt="Foto Visual">`;
     }
 
     // Render HTML Message (tanpa spasi/newline berlebih di dalam bubble)
@@ -176,10 +193,10 @@ function startTriggerTimer() {
     }, naturalDelay);
 }
 
-// Send message main function (Teks + Visual Gambar/Kamera)
+// Send message main function (Teks + Visual Gambar/Kamera + Dokumen)
 async function sendMessage() {
     const message = userInput.value.trim();
-    if ((!message && !attachedImage) || isGenerating) return;
+    if ((!message && !attachedImage && !attachedDocument) || isGenerating) return;
 
     clearTimeout(triggerTimer); 
     isGenerating = true;
@@ -190,13 +207,25 @@ async function sendMessage() {
     
     const sendingImage = attachedImage;
     const currentImgUrl = sendingImage ? sendingImage.dataUrl : null;
+    const sendingDoc = attachedDocument;
     
     userInput.value = '';
     adjustInputHeight();
     clearAttachedImage();
+    clearAttachedDocument();
     
-    const displayMsg = message || (sendingImage ? 'Kakak memperlihatkan gambar visual ini.' : '');
-    addMessage('user', displayMsg, currentImgUrl);
+    let displayMsg = message;
+    if (!displayMsg) {
+        if (sendingDoc && sendingImage) {
+            displayMsg = `Kakak memperlihatkan gambar dan melampirkan berkas ${sendingDoc.filename}.`;
+        } else if (sendingDoc) {
+            displayMsg = `Kakak melampirkan berkas dokumen: ${sendingDoc.filename}. Shiro, tolong rangkum atau periksa ya!`;
+        } else if (sendingImage) {
+            displayMsg = 'Kakak memperlihatkan gambar visual ini.';
+        }
+    }
+    
+    addMessage('user', displayMsg, currentImgUrl, sendingDoc ? sendingDoc.filename : null);
     
     status.textContent = 'Shiro sedang berpikir...';
     showTyping(true);
@@ -209,6 +238,10 @@ async function sendMessage() {
         const payload = { message: message };
         if (currentImgUrl) {
             payload.image = currentImgUrl;
+        }
+        if (sendingDoc) {
+            payload.document_text = sendingDoc.text;
+            payload.document_name = sendingDoc.filename;
         }
 
         const response = await fetch('/api/chat', {
@@ -247,6 +280,7 @@ async function sendMessage() {
         }
         
         updateMemoryCount(); 
+        loadSessions(); // Perbarui judul sesi otomatis
         status.textContent = 'Siap';
         startTriggerTimer(); 
         
@@ -294,6 +328,8 @@ async function resetMemory() {
         
         if (data.success) {
             // Reset UI
+            clearAttachedDocument();
+            clearAttachedImage();
             chatMessages.innerHTML = `
                 <div class="message assistant">
                     <div class="avatar shiro-avatar">S</div>
@@ -303,6 +339,7 @@ async function resetMemory() {
                 </div>
             `;
             updateMemoryCount();
+            await loadSessions();
             status.textContent = 'Memori dibersihkan';
         }
     } catch (error) {
@@ -335,9 +372,106 @@ async function loadChatHistory() {
     }
 }
 
+// Session Management Functions (Multi-Session with Persistent Memory)
+async function loadSessions() {
+    if (!sessionSelect) return;
+    try {
+        const res = await fetch('/api/sessions');
+        const data = await res.json();
+        if (data.sessions) {
+            sessionSelect.innerHTML = '';
+            data.sessions.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = s.title || `Chat ${s.id.slice(0, 6)}`;
+                if (s.id === data.active_session_id) {
+                    opt.selected = true;
+                }
+                sessionSelect.appendChild(opt);
+            });
+            activeSessionId = data.active_session_id;
+        }
+    } catch (e) {
+        console.error("Error loading sessions:", e);
+    }
+}
+
+async function createNewSession() {
+    if (isGenerating) return;
+    try {
+        status.textContent = 'Membuat sesi baru...';
+        const res = await fetch('/api/sessions/new', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: 'Chat Baru' })
+        });
+        const data = await res.json();
+        if (data.success) {
+            activeSessionId = data.session_id;
+            clearAttachedDocument();
+            clearAttachedImage();
+            
+            chatMessages.innerHTML = `
+                <div class="message assistant">
+                    <div class="avatar shiro-avatar">S</div>
+                    <div class="bubble">
+                        Halo Kakak! Sesi obrolan baru siap. Mau bahas atau tanyakan apa sekarang?
+                    </div>
+                </div>
+            `;
+            await loadSessions();
+            updateMemoryCount();
+            status.textContent = 'Sesi baru aktif';
+            if (userInput) userInput.focus();
+        }
+    } catch (e) {
+        console.error("Error creating new session:", e);
+        status.textContent = 'Gagal membuat sesi baru';
+    }
+}
+
+async function switchSession(sessionId) {
+    if (!sessionId || sessionId === activeSessionId || isGenerating) return;
+    try {
+        status.textContent = 'Memuat sesi...';
+        const res = await fetch('/api/sessions/switch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await res.json();
+        if (data.success) {
+            activeSessionId = sessionId;
+            clearAttachedDocument();
+            clearAttachedImage();
+
+            chatMessages.innerHTML = `
+                <div class="message assistant">
+                    <div class="avatar shiro-avatar">S</div>
+                    <div class="bubble">
+                        Halo Kakak. Ada yang bisa Shiro bantu?
+                    </div>
+                </div>
+            `;
+            if (data.messages && data.messages.length > 0) {
+                data.messages.forEach(msg => {
+                    addMessage(msg.role, msg.content);
+                });
+            }
+            updateMemoryCount();
+            status.textContent = 'Siap';
+        }
+    } catch (e) {
+        console.error("Error switching session:", e);
+        status.textContent = 'Gagal ganti sesi';
+    }
+}
+
 // Event Listeners
 sendBtn.addEventListener('click', sendMessage);
 stopBtn.addEventListener('click', stopGeneration);
+if (newChatBtn) newChatBtn.addEventListener('click', createNewSession);
+if (sessionSelect) sessionSelect.addEventListener('change', (e) => switchSession(e.target.value));
 
 // Auto-resize input textarea saat mengetik atau menekan Shift+Enter
 function adjustInputHeight() {
@@ -632,6 +766,77 @@ function clearAttachedImage() {
 
 if (removeImageBtn) {
     removeImageBtn.addEventListener('click', clearAttachedImage);
+}
+
+// --- Document Management & Text Extraction ---
+function setAttachedDocument(docData) {
+    attachedDocument = docData;
+    if (docPreviewName) docPreviewName.textContent = docData.filename;
+    if (docPreviewSub) {
+        const chars = docData.char_count || docData.text.length;
+        docPreviewSub.textContent = `${docData.file_type ? docData.file_type.toUpperCase() : 'Dokumen'} • ${chars} karakter • Siap dirangkum/diperbaiki`;
+    }
+    if (docPreviewBar) docPreviewBar.classList.remove('hidden');
+    if (userInput && !userInput.value.trim()) {
+        userInput.placeholder = "Ketik perintah (contoh: 'Rangkum isi dokumen ini' atau 'Perbaiki tata bahasanya')...";
+    }
+}
+
+function clearAttachedDocument() {
+    attachedDocument = null;
+    if (docPreviewBar) docPreviewBar.classList.add('hidden');
+    if (docFileInput) docFileInput.value = '';
+    if (userInput) userInput.placeholder = "Ketik pesan...";
+}
+
+async function uploadDocumentFile(file) {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    status.textContent = 'Mengekstrak dokumen...';
+    try {
+        const res = await fetch('/api/upload/document', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        if (data.success) {
+            setAttachedDocument({
+                text: data.text,
+                filename: data.filename,
+                file_type: data.file_type,
+                char_count: data.char_count
+            });
+            status.textContent = 'Dokumen siap';
+        } else {
+            alert(`Gagal membaca berkas: ${data.error || 'Format tidak didukung'}`);
+            clearAttachedDocument();
+            status.textContent = 'Siap';
+        }
+    } catch (err) {
+        console.error("Document upload error:", err);
+        alert("Gagal mengunggah dokumen: " + (err.message || "Koneksi bermasalah"));
+        clearAttachedDocument();
+        status.textContent = 'Siap';
+    }
+}
+
+if (uploadDocBtn && docFileInput) {
+    uploadDocBtn.addEventListener('click', () => {
+        docFileInput.click();
+    });
+
+    docFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            uploadDocumentFile(file);
+        }
+    });
+}
+
+if (removeDocBtn) {
+    removeDocBtn.addEventListener('click', clearAttachedDocument);
 }
 
 if (uploadImageBtn && imageFileInput) {
@@ -1124,6 +1329,7 @@ if (pipelineModal) {
 document.addEventListener('DOMContentLoaded', () => {
     loadProfiles().then(() => {
         loadChatHistory();
+        loadSessions(); // Load daftar sesi percakapan
         loadModels(); // Load model awal agar badge dan model pill terisi
         userInput.focus();
     });

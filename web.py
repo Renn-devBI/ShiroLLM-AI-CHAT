@@ -545,7 +545,7 @@ class ResponseGenerator:
         from shiro.llm.cleaner import clean_response as _cr
         return _cr(response)
 
-def get_shiro_reply(user_input, image_base64=None, return_trace=False):
+def get_shiro_reply(user_input, image_base64=None, document_info=None, return_trace=False):
     t_start_total = time.perf_counter()
     nodes = []
     try:
@@ -560,6 +560,15 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
         raw_chars = len(user_input) if user_input else 0
         img_len = len(image_base64) if image_base64 else 0
         
+        # Penanganan Dokumen Lampiran (PDF, Word, Text, CSV, dll.)
+        doc_prompt_addon = ""
+        has_doc = bool(document_info and document_info.get("text"))
+        doc_name = document_info.get("filename", "Dokumen") if has_doc else None
+        if has_doc:
+            from shiro.document import build_document_prompt
+            doc_prompt_addon = build_document_prompt(document_info, user_input)
+            print(f"📄 [Document Reader] Melampirkan isi dokumen: {doc_name} ({len(document_info.get('text', ''))} karakter)")
+
         # Analisis Typo & Singkatan Bahasa Indonesia (Typo-Tolerant Intelligence)
         normalized_input, typo_corrections = typo_helper.normalize_typos(user_input)
         typo_prompt_addon = typo_helper.get_typo_understanding_prompt(typo_corrections) if typo_corrections else ""
@@ -644,6 +653,8 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
 
         t_input_dur = (time.perf_counter() - t0) * 1000
         summary_node1 = f"{raw_chars} Karakter" + (" + Visual Kamera/Foto" if has_image else "")
+        if has_doc:
+            summary_node1 += f" • 📄 Dokumen ({doc_name[:20]})"
         if typo_corrections:
             summary_node1 += f" • ✍️ Typo Tolerant ({len(typo_corrections)} kata)"
         if web_data:
@@ -662,6 +673,7 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
                 "message": user_input,
                 "has_image": has_image,
                 "image_bytes_approx": img_len,
+                "document": doc_name if has_doc else None,
                 "web_intent": web_intent if 'web_intent' in locals() else None,
                 "typo_corrections": typo_corrections
             },
@@ -670,6 +682,7 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
                 "normalized_text": normalized_input,
                 "source": "web_or_api",
                 "web_ingested": bool(web_data),
+                "doc_ingested": has_doc,
                 "timestamp": datetime.now().isoformat()
             }
         })
@@ -723,6 +736,14 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
         relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.8][:5]
         traits = memory.user_profile.get("personality_traits", [])
         exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
+        
+        # Cross-Session Memory Recall
+        cross_session_addon = memory.get_cross_session_context(normalized_input)
+        has_cross_session = bool(cross_session_addon)
+        summary_node3 = f"{len(relevant_facts)} Fakta RDF • {len(exemplars)} Exemplars"
+        if has_cross_session:
+            summary_node3 += " • 🧠 Cross-Session Memory"
+
         t_mem_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
             "id": "node_memory",
@@ -732,7 +753,7 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
             "color": "#8b5cf6",
             "status": "success",
             "duration_ms": round(t_mem_dur, 2),
-            "summary": f"{len(relevant_facts)} Fakta RDF • {len(exemplars)} Exemplars",
+            "summary": summary_node3,
             "data_in": {
                 "query": user_input,
                 "context_limit": 8
@@ -741,6 +762,7 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
                 "relevant_facts": relevant_facts,
                 "user_traits": traits,
                 "exemplars": exemplars,
+                "cross_session_recalled": has_cross_session,
                 "active_history_turns": len(clean_context)
             }
         })
@@ -771,7 +793,9 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
             facts_summary=facts_summary,
             exemplar_prompt=exemplar_prompt,
             web_prompt_addon=web_prompt_addon,
-            typo_prompt_addon=typo_prompt_addon
+            typo_prompt_addon=typo_prompt_addon,
+            document_prompt_addon=doc_prompt_addon,
+            cross_session_addon=cross_session_addon
         )
 
         msgs = [{"role": "system", "content": system_prompt}]
@@ -1148,12 +1172,23 @@ def chat():
         data = request.json or {}
         user_message = data.get('message', '').strip()
         image_base64 = data.get('image', None)
+        document_text = data.get('document_text', None)
+        document_name = data.get('document_name', None)
         
-        if not user_message and not image_base64:
+        document_info = None
+        if document_text:
+            document_info = {
+                "text": document_text,
+                "filename": document_name or "Dokumen"
+            }
+
+        if not user_message and not image_base64 and not document_info:
             return jsonify({"error": "Empty message"}), 400
             
         if not user_message and image_base64:
             user_message = "Kakak memperlihatkan gambar ini kepadamu, Shiro."
+        elif not user_message and document_info:
+            user_message = f"Shiro, tolong baca dokumen '{document_name}' ini dan jelaskan ya!"
         
         if len(user_message) > 6000:
             return jsonify({
@@ -1183,11 +1218,20 @@ def chat():
             user_emotion = ResponseGenerator.detect_emotion_category(user_message)
             
             # Add user message to memory
-            log_msg = user_message if not image_base64 else f"[Gambar/Kamera Dikirim] {user_message}"
+            log_msg = user_message
+            if image_base64:
+                log_msg = f"[Gambar/Kamera Dikirim] {user_message}"
+            elif document_name:
+                log_msg = f"[Dokumen: {document_name}] {user_message}"
             memory.add_message("user", log_msg, image_path=saved_img_rel)
             
             # Generate reply
-            reply, trace = get_shiro_reply(user_message, image_base64=image_base64, return_trace=True)
+            reply, trace = get_shiro_reply(
+                user_message,
+                image_base64=image_base64,
+                document_info=document_info,
+                return_trace=True
+            )
             
             # Add assistant message to memory
             memory.add_message("assistant", reply)
@@ -1210,6 +1254,8 @@ def chat():
                 "mood": memory.agent_persona.get("current_mood", "Neutral"),
                 "topics": memory.system_metadata.get("topics_discussed", []),
                 "has_image": bool(image_base64),
+                "has_document": bool(document_info),
+                "active_session_id": getattr(memory, "active_session_id", "default"),
                 "pipeline_trace": trace
             })
     
@@ -1221,6 +1267,113 @@ def chat():
             "reply": "*menatap kakak* Shiro bingung... Kakak bisa ulangi?",
             "error": "Processing error"
         }), 500
+
+@app.route('/api/upload/document', methods=['POST'])
+def upload_document():
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        if 'file' not in request.files:
+            return jsonify({"success": False, "error": "Tidak ada file yang dipilih."}), 400
+        
+        f = request.files['file']
+        if f.filename == '':
+            return jsonify({"success": False, "error": "Nama file kosong."}), 400
+
+        from shiro.document import extract_text_from_file, SUPPORTED_EXTENSIONS
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            return jsonify({
+                "success": False,
+                "error": f"Format '{ext}' belum didukung. Format didukung: PDF, Word (docx), Text, Markdown, CSV, JSON, Python, dll."
+            }), 400
+
+        upload_dir = os.path.join("data", "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        save_path = os.path.join(upload_dir, f.filename)
+        f.save(save_path)
+
+        res = extract_text_from_file(save_path, filename=f.filename)
+        if not res["success"]:
+            return jsonify(res), 400
+
+        preview = res["text"][:200] + ("..." if len(res["text"]) > 200 else "")
+        res["preview"] = preview
+        return jsonify(res)
+    except Exception as e:
+        print(f"Error in upload_document: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/sessions', methods=['GET'])
+def list_sessions():
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        with memory.lock:
+            return jsonify({
+                "sessions": memory.get_sessions_list(),
+                "active_session_id": getattr(memory, "active_session_id", "default"),
+                "messages": memory.short_term_history
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/sessions/new', methods=['POST'])
+def create_session():
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        data = request.json or {}
+        title = data.get("title", None)
+        with memory.lock:
+            new_id = memory.create_new_session(title=title)
+            return jsonify({
+                "success": True,
+                "session_id": new_id,
+                "sessions": memory.get_sessions_list(),
+                "active_session_id": new_id,
+                "messages": []
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/sessions/switch', methods=['POST'])
+def switch_session():
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        data = request.json or {}
+        session_id = data.get("session_id")
+        if not session_id:
+            return jsonify({"error": "session_id wajib diisi"}), 400
+        with memory.lock:
+            ok = memory.switch_session(session_id)
+            if not ok:
+                return jsonify({"error": "Sesi tidak ditemukan"}), 404
+            return jsonify({
+                "success": True,
+                "active_session_id": session_id,
+                "messages": memory.short_term_history,
+                "sessions": memory.get_sessions_list()
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/sessions/<session_id>', methods=['DELETE'])
+def delete_session(session_id):
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        with memory.lock:
+            ok = memory.delete_session(session_id)
+            return jsonify({
+                "success": ok,
+                "active_session_id": memory.active_session_id,
+                "messages": memory.short_term_history,
+                "sessions": memory.get_sessions_list()
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/v1/chat/completions', methods=['POST'])
 def openai_chat_completions():

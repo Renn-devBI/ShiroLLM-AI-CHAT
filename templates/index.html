@@ -23,6 +23,15 @@
             </div>
             
             <div class="nav-actions">
+                <div class="session-control-group">
+                    <button id="new-chat-btn" class="btn-icon btn-new-chat" title="Mulai Obrolan Baru (New Chat)" type="button">
+                        <i class="ph ph-plus"></i>
+                        <span class="btn-new-chat-text">Chat Baru</span>
+                    </button>
+                    <select id="session-select" class="session-dropdown" title="Pilih Percakapan / Sesi">
+                        <option value="default">Sesi Utama</option>
+                    </select>
+                </div>
                 <button id="pipeline-btn" class="btn-icon btn-pipeline-toggle" title="Alur Kerja AI / Neural Workflow (Mode n8n)" type="button">
                     <i class="ph ph-tree-structure"></i>
                     <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
@@ -63,6 +72,21 @@
 
         <!-- Bottom Input Bar -->
         <footer class="input-section">
+            <div id="document-preview-bar" class="image-preview-bar hidden">
+                <div class="image-preview-card doc-preview-card">
+                    <div class="doc-icon-badge">
+                        <i class="ph ph-file-text"></i>
+                    </div>
+                    <div class="image-preview-info">
+                        <span class="image-preview-title" id="doc-preview-name">dokumen.pdf</span>
+                        <span class="image-preview-sub" id="doc-preview-sub">Siap dirangkum atau diperiksa Shiro</span>
+                    </div>
+                    <button type="button" id="remove-doc-btn" class="btn-remove-thumb" title="Hapus Dokumen">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+
             <div id="image-preview-bar" class="image-preview-bar hidden">
                 <div class="image-preview-card">
                     <img id="image-preview-thumb" src="" alt="Lampiran Visual">
@@ -78,6 +102,10 @@
 
             <div class="input-card">
                 <div class="media-input-buttons">
+                    <button id="upload-doc-btn" class="btn-media" title="Kirim Berkas / Dokumen (PDF, Word, TXT, CSV, MD)" type="button">
+                        <i class="ph ph-file-text"></i>
+                    </button>
+                    <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.json,.csv,.py,.log,.html,.xml,.yaml,.yml" class="hidden">
                     <button id="upload-image-btn" class="btn-media" title="Kirim Foto / Gambar" type="button">
                         <i class="ph ph-image"></i>
                     </button>

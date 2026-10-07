@@ -90,6 +90,21 @@ def export_data(memory_path="ingatan_shiro.json", base_output_dir="training_data
                     else:
                         chat_pairs.append((u, a))
 
+    # 4. Ekstrak dari seluruh sessions_store (Multi-session history)
+    sessions_store = data.get("sessions_store", {})
+    for s_id, s_obj in sessions_store.items():
+        s_msgs = s_obj.get("messages", [])
+        for i in range(len(s_msgs) - 1):
+            if s_msgs[i].get("role") == "user" and s_msgs[i+1].get("role") == "assistant":
+                u = s_msgs[i].get("content", "").strip()
+                a = s_msgs[i+1].get("content", "").strip()
+                img = s_msgs[i].get("image", None)
+                if u and is_valid_response(a):
+                    if img:
+                        vision_pairs.append((u, a, img))
+                    else:
+                        chat_pairs.append((u, a))
+
     # Deduplikasi Chat Pairs
     unique_chat = []
     seen_chat = set()

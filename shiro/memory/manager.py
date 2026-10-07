@@ -111,6 +111,16 @@ class AdvancedMemoryManager:
         
         self.short_term_history = []  # Recent messages
         self.MAX_SHORT_TERM = 25
+        self.active_session_id = "default"
+        self.sessions_store = {
+            "default": {
+                "id": "default",
+                "title": "Obrolan Utama",
+                "created_at": datetime.now().isoformat(),
+                "last_active": datetime.now().isoformat(),
+                "messages": []
+            }
+        }
         
         # World/Setting data
         self.world = {
@@ -196,6 +206,25 @@ class AdvancedMemoryManager:
                         clean_patterns.append(p)
                     self.learned_patterns = clean_patterns
                     self.short_term_history = data.get("short_term_history", [])
+                    
+                    # Multi-session store support
+                    self.sessions_store = data.get("sessions_store", {})
+                    self.active_session_id = data.get("active_session_id", "default")
+                    if not self.sessions_store:
+                        self.sessions_store = {
+                            self.active_session_id: {
+                                "id": self.active_session_id,
+                                "title": "Obrolan Utama",
+                                "created_at": datetime.now().isoformat(),
+                                "last_active": datetime.now().isoformat(),
+                                "messages": list(self.short_term_history)
+                            }
+                        }
+                    elif self.active_session_id in self.sessions_store:
+                        if not self.short_term_history and self.sessions_store[self.active_session_id].get("messages"):
+                            self.short_term_history = list(self.sessions_store[self.active_session_id]["messages"])
+                        else:
+                            self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
                 else:
                     # v1 format - migrate
                     self._migrate_from_v1(data)
@@ -539,6 +568,16 @@ class AdvancedMemoryManager:
             # Keep only recent messages
             if len(self.short_term_history) > self.MAX_SHORT_TERM:
                 self.short_term_history = self.short_term_history[-self.MAX_SHORT_TERM:]
+
+            # Sync to sessions_store
+            if hasattr(self, "sessions_store") and getattr(self, "active_session_id", None):
+                if self.active_session_id in self.sessions_store:
+                    self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
+                    self.sessions_store[self.active_session_id]["last_active"] = datetime.now().isoformat()
+                    if role == "user" and self.sessions_store[self.active_session_id].get("title", "") in ("Obrolan Utama", "Chat Baru", ""):
+                        c_title = content.strip()[:35]
+                        if c_title:
+                            self.sessions_store[self.active_session_id]["title"] = c_title + ("..." if len(content) > 35 else "")
             
             # Update metadata
             self.system_metadata["last_interaction"] = message["timestamp"]
@@ -828,8 +867,16 @@ class AdvancedMemoryManager:
                         "sessions": self.episodic_memory.get("sessions", [])
                     },
                     "learned_patterns": getattr(self, "learned_patterns", []),
-                    "short_term_history": self.short_term_history
+                    "short_term_history": self.short_term_history,
+                    "sessions_store": getattr(self, "sessions_store", {}),
+                    "active_session_id": getattr(self, "active_session_id", "default")
                 }
+                
+                # Update current active session in sessions_store
+                if hasattr(self, "sessions_store") and getattr(self, "active_session_id", None):
+                    if self.active_session_id in self.sessions_store:
+                        self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
+                        self.sessions_store[self.active_session_id]["last_active"] = datetime.now().isoformat()
                 
                 tmp_path = self.memory_file + ".tmp"
                 with open(tmp_path, 'w', encoding='utf-8') as f:
@@ -872,6 +919,172 @@ class AdvancedMemoryManager:
             self.initialize_memory()
             self.save_memory()
             print("[Memory] All memory reset")
+
+    def create_new_session(self, title: Optional[str] = None) -> str:
+        """
+        Finalize current session into episodic memory, save its history,
+        and start a fresh new session while keeping ALL knowledge base facts,
+        user profile, and continuous training data intact!
+        """
+        with self.lock:
+            # 1. Finalize current session into episodic memory
+            if self.short_term_history:
+                self.finalize_session()
+
+            # 2. Sync current messages to sessions_store
+            if hasattr(self, "sessions_store") and getattr(self, "active_session_id", None):
+                if self.active_session_id in self.sessions_store:
+                    self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
+                    self.sessions_store[self.active_session_id]["last_active"] = datetime.now().isoformat()
+
+            # 3. Generate unique session ID
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_id = f"session_{timestamp}"
+            if not hasattr(self, "sessions_store") or not self.sessions_store:
+                self.sessions_store = {}
+            
+            session_num = len(self.sessions_store) + 1
+            new_title = title.strip() if title else f"Obrolan {session_num}"
+
+            self.sessions_store[new_id] = {
+                "id": new_id,
+                "title": new_title,
+                "created_at": datetime.now().isoformat(),
+                "last_active": datetime.now().isoformat(),
+                "messages": []
+            }
+            self.active_session_id = new_id
+            self.short_term_history = []
+            self.system_metadata["session_count"] = len(self.sessions_store)
+            self.save_memory()
+            print(f"[Session] Sesi baru berhasil dibuat: {new_id} ({new_title})")
+            return new_id
+
+    def switch_session(self, session_id: str) -> bool:
+        """Switch active session to another existing session while keeping global facts intact."""
+        with self.lock:
+            if not hasattr(self, "sessions_store") or session_id not in self.sessions_store:
+                return False
+
+            # Save current session messages first
+            if getattr(self, "active_session_id", None) in self.sessions_store:
+                self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
+                self.sessions_store[self.active_session_id]["last_active"] = datetime.now().isoformat()
+
+            # Switch to new session
+            self.active_session_id = session_id
+            self.short_term_history = list(self.sessions_store[session_id].get("messages", []))
+            self.sessions_store[session_id]["last_active"] = datetime.now().isoformat()
+            self.save_memory()
+            print(f"[Session] Beralih ke sesi: {session_id} ({self.sessions_store[session_id].get('title')})")
+            return True
+
+    def get_sessions_list(self) -> List[Dict[str, Any]]:
+        """List all available sessions with metadata."""
+        with self.lock:
+            if not hasattr(self, "sessions_store") or not self.sessions_store:
+                self.sessions_store = {
+                    "default": {
+                        "id": "default",
+                        "title": "Obrolan Utama",
+                        "created_at": datetime.now().isoformat(),
+                        "last_active": datetime.now().isoformat(),
+                        "messages": list(self.short_term_history)
+                    }
+                }
+                self.active_session_id = "default"
+
+            res = []
+            for s_id, s_data in self.sessions_store.items():
+                res.append({
+                    "id": s_id,
+                    "title": s_data.get("title", f"Sesi {s_id}"),
+                    "message_count": len(s_data.get("messages", [])),
+                    "created_at": s_data.get("created_at"),
+                    "last_active": s_data.get("last_active"),
+                    "is_active": (s_id == self.active_session_id)
+                })
+
+            res.sort(key=lambda x: x.get("last_active") or "", reverse=True)
+            return res
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session while preserving all knowledge base facts and training patterns."""
+        with self.lock:
+            if not hasattr(self, "sessions_store") or session_id not in self.sessions_store:
+                return False
+
+            del self.sessions_store[session_id]
+
+            if self.active_session_id == session_id:
+                if self.sessions_store:
+                    first_id = next(iter(self.sessions_store.keys()))
+                    self.switch_session(first_id)
+                else:
+                    self.create_new_session("Obrolan Utama")
+            else:
+                self.save_memory()
+            return True
+
+    def get_cross_session_context(self, query: str) -> str:
+        """
+        Check past sessions in episodic memory and sessions_store.
+        If user asks about prior chats (e.g. 'chat 1', 'sesi sebelumnya', 'tadi kita bahas apa', etc.)
+        or mentions topics from past conversations, return relevant cross-session memory!
+        """
+        with self.lock:
+            q_lower = query.lower()
+            trigger_phrases = [
+                "chat 1", "chat.1", "chat 2", "chat.2", "chat sebelumnya",
+                "sesi sebelumnya", "obrolan sebelumnya", "tadi kita ngomong",
+                "kemarin", "sesi lalu", "chat lalu", "ingat gak", "ingat tidak",
+                "pernah cerita", "pernah bilang", "bahas tadi", "di obrolan lain"
+            ]
+            is_explicit_recall = any(p in q_lower for p in trigger_phrases)
+
+            recalled_contexts = []
+
+            # 1. Check episodic memory sessions
+            past_sessions = self.episodic_memory.get("sessions", [])
+            for i, s in enumerate(reversed(past_sessions)):
+                summary = s.get("summary", "")
+                topics = s.get("topics", [])
+                moments = s.get("key_moments", [])
+                s_id = s.get("session_id", f"Sesi {len(past_sessions) - i}")
+                
+                topic_match = any(t.lower() in q_lower for t in topics)
+                
+                if is_explicit_recall or topic_match:
+                    info = f"- [{s_id}] Topik: {', '.join(topics) if topics else 'Umum'}. Rangkuman: {summary}"
+                    if moments:
+                        info += f" (Momen penting: {moments[-1]})"
+                    recalled_contexts.append(info)
+                
+                if len(recalled_contexts) >= 3:
+                    break
+
+            # 2. Check other sessions in sessions_store
+            if hasattr(self, "sessions_store"):
+                for s_id, s_data in self.sessions_store.items():
+                    if s_id != self.active_session_id and len(recalled_contexts) < 3:
+                        title = s_data.get("title", "")
+                        msgs = s_data.get("messages", [])
+                        if not msgs:
+                            continue
+                        if is_explicit_recall or (title and title.lower() in q_lower):
+                            sample_msgs = [f"{m['role']}: {m['content'][:60]}" for m in msgs[-3:]]
+                            recalled_contexts.append(f"- [Sesi: {title}] Percakapan: {' | '.join(sample_msgs)}")
+
+            if not recalled_contexts:
+                return ""
+
+            header = (
+                "\n\n### 🧠 INGATAN EPISODIK LINTAS SESI (CROSS-SESSION MEMORY):\n"
+                "Berikut adalah ingatan dari obrolan/sesi Kakak sebelumnya yang masih Shiro ingat dengan setia:\n"
+                + "\n".join(recalled_contexts) + "\n"
+                "Gunakan ingatan di atas untuk menjawab dengan tepat dan penuh kasih sayang jika Kakak menanyakan atau menyambung obrolan dari sesi/chat sebelumnya!\n"
+            )
+            return header
 
     def record_learned_pattern(self, user_text: str, assistant_text: str, quality: float = 1.0, image_path: Optional[str] = None):
         """Record high quality conversational turns for In-Context Few-Shot Learning"""

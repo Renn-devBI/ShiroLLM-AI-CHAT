@@ -111,6 +111,58 @@ body {
     gap: 10px;
 }
 
+/* --- Session Switcher & New Chat --- */
+.session-control-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 2px 4px;
+}
+
+.btn-new-chat {
+    border: none;
+    background-color: var(--primary);
+    color: #ffffff;
+    font-size: 0.8rem;
+    font-weight: 500;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background-color 0.15s ease;
+}
+
+.btn-new-chat:hover {
+    background-color: var(--primary-hover);
+    color: #ffffff;
+}
+
+.btn-new-chat-text {
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.session-dropdown {
+    background: transparent;
+    color: var(--text-primary);
+    border: none;
+    font-size: 0.78rem;
+    font-family: inherit;
+    padding: 4px 6px;
+    outline: none;
+    cursor: pointer;
+    max-width: 140px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-dropdown option {
+    background-color: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
 .memory-badge {
     display: flex;
     align-items: center;
@@ -750,6 +802,39 @@ body {
 .btn-remove-thumb:hover {
     color: var(--danger);
     background-color: rgba(239, 68, 68, 0.1);
+}
+
+/* Document Preview Card */
+.doc-preview-card {
+    border-left: 3px solid #10b981;
+}
+
+.doc-icon-badge {
+    width: 44px;
+    height: 44px;
+    border-radius: 4px;
+    background-color: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #34d399;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    flex-shrink: 0;
+}
+
+.doc-badge-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.76rem;
+    background-color: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #34d399;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    font-weight: 500;
 }
 
 /* Chat Image Attachment in Bubble */

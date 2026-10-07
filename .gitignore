@@ -23,3 +23,5 @@ Thumbs.db
 
 # Private user uploads
 *.log
+data/uploads/
+
