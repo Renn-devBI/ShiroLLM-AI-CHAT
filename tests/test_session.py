@@ -10,9 +10,11 @@ class TestMultiSessionMemory(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.mem_file = os.path.join(self.temp_dir.name, "test_mem.json")
         self.world_file = os.path.join(self.temp_dir.name, "test_world.json")
+        os.environ["SHIRO_TRAINING_DIR"] = os.path.join(self.temp_dir.name, "training_data")
         self.memory = AdvancedMemoryManager(memory_file=self.mem_file, world_file=self.world_file)
 
     def tearDown(self):
+        os.environ.pop("SHIRO_TRAINING_DIR", None)
         self.temp_dir.cleanup()
 
     def test_session_creation_and_switching(self):
@@ -85,6 +87,34 @@ class TestMultiSessionMemory(unittest.TestCase):
         texts = " ".join([json.dumps(l) for l in lines])
         self.assertIn("Pertanyaan di sesi 1", texts)
         self.assertIn("Pertanyaan di sesi 2", texts)
+
+    def test_delete_session_preserves_training_data_and_facts(self):
+        # Create a session and add conversation turn
+        sess_id = self.memory.create_new_session("Diskusi Game")
+        self.memory.add_message("user", "Kakak sangat suka main game Genshin")
+        self.memory.add_message("assistant", "*tersenyum manis* Wah seru banget Kak! Shiro temani ya~")
+        self.memory.save_memory()
+
+        # Delete the session
+        ok = self.memory.delete_session(sess_id)
+        self.assertTrue(ok)
+        self.assertNotIn(sess_id, [s["id"] for s in self.memory.get_sessions_list()])
+
+        # Verify archived_training_history preserved the conversation
+        archived = getattr(self.memory, "archived_training_history", [])
+        self.assertTrue(any("Genshin" in item.get("user", "") for item in archived))
+
+        # Verify learned_patterns preserved the dialogue
+        patterns = getattr(self.memory, "learned_patterns", [])
+        self.assertTrue(any("Genshin" in p.get("user", "") for p in patterns))
+
+        # Verify export_data exports the deleted session into training dataset
+        output_dir = os.path.join(self.temp_dir.name, "training_export_del")
+        export_data(memory_path=self.mem_file, base_output_dir=output_dir)
+        chat_out = os.path.join(output_dir, "chat", "shiro_chatml_train.jsonl")
+        with open(chat_out, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("Genshin", content)
 
 if __name__ == '__main__':
     unittest.main()

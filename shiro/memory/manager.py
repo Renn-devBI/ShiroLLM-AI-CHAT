@@ -110,6 +110,7 @@ class AdvancedMemoryManager:
         ]
         
         self.short_term_history = []  # Recent messages
+        self.archived_training_history = []  # Permanent archive of all completed/deleted session dialogues for dataset training
         self.MAX_SHORT_TERM = 25
         self.active_session_id = "default"
         self.sessions_store = {
@@ -210,6 +211,7 @@ class AdvancedMemoryManager:
                         seen_asst.add(a_txt)
                         clean_patterns.append(p)
                     self.learned_patterns = clean_patterns
+                    self.archived_training_history = data.get("archived_training_history", [])
                     self.short_term_history = data.get("short_term_history", [])
                     
                     # Multi-session store support
@@ -872,6 +874,7 @@ class AdvancedMemoryManager:
                         "sessions": self.episodic_memory.get("sessions", [])
                     },
                     "learned_patterns": getattr(self, "learned_patterns", []),
+                    "archived_training_history": getattr(self, "archived_training_history", []),
                     "short_term_history": self.short_term_history,
                     "sessions_store": getattr(self, "sessions_store", {}),
                     "active_session_id": getattr(self, "active_session_id", "default")
@@ -1014,21 +1017,71 @@ class AdvancedMemoryManager:
             return res
 
     def delete_session(self, session_id: str) -> bool:
-        """Delete a session while preserving all knowledge base facts and training patterns."""
+        """
+        Delete a session while permanently preserving all conversation pairs into
+        archived_training_history, learned_patterns, and fine-tuning datasets (ChatML/Alpaca/ShareGPT).
+        Only the visible conversation history of this session is removed.
+        """
         with self.lock:
             if not hasattr(self, "sessions_store") or session_id not in self.sessions_store:
                 return False
 
+            session_data = self.sessions_store[session_id]
+            messages = session_data.get("messages", [])
+            if self.active_session_id == session_id and self.short_term_history:
+                messages = list(self.short_term_history)
+
+            if not hasattr(self, "archived_training_history") or self.archived_training_history is None:
+                self.archived_training_history = []
+
+            # 1. Permanently archive all dialogue pairs from this session
+            archived_count = 0
+            for i in range(len(messages) - 1):
+                if messages[i].get("role") == "user" and messages[i+1].get("role") == "assistant":
+                    u = messages[i].get("content", "").strip()
+                    a = messages[i+1].get("content", "").strip()
+                    img = messages[i].get("image") or messages[i+1].get("image")
+                    if u and a and not a.startswith("*bingung*") and "<think>" not in a.lower():
+                        self.archived_training_history.append({
+                            "user": u,
+                            "assistant": a,
+                            "image": img,
+                            "session_id": session_id,
+                            "archived_at": datetime.now().isoformat()
+                        })
+                        # Also record into learned_patterns for immediate few-shot exemplars
+                        self.record_learned_pattern(u, a, image_path=img)
+                        # Extract and retain user facts into permanent knowledge base
+                        facts = self._extract_rdf_facts(u, "user")
+                        if facts:
+                            self.knowledge_base.setdefault("facts", []).extend(facts)
+                        archived_count += 1
+
+            # 2. Remove session from sessions_store
             del self.sessions_store[session_id]
 
+            # 3. Switch to another available session or create a fresh clean session
             if self.active_session_id == session_id:
                 if self.sessions_store:
                     first_id = next(iter(self.sessions_store.keys()))
-                    self.switch_session(first_id)
+                    self.active_session_id = first_id
+                    self.short_term_history = list(self.sessions_store[first_id].get("messages", []))
+                    self.sessions_store[first_id]["last_active"] = datetime.now().isoformat()
                 else:
                     self.create_new_session("Obrolan Utama")
-            else:
-                self.save_memory()
+
+            # 4. Persist updated memory with archived_training_history to disk
+            self.save_memory()
+
+            # 5. Export training dataset files (ChatML/Alpaca/ShareGPT) so training data is immediately updated
+            try:
+                from shiro.training.exporter import export_data
+                train_dir = os.environ.get("SHIRO_TRAINING_DIR", "training_data")
+                export_data(memory_path=self.memory_file, base_output_dir=train_dir)
+                print(f"📦 [Training Preserved] Sesi '{session_id}' dihapus, namun {archived_count} giliran dialog berhasil diabadikan ke dataset training!")
+            except Exception as e_exp:
+                print(f"⚠️ [Training Sync] Catatan export training: {e_exp}")
+
             return True
 
     def get_cross_session_context(self, query: str) -> str:

@@ -105,6 +105,18 @@ def export_data(memory_path="ingatan_shiro.json", base_output_dir="training_data
                     else:
                         chat_pairs.append((u, a))
 
+    # 5. Ekstrak dari archived_training_history (Sesi obrolan lama yang dihapus pengguna tetapi data training tetap diabadikan)
+    archived = data.get("archived_training_history", [])
+    for item in archived:
+        u = item.get("user", "").strip()
+        a = item.get("assistant", "").strip()
+        img = item.get("image", None)
+        if u and is_valid_response(a):
+            if img:
+                vision_pairs.append((u, a, img))
+            else:
+                chat_pairs.append((u, a))
+
     # Deduplikasi Chat Pairs
     unique_chat = []
     seen_chat = set()

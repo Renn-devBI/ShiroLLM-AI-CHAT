@@ -12,6 +12,7 @@ const typingIndicator = document.getElementById('typing-indicator');
 // Session Controls
 const newChatBtn = document.getElementById('new-chat-btn');
 const sessionSelect = document.getElementById('session-select');
+const deleteChatBtn = document.getElementById('delete-chat-btn');
 
 // Document Upload Controls
 const uploadDocBtn = document.getElementById('upload-doc-btn');
@@ -467,11 +468,54 @@ async function switchSession(sessionId) {
     }
 }
 
+async function deleteCurrentSession() {
+    if (isGenerating) return;
+
+    const confirmDelete = confirm('Hapus percakapan di chat ini?\n\nCatatan:\n• Percakapan di layar ini akan dihapus/dibersihkan.\n• Seluruh data pelatihan (training dataset) dan fakta ingatan Shiro tetap tersimpan aman!');
+    if (!confirmDelete) return;
+
+    try {
+        status.textContent = 'Menghapus chat...';
+        const res = await fetch(`/api/sessions/${activeSessionId}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (data.success) {
+            activeSessionId = data.active_session_id;
+            clearAttachedDocument();
+            clearAttachedImage();
+
+            chatMessages.innerHTML = `
+                <div class="message assistant">
+                    <div class="avatar shiro-avatar">S</div>
+                    <div class="bubble">
+                        Halo Kakak. Ada yang bisa Shiro bantu hari ini?
+                    </div>
+                </div>
+            `;
+            if (data.messages && data.messages.length > 0) {
+                data.messages.forEach(msg => {
+                    addMessage(msg.role, msg.content);
+                });
+            }
+            await loadSessions();
+            updateMemoryCount();
+            status.textContent = 'Chat dihapus. Data training tetap tersimpan aman!';
+        } else {
+            status.textContent = 'Gagal menghapus chat';
+        }
+    } catch (e) {
+        console.error("Error deleting session:", e);
+        status.textContent = 'Error saat menghapus chat';
+    }
+}
+
 // Event Listeners
 sendBtn.addEventListener('click', sendMessage);
 stopBtn.addEventListener('click', stopGeneration);
 if (newChatBtn) newChatBtn.addEventListener('click', createNewSession);
 if (sessionSelect) sessionSelect.addEventListener('change', (e) => switchSession(e.target.value));
+if (deleteChatBtn) deleteChatBtn.addEventListener('click', deleteCurrentSession);
 
 // Auto-resize input textarea saat mengetik atau menekan Shift+Enter
 function adjustInputHeight() {

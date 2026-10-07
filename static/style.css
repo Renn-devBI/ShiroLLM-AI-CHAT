@@ -163,6 +163,25 @@ body {
     color: var(--text-primary);
 }
 
+.btn-delete-chat {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    padding: 3px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-delete-chat:hover {
+    color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.15);
+}
+
 .memory-badge {
     display: flex;
     align-items: center;
