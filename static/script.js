@@ -228,15 +228,15 @@ async function resetMemory() {
         if (data.success) {
             // Reset UI
             chatMessages.innerHTML = `
-                <div class="message system">
-                    <div class="sys-bubble">
-                        <i class="ph ph-sparkle"></i>
-                        <span>SHIRO: *lari kecil dan memeluk pinggang kakak* Onii-chan!! Akhirnya pulang!</span>
+                <div class="message assistant">
+                    <div class="avatar shiro-avatar">S</div>
+                    <div class="bubble">
+                        Halo Kakak. Ada yang bisa Shiro bantu hari ini?
                     </div>
                 </div>
             `;
             updateMemoryCount();
-            status.textContent = 'Memori bersih ✨';
+            status.textContent = 'Memori dibersihkan';
         }
     } catch (error) {
         console.error('Error:', error);
@@ -342,8 +342,8 @@ document.addEventListener('mouseover', (e) => {
         e.stopPropagation();
         navigator.clipboard.writeText(originalText).then(() => {
             const toast = document.createElement('div');
-            toast.textContent = '✓ Copied';
-            toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(34,197,94,0.9);color:white;padding:10px 14px;border-radius:4px;font-size:12px;z-index:9999;animation:fadeIn 0.2s;';
+            toast.textContent = 'Tersalin';
+            toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1e293b;border:1px solid #334155;color:#f8fafc;padding:8px 14px;border-radius:6px;font-size:12px;z-index:9999;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);';
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 1500);
         });

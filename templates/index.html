@@ -3,46 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SHIRO v5 - AI Assistant</title>
+    <title>Shiro AI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
 </head>
 <body>
-    <div class="background-glow"></div>
-    
     <div class="app-container">
-        <header class="glass-header">
+        <!-- Top Navigation Bar -->
+        <header class="navbar">
             <div class="brand">
-                <div class="status-dot online"></div>
-                <div>
-                    <h1>SHIRO</h1>
-                    <span class="version-tag">v5 Stable</span>
+                <div class="status-dot"></div>
+                <div class="brand-text">
+                    <span class="brand-title">SHIRO</span>
+                    <span class="model-pill">Qwen3-32B</span>
                 </div>
             </div>
             
-            <div class="controls">
-                <div class="memory-badge">
-                    <i class="ph ph-brain"></i>
+            <div class="nav-actions">
+                <div class="memory-badge" title="Jumlah ingatan aktif">
+                    <span class="badge-label">Ingatan:</span>
                     <span id="memory-count">0</span>
                 </div>
-                <button id="settings-btn" class="icon-btn" title="Settings">
+                <button id="settings-btn" class="btn-icon" title="Pengaturan" type="button">
                     <i class="ph ph-gear"></i>
                 </button>
-                <button id="reset-btn" class="icon-btn" title="Reset Memory">
+                <button id="reset-btn" class="btn-icon btn-danger-hover" title="Reset Ingatan" type="button">
                     <i class="ph ph-trash"></i>
                 </button>
             </div>
         </header>
 
+        <!-- Chat History Viewport -->
         <main class="chat-viewport" id="chat-viewport">
             <div id="chat-messages" class="messages-list">
-                <div class="message system">
-                    <div class="sys-bubble">
-                        <i class="ph ph-sparkle"></i>
-                        <span>SHIRO: *lari kecil dan memeluk pinggang kakak* Onii-chan!! Akhirnya pulang!</span>
+                <div class="message assistant">
+                    <div class="avatar shiro-avatar">S</div>
+                    <div class="bubble">
+                        Halo Kakak. Ada yang bisa Shiro bantu hari ini?
                     </div>
                 </div>
             </div>
@@ -57,125 +57,125 @@
             </div>
         </main>
 
+        <!-- Bottom Input Bar -->
         <footer class="input-section">
-            <div class="input-container glass-panel">
+            <div class="input-card">
                 <textarea 
                     id="user-input" 
-                    class="modern-input textarea-input" 
-                    placeholder="Tulis pesan untuk Shiro... (Shift+Enter untuk baris baru, Enter untuk kirim)"
+                    class="chat-input" 
+                    placeholder="Ketik pesan..."
                     autocomplete="off"
                     rows="1"
                 ></textarea>
-                <button id="send-btn" class="send-fab" title="Send message">
-                    <i class="ph ph-paper-plane-right"></i>
-                </button>
-                <button id="stop-btn" class="send-fab stop-fab hidden" title="Stop generating">
-                    <i class="ph ph-stop"></i>
-                </button>
+                <div class="input-actions">
+                    <button id="send-btn" class="btn-send" title="Kirim pesan" type="button">
+                        <i class="ph ph-paper-plane-right"></i>
+                    </button>
+                    <button id="stop-btn" class="btn-send btn-stop hidden" title="Hentikan respons" type="button">
+                        <i class="ph ph-stop"></i>
+                    </button>
+                </div>
             </div>
-            <div class="footer-info">
+            <div class="footer-meta">
                 <span id="status">Siap</span>
             </div>
         </footer>
     </div>
 
-    <!-- Settings Modal (Glass Design) -->
-    <div id="settings-modal" class="settings-modal hidden">
-        <div class="settings-overlay"></div>
-        <div class="settings-container glass-panel">
-            <div class="settings-header">
-                <h2>⚙️ Settings</h2>
-                <button id="close-settings" class="close-btn">
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h2>Pengaturan</h2>
+                <button id="close-settings" class="btn-icon" type="button" title="Tutup">
                     <i class="ph ph-x"></i>
                 </button>
             </div>
 
-            <div class="settings-tabs">
-                <button class="tab-btn active" data-tab="user">👤 User</button>
-                <button class="tab-btn" data-tab="ai">🤖 AI</button>
-                <button class="tab-btn" data-tab="model">⚙️ Model</button>
+            <div class="modal-tabs">
+                <button class="tab-btn active" data-tab="user" type="button">Profil Pengguna</button>
+                <button class="tab-btn" data-tab="ai" type="button">Profil Shiro</button>
+                <button class="tab-btn" data-tab="model" type="button">Model AI</button>
             </div>
 
             <!-- User Profile Tab -->
             <div id="user-tab" class="tab-content active">
                 <form id="user-form" enctype="multipart/form-data">
-                    <div class="profile-preview">
+                    <div class="profile-preview-box">
                         <div id="user-preview" class="avatar-preview">
                             <i class="ph ph-user"></i>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label>Name</label>
-                        <input type="text" id="user-name" placeholder="Your name" value="Kakak">
+                    <div class="form-field">
+                        <label for="user-name">Nama Panggilan</label>
+                        <input type="text" id="user-name" placeholder="Nama Anda" value="Kakak">
                     </div>
 
-                    <div class="form-group">
-                        <label>Description</label>
-                        <textarea id="user-desc" placeholder="About yourself..."></textarea>
+                    <div class="form-field">
+                        <label for="user-desc">Keterangan Tambahan</label>
+                        <textarea id="user-desc" placeholder="Catatan personal tentang Kakak..."></textarea>
                     </div>
 
-                    <div class="form-group">
-                        <label>Profile Image</label>
+                    <div class="form-field">
+                        <label for="user-image">Foto Profil</label>
                         <input type="file" id="user-image" accept="image/*">
                     </div>
 
-                    <button type="button" onclick="saveProfile('user')" class="save-btn">Save User Profile</button>
+                    <button type="button" onclick="saveProfile('user')" class="btn-primary">Simpan Profil Pengguna</button>
                 </form>
             </div>
 
             <!-- AI Profile Tab -->
             <div id="ai-tab" class="tab-content">
                 <form id="ai-form" enctype="multipart/form-data">
-                    <div class="profile-preview">
+                    <div class="profile-preview-box">
                         <div id="ai-preview" class="avatar-preview ai">
                             <i class="ph ph-robot"></i>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label>Name</label>
-                        <input type="text" id="ai-name" placeholder="AI name" value="Shiro">
+                    <div class="form-field">
+                        <label for="ai-name">Nama AI</label>
+                        <input type="text" id="ai-name" placeholder="Nama AI" value="Shiro">
                     </div>
 
-                    <div class="form-group">
-                        <label>Description</label>
-                        <textarea id="ai-desc" placeholder="AI personality..."></textarea>
+                    <div class="form-field">
+                        <label for="ai-desc">Kepribadian</label>
+                        <textarea id="ai-desc" placeholder="Deskripsi sifat Shiro..."></textarea>
                     </div>
 
-                    <div class="form-group">
-                        <label>Profile Image</label>
+                    <div class="form-field">
+                        <label for="ai-image">Foto Avatar AI</label>
                         <input type="file" id="ai-image" accept="image/*">
                     </div>
 
-                    <button type="button" onclick="saveProfile('ai')" class="save-btn">Save AI Profile</button>
+                    <button type="button" onclick="saveProfile('ai')" class="btn-primary">Simpan Profil AI</button>
                 </form>
             </div>
 
             <!-- Model Tab -->
             <div id="model-tab" class="tab-content">
-                <div class="model-section">
-                    <div class="model-header">
-                        <h3>🧠 AI Model</h3>
-                        <span id="current-model-badge" class="model-badge">Loading...</span>
+                <div class="model-card">
+                    <div class="model-row">
+                        <span class="field-title">Model Aktif:</span>
+                        <span id="current-model-badge" class="badge-active">Loading...</span>
                     </div>
 
-                    <div class="form-group">
-                        <label>Select Model</label>
-                        <select id="model-select" class="model-select">
-                            <option disabled selected>Loading models...</option>
+                    <div class="form-field">
+                        <label for="model-select">Ganti Model</label>
+                        <select id="model-select" class="form-select">
+                            <option disabled selected>Memuat daftar model...</option>
                         </select>
-                        <small style="color: #888; margin-top: 8px; display: block;">
-                            Models are loaded from the 'model' folder. Select a different model to switch.
-                        </small>
+                        <span class="field-help">Pilih model dari daftar untuk beralih instan.</span>
                     </div>
 
-                    <div id="model-info" class="model-info">
-                        <p>💡 Select a model from the dropdown and click "Switch Model" to change the AI.</p>
-                        <p>⏱️ Large models may take time to load. Be patient!</p>
+                    <div id="model-info" class="info-box">
+                        <p>Model Qwen3-32B adalah model utama cerdas dengan penalaran tertinggi.</p>
+                        <p>Model berukuran besar membutuhkan beberapa saat untuk dimuat ke memori.</p>
                     </div>
 
-                    <button type="button" onclick="switchModel()" class="save-btn">Switch Model</button>
+                    <button type="button" onclick="switchModel()" class="btn-primary">Ganti Model</button>
                 </div>
             </div>
         </div>
