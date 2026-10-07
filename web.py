@@ -75,12 +75,15 @@ def load_model_config():
     
     # Default config jika belum ada
     return {
-        "current_model": f"{MODEL_DIR}/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
+        "current_model": f"{MODEL_DIR}/Qwen3-32B-Q4_K_M.gguf",
         "available_models": [
-            f"{MODEL_DIR}/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf",
-            f"{MODEL_DIR}/Phi-3-mini-4k-instruct-q4.gguf",
+            f"{MODEL_DIR}/Qwen3-32B-Q4_K_M.gguf",
+            f"{MODEL_DIR}/Qwen2.5-7B-Instruct-Q5_K_M.gguf",
+            f"{MODEL_DIR}/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
             f"{MODEL_DIR}/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
-            f"{MODEL_DIR}/Qwen3-4B-Q4_K_M.gguf"
+            f"{MODEL_DIR}/Qwen3-4B-Q4_K_M.gguf",
+            f"{MODEL_DIR}/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf",
+            f"{MODEL_DIR}/Phi-3-mini-4k-instruct-q4.gguf"
         ]
     }
 
@@ -800,8 +803,14 @@ if __name__ == '__main__':
     current_model_path = config.get("current_model")
     
     if not current_model_path or not os.path.exists(current_model_path):
-        print(f"❌ Error: Model file '{current_model_path}' tidak ditemukan di folder {MODEL_DIR}!")
-        sys.exit(1)
+        # Auto-fallback: jika model utama belum diunduh, gunakan model lain yang tersedia di folder model/
+        existing_models = [os.path.join(MODEL_DIR, f) for f in os.listdir(MODEL_DIR) if f.endswith('.gguf')]
+        if existing_models:
+            current_model_path = existing_models[0]
+            print(f"⚠️ Model di config ({config.get('current_model')}) belum tersedia di disk, otomatis beralih ke: {current_model_path}")
+        else:
+            print(f"❌ Error: Model file '{current_model_path}' tidak ditemukan di folder {MODEL_DIR}!")
+            sys.exit(1)
     
     try:
         llm = Llama(
