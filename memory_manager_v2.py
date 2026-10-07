@@ -371,7 +371,7 @@ class AdvancedMemoryManager:
         
         return facts
     
-    def add_message(self, role: str, content: str, emotion: str = "neutral"):
+    def add_message(self, role: str, content: str, emotion: str = "neutral", image_path: Optional[str] = None):
         """Add message to short-term history and self-learn from conversation & response"""
         with self.lock:
             message = {
@@ -381,6 +381,8 @@ class AdvancedMemoryManager:
                 "emotion": emotion,
                 "keywords": self._extract_keywords(content)
             }
+            if image_path:
+                message["image"] = image_path
             
             if role == "assistant":
                 message["actions"] = self._extract_actions(content)
@@ -715,7 +717,7 @@ class AdvancedMemoryManager:
             self.save_memory()
             print("[Memory] All memory reset")
 
-    def record_learned_pattern(self, user_text: str, assistant_text: str, quality: float = 1.0):
+    def record_learned_pattern(self, user_text: str, assistant_text: str, quality: float = 1.0, image_path: Optional[str] = None):
         """Record high quality conversational turns for In-Context Few-Shot Learning"""
         with self.lock:
             if not user_text or not assistant_text:
@@ -737,6 +739,8 @@ class AdvancedMemoryManager:
                 "quality": quality,
                 "timestamp": datetime.now().isoformat()
             }
+            if image_path:
+                pattern["image"] = image_path
             
             # Update existing pattern if similar question
             for p in self.learned_patterns:
@@ -744,6 +748,8 @@ class AdvancedMemoryManager:
                     p["assistant"] = a_clean
                     p["quality"] = quality
                     p["timestamp"] = datetime.now().isoformat()
+                    if image_path:
+                        p["image"] = image_path
                     return
             
             self.learned_patterns.append(pattern)

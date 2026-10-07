@@ -3,31 +3,35 @@ import sys
 import glob
 import ctypes
 
-# Auto-configure and pre-load CUDA runtime libraries on Linux / Google Colab
+# Auto-configure and pre-load CUDA & cuBLAS runtime libraries on Linux / Google Colab
 if sys.platform.startswith("linux"):
     cuda_dirs = [
         "/usr/local/cuda/lib64",
         "/usr/local/cuda-12/lib64",
         "/usr/local/cuda-12.2/lib64",
         "/usr/local/cuda-12.4/lib64",
-        "/usr/lib/x86_64-linux-gnu"
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64"
     ]
-    # Search in nvidia pip packages (e.g. nvidia-cuda-runtime-cu12)
+    # Search in nvidia pip packages (nvidia-cublas-cu12, nvidia-cuda-runtime-cu12, etc.)
     for p in glob.glob("/usr/local/lib/python*/dist-packages/nvidia/*/lib") + \
              glob.glob("/usr/lib/python*/dist-packages/nvidia/*/lib") + \
              glob.glob(os.path.expanduser("~/.local/lib/python*/dist-packages/nvidia/*/lib")):
-        cuda_dirs.append(p)
+        if os.path.isdir(p) and p not in cuda_dirs:
+            cuda_dirs.append(p)
     
     # Update LD_LIBRARY_PATH
     valid_dirs = [d for d in cuda_dirs if os.path.isdir(d)]
     if valid_dirs:
         os.environ["LD_LIBRARY_PATH"] = ":".join(valid_dirs) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
-        for d in valid_dirs:
-            for f in glob.glob(os.path.join(d, "libcudart.so*")):
-                try:
-                    ctypes.CDLL(f, mode=ctypes.RTLD_GLOBAL)
-                except Exception:
-                    pass
+        # Pre-load libraries in exact dependency order into global symbol table
+        for pat in ["libcudart.so*", "libcublasLt.so*", "libcublas.so*", "libcuda.so*"]:
+            for d in valid_dirs:
+                for f in sorted(glob.glob(os.path.join(d, pat)), reverse=True):
+                    try:
+                        ctypes.CDLL(f, mode=ctypes.RTLD_GLOBAL)
+                    except Exception:
+                        pass
 
 from flask import Flask, render_template, request, jsonify, send_file
 try:
@@ -815,6 +819,21 @@ def chat():
                 "reply": "*bingung* Kakak ngomong banyak banget... Shiro pusing! Singkat aja dong!"
             }), 400
         
+        saved_img_rel = None
+        if image_base64:
+            try:
+                import uuid
+                v_dir = os.path.join("training_data", "vision", "images")
+                os.makedirs(v_dir, exist_ok=True)
+                fn = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.jpg"
+                fp = os.path.join(v_dir, fn)
+                raw = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
+                with open(fp, "wb") as f_out:
+                    f_out.write(base64.b64decode(raw))
+                saved_img_rel = os.path.join("images", fn).replace("\\", "/")
+            except Exception as e_img:
+                print(f"Warning saving vision image: {e_img}")
+
         with memory.lock:
             SHIRO_SERIAL_QUESTIONS = 0  # Reset counter on user input
             
@@ -823,7 +842,7 @@ def chat():
             
             # Add user message to memory
             log_msg = user_message if not image_base64 else f"[Gambar/Kamera Dikirim] {user_message}"
-            memory.add_message("user", log_msg)
+            memory.add_message("user", log_msg, image_path=saved_img_rel)
             
             # Generate reply
             reply = get_shiro_reply(user_message, image_base64=image_base64)
@@ -836,7 +855,7 @@ def chat():
             memory.update_mood_from_emotions()
             
             # Simpan interaksi berkualitas untuk in-context few-shot learning
-            memory.record_learned_pattern(log_msg, reply)
+            memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             
             # Compress & save memory tiap turn
             compress_old_messages(memory, keep_count=15)
@@ -918,12 +937,27 @@ def openai_chat_completions():
         if not user_message and not image_base64:
             user_message = messages[-1].get("content", "").strip() if messages else "Halo Shiro!"
             
+        saved_img_rel = None
+        if image_base64:
+            try:
+                import uuid
+                v_dir = os.path.join("training_data", "vision", "images")
+                os.makedirs(v_dir, exist_ok=True)
+                fn = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.jpg"
+                fp = os.path.join(v_dir, fn)
+                raw = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
+                with open(fp, "wb") as f_out:
+                    f_out.write(base64.b64decode(raw))
+                saved_img_rel = os.path.join("images", fn).replace("\\", "/")
+            except Exception as e_img:
+                print(f"Warning saving vision image in v1 completions: {e_img}")
+
         with memory.lock:
             log_msg = user_message if not image_base64 else f"[Visual VTuber/Webcam] {user_message}"
-            memory.add_message("user", log_msg)
+            memory.add_message("user", log_msg, image_path=saved_img_rel)
             reply = get_shiro_reply(user_message, image_base64=image_base64)
             memory.add_message("assistant", reply)
-            memory.record_learned_pattern(log_msg, reply)
+            memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
             compress_old_messages(memory, keep_count=15)
