@@ -23,6 +23,10 @@
             </div>
             
             <div class="nav-actions">
+                <button id="pipeline-btn" class="btn-icon btn-pipeline-toggle" title="Alur Kerja AI / Neural Workflow (Mode n8n)" type="button">
+                    <i class="ph ph-tree-structure"></i>
+                    <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
+                </button>
                 <div class="memory-badge" title="Jumlah ingatan aktif">
                     <span class="badge-label">Ingatan:</span>
                     <span id="memory-count">0</span>
@@ -132,6 +136,62 @@
                     <button type="button" id="capture-photo-btn" class="btn-primary btn-capture" title="Ambil Foto">
                         <i class="ph ph-camera"></i> Ambil Foto
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Neural Workflow Modal (n8n-style Real-Time Pipeline Inspector) -->
+    <div id="pipeline-modal" class="modal-backdrop hidden">
+        <div class="modal-dialog pipeline-dialog">
+            <div class="modal-header">
+                <div class="pipeline-header-title">
+                    <div class="pipeline-icon-circle">
+                        <i class="ph ph-tree-structure"></i>
+                    </div>
+                    <div>
+                        <h2>Alur Proses AI (Neural Workflow)</h2>
+                        <span class="pipeline-modal-sub">Inspeksi data & alur pemikiran AI real-time ala n8n</span>
+                    </div>
+                </div>
+                <div class="pipeline-modal-actions">
+                    <span id="pipeline-total-time" class="badge-time">0 ms</span>
+                    <a href="/pipeline" target="_blank" class="btn-secondary btn-sm" title="Buka Halaman Penuh di Tab Baru">
+                        <i class="ph ph-arrow-square-out"></i> Layar Penuh
+                    </a>
+                    <button id="close-pipeline-modal" class="btn-icon" type="button" title="Tutup">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Workflow Canvas Area -->
+            <div class="pipeline-canvas-scroll">
+                <div id="modal-nodes-container" class="pipeline-nodes-row">
+                    <!-- Populated dynamically via script.js -->
+                </div>
+            </div>
+
+            <!-- Real-Time Node Data Inspector Panel -->
+            <div class="pipeline-modal-inspector">
+                <div class="inspector-bar">
+                    <div class="inspector-meta">
+                        <span class="inspector-badge">INSPEKTOR DATA NODE</span>
+                        <h4 id="modal-node-title">Pilih Node di Atas</h4>
+                        <span id="modal-node-sub" class="inspector-meta-sub">Klik node untuk memeriksa data input/output JSON secara real-time.</span>
+                    </div>
+                    <div class="inspector-actions">
+                        <div class="tab-group-sm">
+                            <button type="button" id="modal-tab-out" class="tab-btn-sm active" onclick="switchModalTab('output')">Data Output</button>
+                            <button type="button" id="modal-tab-in" class="tab-btn-sm" onclick="switchModalTab('input')">Data Input</button>
+                        </div>
+                        <button type="button" class="btn-secondary btn-sm" onclick="copyModalJson()" title="Salin JSON">
+                            <i class="ph ph-copy"></i> Salin
+                        </button>
+                    </div>
+                </div>
+                <div class="inspector-pre-wrapper">
+                    <pre><code id="modal-json-display">// Kirim pesan chat untuk melihat neuron alur AI aktif...</code></pre>
                 </div>
             </div>
         </div>

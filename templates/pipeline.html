@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shiro AI • Neural Workflow (n8n Real-Time Inspector)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        body {
+            overflow: auto !important;
+            background-color: #0b0f19;
+            color: #f8fafc;
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .pipeline-app {
+            display: flex;
+            flex-direction: column;
+            width: 100vw;
+            height: 100vh;
+            background-color: #090d16;
+            background-image: radial-gradient(circle, #1e293b 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+
+        .wf-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.85rem 1.5rem;
+            background-color: rgba(17, 24, 39, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid #1e293b;
+            z-index: 20;
+        }
+
+        .wf-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .wf-brand-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #2563eb, #06b6d4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
+            box-shadow: 0 0 16px rgba(37, 99, 235, 0.4);
+        }
+
+        .wf-brand-titles {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .wf-title {
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: #f8fafc;
+        }
+
+        .wf-subtitle {
+            font-size: 11px;
+            color: #94a3b8;
+        }
+
+        .wf-test-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 4px 6px;
+            width: 440px;
+        }
+
+        .wf-test-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #f8fafc;
+            font-size: 13px;
+            padding: 6px 8px;
+            outline: none;
+        }
+
+        .wf-test-input::placeholder {
+            color: #64748b;
+        }
+
+        .wf-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .wf-status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 9999px;
+            background: #1e293b;
+            color: #94a3b8;
+            border: 1px solid #334155;
+        }
+
+        .wf-status-badge.live {
+            background: rgba(16, 185, 129, 0.12);
+            color: #10b981;
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .wf-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse-dot 2s infinite ease-in-out;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+        }
+
+        .wf-main {
+            flex: 1;
+            display: flex;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .wf-canvas {
+            flex: 1;
+            overflow: auto;
+            padding: 40px;
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+
+        .wf-nodes-flow {
+            display: flex;
+            align-items: center;
+            gap: 36px;
+            min-width: max-content;
+            padding: 20px 10px;
+        }
+
+        .wf-node-card {
+            width: 250px;
+            background: #111827;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        .wf-node-card:hover {
+            border-color: #3b82f6;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.15);
+        }
+
+        .wf-node-card.active {
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25), 0 8px 24px rgba(56, 189, 248, 0.2);
+            background: #131c2e;
+        }
+
+        .wf-node-card.running {
+            border-color: #f59e0b;
+            animation: node-pulse 1.5s infinite;
+        }
+
+        @keyframes node-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+        }
+
+        .wf-node-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .wf-node-icon-box {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 17px;
+            color: white;
+        }
+
+        .wf-node-status {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 7px;
+            border-radius: 9999px;
+            background: #1e293b;
+            color: #94a3b8;
+        }
+
+        .wf-node-status.success {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+        }
+
+        .wf-node-status.running {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+        }
+
+        .wf-node-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #f8fafc;
+            margin-bottom: 4px;
+        }
+
+        .wf-node-summary {
+            font-size: 11px;
+            color: #94a3b8;
+            line-height: 1.4;
+            height: 32px;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .wf-node-footer {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid #1e293b;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: #64748b;
+        }
+
+        .wf-connector-line {
+            display: flex;
+            align-items: center;
+            color: #334155;
+            font-size: 20px;
+            position: relative;
+        }
+
+        .wf-connector-line::after {
+            content: '';
+            width: 24px;
+            height: 2px;
+            background: #334155;
+            display: block;
+        }
+
+        .wf-connector-line.active::after {
+            background: linear-gradient(90deg, #2563eb, #38bdf8);
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+        }
+
+        /* Inspector Drawer */
+        .wf-inspector {
+            width: 440px;
+            background: #0f172a;
+            border-left: 1px solid #1e293b;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        .insp-top {
+            padding: 16px 20px;
+            border-bottom: 1px solid #1e293b;
+            background: #111827;
+        }
+
+        .insp-tag {
+            font-size: 10px;
+            font-weight: 700;
+            color: #38bdf8;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+        }
+
+        .insp-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #f8fafc;
+            margin: 4px 0;
+        }
+
+        .insp-sub {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        .insp-tabs-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            border-bottom: 1px solid #1e293b;
+            background: #0b0f19;
+        }
+
+        .insp-tabs {
+            display: flex;
+            gap: 6px;
+        }
+
+        .insp-btn {
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .insp-btn.active {
+            background: #1e293b;
+            color: #f8fafc;
+        }
+
+        .insp-body {
+            flex: 1;
+            overflow: auto;
+            padding: 16px;
+        }
+
+        .insp-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: #e2e8f0;
+            background: #090d16;
+            padding: 14px;
+            border-radius: 8px;
+            border: 1px solid #1e293b;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.5;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="pipeline-app">
+        <!-- Workflow Top Bar -->
+        <header class="wf-header">
+            <div class="wf-brand">
+                <div class="wf-brand-icon">
+                    <i class="ph ph-tree-structure"></i>
+                </div>
+                <div class="wf-brand-titles">
+                    <span class="wf-title">SHIRO NEURAL WORKFLOW</span>
+                    <span class="wf-subtitle">n8n Real-Time Execution Inspector</span>
+                </div>
+            </div>
+
+            <!-- Quick Test Bar -->
+            <form id="test-run-form" class="wf-test-bar" onsubmit="runTestQuery(event)">
+                <input type="text" id="test-input" class="wf-test-input" placeholder="Ketik pesan uji coba untuk memicu neuron AI..." autocomplete="off">
+                <button type="submit" id="test-submit-btn" class="btn-primary btn-sm" title="Jalankan Alur">
+                    <i class="ph ph-play"></i> Eksekusi
+                </button>
+            </form>
+
+            <div class="wf-header-actions">
+                <div class="wf-status-badge live">
+                    <span class="wf-status-dot"></span>
+                    <span id="sse-status-text">Live Stream Aktif</span>
+                </div>
+                <div class="wf-status-badge">
+                    <i class="ph ph-timer"></i>
+                    <span id="total-time-badge">0 ms</span>
+                </div>
+                <a href="/" class="btn-secondary btn-sm" title="Kembali ke Web Chat Shiro">
+                    <i class="ph ph-chat-circle-dots"></i> Kembali ke Chat
+                </a>
+            </div>
+        </header>
+
+        <!-- Main Workflow Canvas -->
+        <div class="wf-main">
+            <div class="wf-canvas">
+                <div id="nodes-flow-container" class="wf-nodes-flow">
+                    <!-- Populated dynamically via JavaScript -->
+                </div>
+            </div>
+
+            <!-- Side Node Inspector -->
+            <div class="wf-inspector">
+                <div class="insp-top">
+                    <span class="insp-tag">NODE TELEMETRY & DATA</span>
+                    <h3 id="side-node-name" class="insp-title">Pilih Node</h3>
+                    <p id="side-node-summary" class="insp-sub">Klik node mana saja di alur sebelah kiri untuk memeriksa payload input dan output secara terperinci.</p>
+                </div>
+                <div class="insp-tabs-bar">
+                    <div class="insp-tabs">
+                        <button type="button" class="insp-btn active" id="tab-out-btn" onclick="switchInspectorTab('output')">Data Output</button>
+                        <button type="button" class="insp-btn" id="tab-in-btn" onclick="switchInspectorTab('input')">Data Input</button>
+                    </div>
+                    <button type="button" class="btn-secondary btn-sm" onclick="copyCurrentJson()" title="Salin Payload">
+                        <i class="ph ph-copy"></i> Salin
+                    </button>
+                </div>
+                <div class="insp-body">
+                    <pre class="insp-code"><code id="side-code-view">// Menunggu eksekusi alur...</code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTrace = null;
+        let selectedNodeId = null;
+        let activeTab = 'output';
+
+        // Initialize SSE (Server-Sent Events) listener
+        function initSSE() {
+            const statusText = document.getElementById('sse-status-text');
+            const evtSource = new EventSource('/api/pipeline/events');
+
+            evtSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data && data.nodes) {
+                        currentTrace = data;
+                        renderWorkflow(data);
+                    }
+                } catch (e) {
+                    console.error("Error parsing pipeline event:", e);
+                }
+            };
+
+            evtSource.onerror = function() {
+                statusText.textContent = "Reconnecting...";
+            };
+
+            evtSource.onopen = function() {
+                statusText.textContent = "Live Stream Aktif";
+            };
+        }
+
+        // Fetch latest trace on page load
+        async function fetchLatestTrace() {
+            try {
+                const res = await fetch('/api/pipeline/latest');
+                if (res.ok) {
+                    const data = await res.json();
+                    currentTrace = data;
+                    renderWorkflow(data);
+                }
+            } catch (err) {
+                console.error("Fetch latest pipeline error:", err);
+            }
+        }
+
+        // Render nodes and connectors
+        function renderWorkflow(trace) {
+            const container = document.getElementById('nodes-flow-container');
+            const totalTimeBadge = document.getElementById('total-time-badge');
+            
+            if (trace.total_duration_ms) {
+                totalTimeBadge.textContent = `${Math.round(trace.total_duration_ms)} ms`;
+            }
+
+            if (!trace.nodes || trace.nodes.length === 0) return;
+
+            let html = '';
+            trace.nodes.forEach((node, idx) => {
+                const isSelected = selectedNodeId === node.id || (!selectedNodeId && idx === 0);
+                if (isSelected && !selectedNodeId) selectedNodeId = node.id;
+
+                const statusClass = node.status === 'success' ? 'success' : (node.status === 'running' ? 'running' : '');
+                const durationText = node.duration_ms ? `${node.duration_ms}ms` : '0ms';
+
+                html += `
+                    <div class="wf-node-card ${isSelected ? 'active' : ''} ${node.status}" onclick="selectNode('${node.id}')">
+                        <div class="wf-node-header">
+                            <div class="wf-node-icon-box" style="background: ${node.color || '#3b82f6'};">
+                                <i class="ph ${node.icon || 'ph-gear'}"></i>
+                            </div>
+                            <span class="wf-node-status ${statusClass}">${node.status === 'success' ? '✓ ' + durationText : node.status}</span>
+                        </div>
+                        <div class="wf-node-name">${node.name}</div>
+                        <div class="wf-node-summary">${node.summary || 'Node active'}</div>
+                        <div class="wf-node-footer">
+                            <span>ID: ${node.id}</span>
+                            <span>${node.type || 'step'}</span>
+                        </div>
+                    </div>
+                `;
+
+                if (idx < trace.nodes.length - 1) {
+                    html += `<div class="wf-connector-line ${node.status === 'success' ? 'active' : ''}"><i class="ph ph-caret-right"></i></div>`;
+                }
+            });
+
+            container.innerHTML = html;
+            updateInspector();
+        }
+
+        // Select node
+        function selectNode(nodeId) {
+            selectedNodeId = nodeId;
+            document.querySelectorAll('.wf-node-card').forEach(card => card.classList.remove('active'));
+            // Re-render highlight
+            if (currentTrace) {
+                renderWorkflow(currentTrace);
+            }
+        }
+
+        // Switch Inspector Tab
+        function switchInspectorTab(tab) {
+            activeTab = tab;
+            document.getElementById('tab-out-btn').classList.toggle('active', tab === 'output');
+            document.getElementById('tab-in-btn').classList.toggle('active', tab === 'input');
+            updateInspector();
+        }
+
+        // Update inspector view
+        function updateInspector() {
+            if (!currentTrace || !currentTrace.nodes) return;
+            const node = currentTrace.nodes.find(n => n.id === selectedNodeId) || currentTrace.nodes[0];
+            if (!node) return;
+
+            document.getElementById('side-node-name').textContent = node.name;
+            document.getElementById('side-node-summary').textContent = `${node.summary || ''} • Durasi: ${node.duration_ms || 0}ms`;
+
+            const codeView = document.getElementById('side-code-view');
+            const dataToView = activeTab === 'output' ? node.data_out : node.data_in;
+            codeView.textContent = JSON.stringify(dataToView || {}, null, 2);
+        }
+
+        // Copy JSON
+        function copyCurrentJson() {
+            const code = document.getElementById('side-code-view').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                alert("JSON berhasil disalin ke clipboard!");
+            });
+        }
+
+        // Test Query Runner
+        async function runTestQuery(event) {
+            event.preventDefault();
+            const input = document.getElementById('test-input');
+            const btn = document.getElementById('test-submit-btn');
+            const query = input.value.trim();
+            if (!query) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Berpikir...';
+
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ message: query })
+                });
+                const data = await res.json();
+                if (data.pipeline_trace) {
+                    currentTrace = data.pipeline_trace;
+                    renderWorkflow(currentTrace);
+                }
+            } catch (err) {
+                console.error("Test execution error:", err);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="ph ph-play"></i> Eksekusi';
+                input.value = '';
+            }
+        }
+
+        // On page load
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchLatestTrace();
+            initSSE();
+        });
+    </script>
+</body>
+</html>

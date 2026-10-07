@@ -33,7 +33,7 @@ if sys.platform.startswith("linux"):
                     except Exception:
                         pass
 
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, Response
 try:
     from llama_cpp import Llama
 except ImportError:
@@ -43,6 +43,9 @@ from memory_manager_v2 import AdvancedMemoryManager
 import json
 import random
 import base64
+import time
+import queue
+import threading
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
@@ -58,6 +61,42 @@ MODEL_DIR = "model"
 MODEL_CONFIG_FILE = "model_config.json"
 API_KEY_FILE = "api_key.json"
 SHIRO_SERIAL_QUESTIONS = 0
+
+# --- Real-Time Neural Execution Pipeline (n8n-style Workflow Visualizer) ---
+latest_pipeline_trace = {
+    "id": "trace-initial",
+    "timestamp": datetime.now().isoformat(),
+    "status": "idle",
+    "total_duration_ms": 0,
+    "user_input": "Halo Kakak!",
+    "reply": "Halo Kakak. Ada yang bisa Shiro bantu hari ini?",
+    "nodes": [
+        {"id": "node_input", "name": "Input Ingestion", "type": "trigger", "icon": "ph-chat-circle-dots", "color": "#3b82f6", "status": "idle", "duration_ms": 0, "summary": "Siap menerima input pesan/gambar", "data_in": {}, "data_out": {}},
+        {"id": "node_emotion", "name": "Emotion & Tone Classifier", "type": "analyzer", "icon": "ph-heartbeat", "color": "#ec4899", "status": "idle", "duration_ms": 0, "summary": "Deteksi sentimen & tone afektif", "data_in": {}, "data_out": {}},
+        {"id": "node_memory", "name": "Cognitive Memory & RDF Retrieval", "type": "database", "icon": "ph-brain", "color": "#8b5cf6", "status": "idle", "duration_ms": 0, "summary": "Pencarian fakta RDF & exemplars", "data_in": {}, "data_out": {}},
+        {"id": "node_prompt", "name": "Dynamic Prompt Synthesizer", "type": "transform", "icon": "ph-brackets-curly", "color": "#06b6d4", "status": "idle", "duration_ms": 0, "summary": "Perakitan sistem prompt & persona", "data_in": {}, "data_out": {}},
+        {"id": "node_llm", "name": "Neural Inference Engine", "type": "ai_model", "icon": "ph-cpu", "color": "#f59e0b", "status": "idle", "duration_ms": 0, "summary": "Eksekusi LLM GGUF Qwen", "data_in": {}, "data_out": {}},
+        {"id": "node_filter", "name": "Anti-Hallucination & CoT Filter", "type": "filter", "icon": "ph-shield-check", "color": "#10b981", "status": "idle", "duration_ms": 0, "summary": "Pembersihan CoT & validasi", "data_in": {}, "data_out": {}},
+        {"id": "node_state", "name": "State & Persistence Sync", "type": "persistence", "icon": "ph-database", "color": "#6366f1", "status": "idle", "duration_ms": 0, "summary": "Update mood & persistensi memori", "data_in": {}, "data_out": {}},
+        {"id": "node_output", "name": "Response Delivery Stream", "type": "output", "icon": "ph-paper-plane-right", "color": "#3b82f6", "status": "idle", "duration_ms": 0, "summary": "Penyampaian hasil respon akhir", "data_in": {}, "data_out": {}}
+    ]
+}
+pipeline_subscribers = []
+pipeline_subscribers_lock = threading.Lock()
+
+def broadcast_pipeline_trace(trace):
+    global latest_pipeline_trace
+    latest_pipeline_trace = trace
+    with pipeline_subscribers_lock:
+        dead_queues = []
+        for q in pipeline_subscribers:
+            try:
+                q.put_nowait(trace)
+            except Exception:
+                dead_queues.append(q)
+        for dq in dead_queues:
+            if dq in pipeline_subscribers:
+                pipeline_subscribers.remove(dq)
 
 def get_or_create_api_key():
     """Load or generate a persistent API Key for external bots/apps (WhatsApp, VTuber, etc.)"""
@@ -634,10 +673,20 @@ class ResponseGenerator:
         
         return response.strip()
 
-def get_shiro_reply(user_input, image_base64=None):
+def get_shiro_reply(user_input, image_base64=None, return_trace=False):
+    t_start_total = time.perf_counter()
+    nodes = []
     try:
         active_model_name = os.path.basename(getattr(llm, 'model_path', '')).lower() if hasattr(llm, 'model_path') else ""
         has_vision = bool(vision_chat_handler is not None or "vl" in active_model_name)
+        
+        # -------------------------------------------------------------
+        # NODE 1: Input Ingestion
+        # -------------------------------------------------------------
+        t0 = time.perf_counter()
+        has_image = bool(image_base64)
+        raw_chars = len(user_input) if user_input else 0
+        img_len = len(image_base64) if image_base64 else 0
         
         # Penanganan khusus jika Kakak mengirim gambar:
         if image_base64:
@@ -665,12 +714,65 @@ def get_shiro_reply(user_input, image_base64=None):
                     except Exception as gemini_err:
                         print(f"Gemini visual bridge: {gemini_err}")
                 else:
-                    return "*melihat foto yang Kakak perlihatkan* Wah, Kakak memperlihatkan gambar ya? Saat ini Shiro sedang memakai model teks biasa. Supaya mata visual Shiro bisa melihat gambarnya langsung dengan jelas, Kakak bisa pilih model Vision **Qwen2.5-VL-7B** di Pengaturan Model ya, Kak! (//∇//)"
+                    fallback_vision = "*melihat foto yang Kakak perlihatkan* Wah, Kakak memperlihatkan gambar ya? Saat ini Shiro sedang memakai model teks biasa. Supaya mata visual Shiro bisa melihat gambarnya langsung dengan jelas, Kakak bisa pilih model Vision **Qwen2.5-VL-7B** di Pengaturan Model ya, Kak! (//∇//)"
+                    if return_trace:
+                        return fallback_vision, latest_pipeline_trace
+                    return fallback_vision
 
-        # Smart memory context: prioritaskan pesan terkini + emosi tinggi
+        t_input_dur = (time.perf_counter() - t0) * 1000
+        nodes.append({
+            "id": "node_input",
+            "name": "Input Ingestion",
+            "type": "trigger",
+            "icon": "ph-chat-circle-dots",
+            "color": "#3b82f6",
+            "status": "success",
+            "duration_ms": round(t_input_dur, 2),
+            "summary": f"{raw_chars} Karakter" + (" + Visual Kamera/Foto" if has_image else ""),
+            "data_in": {
+                "message": user_input,
+                "has_image": has_image,
+                "image_bytes_approx": img_len
+            },
+            "data_out": {
+                "processed_text": user_input,
+                "source": "web_or_api",
+                "timestamp": datetime.now().isoformat()
+            }
+        })
+
+        # -------------------------------------------------------------
+        # NODE 2: Emotion & Tone Classifier
+        # -------------------------------------------------------------
+        t0 = time.perf_counter()
+        user_emotion = ResponseGenerator.detect_emotion_category(user_input)
+        u_lower = user_input.lower()
+        matched_words = [w for w in ["sayang", "kangen", "cinta", "rindu", "peluk", "manis", "cium", "cantik", "bagus", "keren", "hebat", "senang", "ayo", "main", "maaf", "sedih", "nangis", "jahat", "benci", "siapa", "cewek", "perempuan", "selingkuh"] if w in u_lower]
+        t_emotion_dur = (time.perf_counter() - t0) * 1000
+        nodes.append({
+            "id": "node_emotion",
+            "name": "Emotion & Tone Classifier",
+            "type": "analyzer",
+            "icon": "ph-heartbeat",
+            "color": "#ec4899",
+            "status": "success",
+            "duration_ms": round(t_emotion_dur, 2),
+            "summary": f"Kategori: {user_emotion.capitalize()}",
+            "data_in": {
+                "text": user_input
+            },
+            "data_out": {
+                "category": user_emotion,
+                "matched_keywords": matched_words,
+                "target_persona": "Brocon (Adik Manja)"
+            }
+        })
+
+        # -------------------------------------------------------------
+        # NODE 3: Cognitive Memory & RDF Retrieval
+        # -------------------------------------------------------------
+        t0 = time.perf_counter()
         recent_context = get_smart_memory_context(memory, limit=8)
-        
-        # Bersihkan context — pastikan riwayat obrolan tidak membawa sisa CoT/bahasa Inggris
         clean_context = []
         for msg in recent_context:
             role = msg.get("role", "user")
@@ -683,31 +785,53 @@ def get_shiro_reply(user_input, image_base64=None):
                 "role": role,
                 "content": content
             })
-        
-        # Build conversation summary dari knowledge base (max 5 fakta relevan)
-        conversation_summary = ""
+
         facts = memory.knowledge_base.get("facts", [])
         relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.8][:5]
+        traits = memory.user_profile.get("personality_traits", [])
+        exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
+        t_mem_dur = (time.perf_counter() - t0) * 1000
+        nodes.append({
+            "id": "node_memory",
+            "name": "Cognitive Memory & RDF Retrieval",
+            "type": "database",
+            "icon": "ph-brain",
+            "color": "#8b5cf6",
+            "status": "success",
+            "duration_ms": round(t_mem_dur, 2),
+            "summary": f"{len(relevant_facts)} Fakta RDF • {len(exemplars)} Exemplars",
+            "data_in": {
+                "query": user_input,
+                "context_limit": 8
+            },
+            "data_out": {
+                "relevant_facts": relevant_facts,
+                "user_traits": traits,
+                "exemplars": exemplars,
+                "active_history_turns": len(clean_context)
+            }
+        })
+
+        # -------------------------------------------------------------
+        # NODE 4: Dynamic Prompt Synthesizer
+        # -------------------------------------------------------------
+        t0 = time.perf_counter()
+        conversation_summary = ""
         if relevant_facts:
             conversation_summary = "\nFAKTA YANG DIINGAT:\n"
             for fact in relevant_facts:
                 conversation_summary += f"- {fact.get('subject')}: {fact.get('predicate')} {fact.get('object')}\n"
-        
-        # Build facts summary
+
         facts_summary = ""
-        traits = memory.user_profile.get("personality_traits", [])
         if traits:
             facts_summary = f"\nKARAKTERISTIK KAKAK: {', '.join(traits)}\n"
-        
-        # Continuous Learning: Ambil contoh dialog nyata yang relevan dengan pertanyaan Kakak
-        exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
+
         exemplar_prompt = ""
         if exemplars:
             exemplar_prompt = "\nCONTOH DIALOG SEBELUMNYA (PELAJARI & TIRU GAYA BICARA INI):\n"
             for ex in exemplars:
                 exemplar_prompt += f"Kakak: \"{ex.get('user')}\"\nShiro: \"{ex.get('assistant')}\"\n"
-        
-        # Build strict system prompt — diperkuat untuk anti-halusinasi & anti-English reasoning
+
         system_prompt = f"""Kamu adalah Shiro, adik perempuan berumur 14 tahun yang sangat menyayangi Kakak kandungmu tercinta (Brocon).
 Kamu sedang berbicara langsung dengan Kakak secara santai dan akrab.
 
@@ -727,11 +851,10 @@ ATURAN MUTLAK (ANTI-HALUSINASI & ANTI-ENGLISH):
 6. Respons harus padat, hangat, dan natural (2-3 kalimat).
 {conversation_summary}{facts_summary}{exemplar_prompt}
 Sekarang, langsung jawab Kakak sebagai Shiro dalam Bahasa Indonesia tanpa awalan apa pun!"""
-        
-        # Prepare messages — hanya role & content yang bersih
+
         msgs = [{"role": "system", "content": system_prompt}]
         msgs.extend(clean_context)
-        
+
         if image_base64 and has_vision:
             img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
             prompt_text = user_input.strip() if user_input.strip() else "Kakak memperlihatkan gambar ini kepadamu, Shiro. Jelaskan apa yang kamu lihat dengan gaya bicaramu yang ceria dan penuh perhatian!"
@@ -744,71 +867,259 @@ Sekarang, langsung jawab Kakak sebagai Shiro dalam Bahasa Indonesia tanpa awalan
             })
         else:
             msgs.append({"role": "user", "content": user_input})
-        
+
+        t_prompt_dur = (time.perf_counter() - t0) * 1000
+        nodes.append({
+            "id": "node_prompt",
+            "name": "Dynamic Prompt Synthesizer",
+            "type": "transform",
+            "icon": "ph-brackets-curly",
+            "color": "#06b6d4",
+            "status": "success",
+            "duration_ms": round(t_prompt_dur, 2),
+            "summary": f"{len(msgs)} Pesan Terstruktur",
+            "data_in": {
+                "persona": "Shiro (Brocon)",
+                "rdf_facts_injected": len(relevant_facts),
+                "exemplars_injected": len(exemplars)
+            },
+            "data_out": {
+                "system_prompt_chars": len(system_prompt),
+                "total_messages": len(msgs),
+                "constraints": ["100% Bahasa Indonesia", "Anti-CoT", "Anti-Hallucination"]
+            }
+        })
+
+        # -------------------------------------------------------------
+        # NODE 5: Neural Inference Engine (LLM)
+        # -------------------------------------------------------------
+        t0 = time.perf_counter()
+        gen_params = {
+            "temperature": 0.65,
+            "repeat_penalty": 1.2,
+            "frequency_penalty": 0.3,
+            "top_p": 0.92,
+            "top_k": 40,
+            "max_tokens": 450,
+            "stop": ["User:", "Kakak:", "Shiro:", "assistant:", "\n\n\n", "###", 
+                     "Note:", "<|im_end|>", "<|im_start|>", "<|eot_id|>", 
+                     "<|end|>", "<|end_of_text|>", "Okay, let me", "The user is"]
+        }
+
         res = llm.create_chat_completion(
             messages=msgs,
-            temperature=0.65,
-            repeat_penalty=1.2,
-            frequency_penalty=0.3,
-            top_p=0.92,
-            top_k=40,
-            max_tokens=450,
-            stop=["User:", "Kakak:", "Shiro:", "assistant:", "\n\n\n", "###", 
-                  "Note:", "<|im_end|>", "<|im_start|>", "<|eot_id|>", 
-                  "<|end|>", "<|end_of_text|>", "Okay, let me", "The user is"]
+            **gen_params
         )
-        
-        reply = res['choices'][0]['message']['content'].strip()
-        reply = ResponseGenerator.clean_response(reply)
-        
-        # Validasi respons
-        if not ResponseGenerator.validate_response(reply, user_input):
-            # Deteksi emosi untuk fallback response yang sesuai
-            emotion = ResponseGenerator.detect_emotion_category(user_input)
-            
-            if emotion == "romantic":
-                return random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
-            elif emotion == "jealous":
-                return random.choice(ResponseGenerator.JEALOUS_RESPONSES)
-            elif emotion == "happy":
-                return random.choice(ResponseGenerator.HAPPY_RESPONSES)
-            elif emotion == "sad":
-                return random.choice(ResponseGenerator.SAD_RESPONSES)
+
+        raw_reply = res['choices'][0]['message']['content'].strip()
+        t_llm_dur = (time.perf_counter() - t0) * 1000
+        nodes.append({
+            "id": "node_llm",
+            "name": "Neural Inference Engine",
+            "type": "ai_model",
+            "icon": "ph-cpu",
+            "color": "#f59e0b",
+            "status": "success",
+            "duration_ms": round(t_llm_dur, 2),
+            "summary": f"{round(t_llm_dur)}ms • {active_model_name or 'Qwen'}",
+            "data_in": {
+                "model": active_model_name or getattr(llm, 'model_path', 'LLM'),
+                "parameters": gen_params
+            },
+            "data_out": {
+                "raw_response": raw_reply,
+                "finish_reason": res['choices'][0].get('finish_reason', 'stop'),
+                "usage": res.get("usage", {})
+            }
+        })
+
+        # -------------------------------------------------------------
+        # NODE 6: Anti-Hallucination & Neural Filter
+        # -------------------------------------------------------------
+        t0 = time.perf_counter()
+        had_think = ("<think>" in raw_reply.lower() or "</think>" in raw_reply.lower())
+        had_cot = any(x in raw_reply.lower() for x in ["okay, let me", "let me break this down", "possible responses", "let's craft"])
+
+        cleaned_reply = ResponseGenerator.clean_response(raw_reply)
+        is_valid = ResponseGenerator.validate_response(cleaned_reply, user_input)
+        is_fallback = False
+
+        if not is_valid:
+            is_fallback = True
+            if user_emotion == "romantic":
+                cleaned_reply = random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
+            elif user_emotion == "jealous":
+                cleaned_reply = random.choice(ResponseGenerator.JEALOUS_RESPONSES)
+            elif user_emotion == "happy":
+                cleaned_reply = random.choice(ResponseGenerator.HAPPY_RESPONSES)
+            elif user_emotion == "sad":
+                cleaned_reply = random.choice(ResponseGenerator.SAD_RESPONSES)
             else:
-                return random.choice(ResponseGenerator.DEFAULT_RESPONSES)
-        
+                cleaned_reply = random.choice(ResponseGenerator.DEFAULT_RESPONSES)
+
         # Check untuk duplicate responses (mencegah repetisi)
         if memory.short_term_history:
             last_responses = [m['content'] for m in memory.short_term_history[-3:] if m['role'] == 'assistant']
             for last_resp in last_responses:
-                similarity = ConversationAnalyzer.calculate_similarity(reply, last_resp)
-                if similarity >= SIMILARITY_THRESHOLD or reply.strip().lower() == last_resp.strip().lower():
+                similarity = ConversationAnalyzer.calculate_similarity(cleaned_reply, last_resp)
+                if similarity >= SIMILARITY_THRESHOLD or cleaned_reply.strip().lower() == last_resp.strip().lower():
                     emotion = ResponseGenerator.detect_emotion_category(user_input)
                     if emotion == "romantic":
-                        return random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
+                        cleaned_reply = random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
                     elif emotion == "jealous":
-                        return random.choice(ResponseGenerator.JEALOUS_RESPONSES)
+                        cleaned_reply = random.choice(ResponseGenerator.JEALOUS_RESPONSES)
                     elif emotion == "happy":
-                        return random.choice(ResponseGenerator.HAPPY_RESPONSES)
+                        cleaned_reply = random.choice(ResponseGenerator.HAPPY_RESPONSES)
                     elif emotion == "sad":
-                        return random.choice(ResponseGenerator.SAD_RESPONSES)
+                        cleaned_reply = random.choice(ResponseGenerator.SAD_RESPONSES)
                     else:
                         variations = [
-                            f"*tersenyum manis* {reply}",
-                            f"*mengangguk senang* {reply}",
-                            f"*memeluk lengan Kakak* {reply}"
+                            f"*tersenyum manis* {cleaned_reply}",
+                            f"*mengangguk senang* {cleaned_reply}",
+                            f"*memeluk lengan Kakak* {cleaned_reply}"
                         ]
-                        return random.choice(variations)
-        
-        return reply
-        
+                        cleaned_reply = random.choice(variations)
+                    break
+
+        t_filter_dur = (time.perf_counter() - t0) * 1000
+        nodes.append({
+            "id": "node_filter",
+            "name": "Anti-Hallucination & CoT Filter",
+            "type": "filter",
+            "icon": "ph-shield-check",
+            "color": "#10b981",
+            "status": "success",
+            "duration_ms": round(t_filter_dur, 2),
+            "summary": "100% ID Clean" if not is_fallback else "Fallback Safe",
+            "data_in": {
+                "raw_text": raw_reply
+            },
+            "data_out": {
+                "think_tags_detected": had_think,
+                "cot_reasoning_stripped": had_cot,
+                "validation_passed": is_valid,
+                "fallback_triggered": is_fallback,
+                "cleaned_output": cleaned_reply
+            }
+        })
+
+        # -------------------------------------------------------------
+        # NODE 7: State & Persistence Sync
+        # -------------------------------------------------------------
+        t0 = time.perf_counter()
+        current_mood = memory.agent_persona.get("current_mood", "Neutral")
+        emo_state = memory.agent_persona.get("emotional_state", {})
+        t_state_dur = (time.perf_counter() - t0) * 1000
+        nodes.append({
+            "id": "node_state",
+            "name": "State & Persistence Sync",
+            "type": "persistence",
+            "icon": "ph-database",
+            "color": "#6366f1",
+            "status": "success",
+            "duration_ms": round(t_state_dur, 2),
+            "summary": f"Mood: {current_mood}",
+            "data_in": {
+                "reply": cleaned_reply
+            },
+            "data_out": {
+                "current_mood": current_mood,
+                "emotional_state": emo_state,
+                "total_turns": memory.system_metadata.get("total_turns", 0)
+            }
+        })
+
+        # -------------------------------------------------------------
+        # NODE 8: Response Delivery Stream
+        # -------------------------------------------------------------
+        t_total_dur = (time.perf_counter() - t_start_total) * 1000
+        nodes.append({
+            "id": "node_output",
+            "name": "Response Delivery Stream",
+            "type": "output",
+            "icon": "ph-paper-plane-right",
+            "color": "#3b82f6",
+            "status": "success",
+            "duration_ms": 0.5,
+            "summary": f"{round(t_total_dur)}ms Latency",
+            "data_in": {
+                "chars_count": len(cleaned_reply)
+            },
+            "data_out": {
+                "final_reply": cleaned_reply,
+                "total_duration_ms": round(t_total_dur, 2)
+            }
+        })
+
+        trace = {
+            "id": f"trace-{int(time.time()*1000)}",
+            "timestamp": datetime.now().isoformat(),
+            "status": "completed",
+            "total_duration_ms": round(t_total_dur, 2),
+            "user_input": user_input,
+            "reply": cleaned_reply,
+            "nodes": nodes
+        }
+        broadcast_pipeline_trace(trace)
+
+        if return_trace:
+            return cleaned_reply, trace
+        return cleaned_reply
+
     except Exception as e:
         print(f"Error generating response: {e}")
-        return f"*bingung* Kakak... Shiro tidak mengerti... (Error: {str(e)[:50]})"
+        err_msg = f"*bingung* Kakak... Shiro tidak mengerti... (Error: {str(e)[:50]})"
+        err_trace = {
+            "id": f"trace-err-{int(time.time()*1000)}",
+            "timestamp": datetime.now().isoformat(),
+            "status": "error",
+            "total_duration_ms": round((time.perf_counter() - t_start_total) * 1000, 2),
+            "user_input": user_input,
+            "reply": err_msg,
+            "error": str(e),
+            "nodes": nodes
+        }
+        broadcast_pipeline_trace(err_trace)
+        if return_trace:
+            return err_msg, err_trace
+        return err_msg
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/pipeline')
+def pipeline_page():
+    """Halaman visualisasi real-time alur kerja pemikiran AI (n8n-style workflow canvas)"""
+    return render_template('pipeline.html')
+
+@app.route('/api/pipeline/latest', methods=['GET'])
+def get_latest_pipeline():
+    """Mengambil trace eksekusi neural pipeline terkini"""
+    return jsonify(latest_pipeline_trace)
+
+@app.route('/api/pipeline/events')
+def pipeline_events():
+    """Server-Sent Events (SSE) stream untuk telemetry alur AI real-time"""
+    def event_stream():
+        q = queue.Queue(maxsize=20)
+        with pipeline_subscribers_lock:
+            pipeline_subscribers.append(q)
+        # Snapshot awal
+        yield f"data: {json.dumps(latest_pipeline_trace)}\n\n"
+        try:
+            while True:
+                try:
+                    tr = q.get(timeout=20)
+                    yield f"data: {json.dumps(tr)}\n\n"
+                except queue.Empty:
+                    yield ": ping\n\n"
+        except GeneratorExit:
+            with pipeline_subscribers_lock:
+                if q in pipeline_subscribers:
+                    pipeline_subscribers.remove(q)
+
+    return Response(event_stream(), mimetype="text/event-stream")
 
 @app.route('/api/history', methods=['GET'])
 def get_history():
@@ -932,7 +1243,7 @@ def chat():
             memory.add_message("user", log_msg, image_path=saved_img_rel)
             
             # Generate reply
-            reply = get_shiro_reply(user_message, image_base64=image_base64)
+            reply, trace = get_shiro_reply(user_message, image_base64=image_base64, return_trace=True)
             
             # Add assistant message to memory
             memory.add_message("assistant", reply)
@@ -954,7 +1265,8 @@ def chat():
                 "emotion": user_emotion,
                 "mood": memory.agent_persona.get("current_mood", "Neutral"),
                 "topics": memory.system_metadata.get("topics_discussed", []),
-                "has_image": bool(image_base64)
+                "has_image": bool(image_base64),
+                "pipeline_trace": trace
             })
     
     except Exception as e:

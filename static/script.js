@@ -176,6 +176,7 @@ async function sendMessage() {
     
     status.textContent = 'Shiro sedang berpikir...';
     showTyping(true);
+    if (pipelineNavDot) pipelineNavDot.classList.remove('hidden');
 
     abortController = new AbortController();
 
@@ -201,6 +202,13 @@ async function sendMessage() {
         showTyping(false);
         addMessage('assistant', data.reply);
         
+        if (data.pipeline_trace) {
+            activePipelineTrace = data.pipeline_trace;
+            if (pipelineModal && !pipelineModal.classList.contains('hidden')) {
+                renderModalPipeline(activePipelineTrace);
+            }
+        }
+        
         updateMemoryCount(); 
         status.textContent = 'Siap';
         startTriggerTimer(); 
@@ -217,6 +225,7 @@ async function sendMessage() {
             status.textContent = 'Terputus';
         }
     } finally {
+        if (pipelineNavDot) pipelineNavDot.classList.add('hidden');
         isGenerating = false;
         userInput.disabled = false;
         sendBtn.disabled = false;
@@ -794,6 +803,137 @@ closeSettingsBtn.addEventListener('click', closeSettings);
 settingsModal.addEventListener('click', (e) => {
     if (e.target === settingsModal) closeSettings();
 });
+
+// --- Neural Workflow Modal (n8n Real-Time Pipeline Inspector) ---
+const pipelineBtn = document.getElementById('pipeline-btn');
+const pipelineModal = document.getElementById('pipeline-modal');
+const closePipelineModalBtn = document.getElementById('close-pipeline-modal');
+const pipelineNavDot = document.getElementById('pipeline-nav-dot');
+const modalNodesContainer = document.getElementById('modal-nodes-container');
+const pipelineTotalTime = document.getElementById('pipeline-total-time');
+const modalNodeTitle = document.getElementById('modal-node-title');
+const modalNodeSub = document.getElementById('modal-node-sub');
+const modalJsonDisplay = document.getElementById('modal-json-display');
+
+let activePipelineTrace = null;
+let selectedModalNodeId = null;
+let modalActiveTab = 'output';
+
+function openPipelineModal() {
+    if (!pipelineModal) return;
+    pipelineModal.classList.remove('hidden');
+    if (!activePipelineTrace) {
+        fetchLatestPipelineTrace();
+    } else {
+        renderModalPipeline(activePipelineTrace);
+    }
+}
+
+function closePipelineModal() {
+    if (!pipelineModal) return;
+    pipelineModal.classList.add('hidden');
+}
+
+async function fetchLatestPipelineTrace() {
+    try {
+        const res = await fetch('/api/pipeline/latest');
+        if (res.ok) {
+            const data = await res.json();
+            activePipelineTrace = data;
+            renderModalPipeline(data);
+        }
+    } catch (err) {
+        console.error("Fetch pipeline error:", err);
+    }
+}
+
+function renderModalPipeline(trace) {
+    if (!modalNodesContainer) return;
+    if (trace.total_duration_ms && pipelineTotalTime) {
+        pipelineTotalTime.textContent = `${Math.round(trace.total_duration_ms)} ms`;
+    }
+
+    if (!trace.nodes || trace.nodes.length === 0) return;
+
+    let html = '';
+    trace.nodes.forEach((node, idx) => {
+        const isSelected = selectedModalNodeId === node.id || (!selectedModalNodeId && idx === 0);
+        if (isSelected && !selectedModalNodeId) selectedModalNodeId = node.id;
+
+        const statusClass = node.status === 'success' ? 'success' : (node.status === 'running' ? 'running' : '');
+        const durationText = node.duration_ms ? `${node.duration_ms}ms` : '0ms';
+
+        html += `
+            <div class="pipeline-node-item ${isSelected ? 'active' : ''} ${node.status}" onclick="selectModalNode('${node.id}')">
+                <div class="node-item-top">
+                    <div class="node-icon-avatar" style="background: ${node.color || '#3b82f6'};">
+                        <i class="ph ${node.icon || 'ph-gear'}"></i>
+                    </div>
+                    <span class="node-status-tag ${statusClass}">${node.status === 'success' ? '✓ ' + durationText : node.status}</span>
+                </div>
+                <div class="node-item-title">${node.name}</div>
+                <div class="node-item-summary">${node.summary || ''}</div>
+                <div class="node-item-footer">
+                    <span>${node.type || 'step'}</span>
+                    <span class="node-inspect-hint">Lihat Data →</span>
+                </div>
+            </div>
+        `;
+
+        if (idx < trace.nodes.length - 1) {
+            html += `<div class="node-flow-arrow ${node.status === 'success' ? 'active' : ''}"><i class="ph ph-caret-right"></i></div>`;
+        }
+    });
+
+    modalNodesContainer.innerHTML = html;
+    updateModalInspector();
+}
+
+function selectModalNode(nodeId) {
+    selectedModalNodeId = nodeId;
+    document.querySelectorAll('.pipeline-node-item').forEach(item => item.classList.remove('active'));
+    if (activePipelineTrace) {
+        renderModalPipeline(activePipelineTrace);
+    }
+}
+
+function switchModalTab(tab) {
+    modalActiveTab = tab;
+    const tabOut = document.getElementById('modal-tab-out');
+    const tabIn = document.getElementById('modal-tab-in');
+    if (tabOut) tabOut.classList.toggle('active', tab === 'output');
+    if (tabIn) tabIn.classList.toggle('active', tab === 'input');
+    updateModalInspector();
+}
+
+function updateModalInspector() {
+    if (!activePipelineTrace || !activePipelineTrace.nodes || !modalJsonDisplay) return;
+    const node = activePipelineTrace.nodes.find(n => n.id === selectedModalNodeId) || activePipelineTrace.nodes[0];
+    if (!node) return;
+
+    if (modalNodeTitle) modalNodeTitle.textContent = node.name;
+    if (modalNodeSub) modalNodeSub.textContent = `${node.summary || ''} • Durasi eksekusi: ${node.duration_ms || 0}ms`;
+
+    const dataToView = modalActiveTab === 'output' ? node.data_out : node.data_in;
+    modalJsonDisplay.textContent = JSON.stringify(dataToView || {}, null, 2);
+}
+
+function copyModalJson() {
+    if (!modalJsonDisplay) return;
+    const text = modalJsonDisplay.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        alert("JSON data node berhasil disalin ke clipboard!");
+    });
+}
+
+// Pipeline modal event listeners
+if (pipelineBtn) pipelineBtn.addEventListener('click', openPipelineModal);
+if (closePipelineModalBtn) closePipelineModalBtn.addEventListener('click', closePipelineModal);
+if (pipelineModal) {
+    pipelineModal.addEventListener('click', (e) => {
+        if (e.target === pipelineModal) closePipelineModal();
+    });
+}
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
