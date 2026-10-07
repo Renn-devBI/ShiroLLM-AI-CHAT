@@ -1,0 +1,68 @@
+================================================================================
+SHIRO MEMORY CAPACITY & HALLUCINATION ANALYSIS
+================================================================================
+
+CURRENT LIMITS:
+  • Storage: 25 messages max
+  • Context loaded: 8 messages (reduced from 15 to prevent hallucination)
+  • Model context window: 4096 tokens
+  • Response budget: 800 tokens
+  • Available for context: ~2896 tokens
+
+CONVERSATION CAPACITY:
+  • Typical conversation: 150-200 tokens per exchange
+  • With 2896 tokens: Can handle ~14-19 exchanges
+  • In practice: ~10-15 full conversations
+  ⚠️  After that, hallucination risk increases
+
+WHY HALLUCINATION HAPPENS:
+  1. Context window fills up (4096 tokens is small)
+  2. Old information mixes with new information
+  3. Model gets confused between topics
+  4. Token budget exhausted, quality drops
+
+QUICK FIX APPLIED:
+  ✅ Reduced get_memory_context(limit) from 15 → 8
+     - Saves ~700 tokens per request
+     - Fewer conflicts in context
+     - Should extend usable conversations from 10 → 15+
+
+RECOMMENDATIONS BY USE CASE:
+
+  For casual conversations:
+    • Current setting (8 messages) is GOOD
+    • Reset every 20-30 exchanges
+    • Should work fine
+
+  For longer sessions (want to remember everything):
+    • Use memory_optimization.py
+    • Compress old messages into facts every 20 messages
+    • Keeps knowledge while saving tokens
+    • Requires code changes
+
+  For maximum capacity:
+    • Need bigger model with larger context
+    • Or use different quantization (more GPU memory)
+    • 8K-32K context models available
+
+FILES CREATED:
+  • MEMORY_CAPACITY.md - Detailed technical analysis
+  • MEMORY_CONFIG_GUIDE.md - Configuration instructions
+  • memory_optimization.py - Advanced memory management tools
+
+FILES MODIFIED:
+  • web.py line 461 - Changed limit from 15 → 8
+
+NEXT STEPS:
+  1. Test with new setting (8 message limit)
+  2. Monitor for hallucinations in next 30+ conversations
+  3. If still hallucinating: reduce to 5
+  4. If working well: might bump to 10
+  5. For long-term: implement memory compression
+
+TOKENS SAVED PER REQUEST:
+  Before: 15 messages × 100 tokens = 1500 tokens
+  After: 8 messages × 100 tokens = 800 tokens
+  Saved: 700 tokens per request = Better quality & less confusion
+
+================================================================================

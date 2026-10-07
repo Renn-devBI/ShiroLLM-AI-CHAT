@@ -1,0 +1,20 @@
+# Python & Environment
+venv/
+vevn2/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.tmp
+.cache/
+
+# Large model binaries (Do NOT upload to GitHub, download in Colab)
+model/*.gguf
+model/*.bin
+!model/.gitkeep
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

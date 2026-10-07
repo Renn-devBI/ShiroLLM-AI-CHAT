@@ -1,0 +1,58 @@
+version: '3.9'
+
+services:
+  shiro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    container_name: shiro-llma
+    
+    ports:
+      # Web interface
+      - "7474:7474"
+    
+    volumes:
+      # Persist model data
+      - ./model:/app/model
+      # Persist memory
+      - ./ingatan_shiro.json:/app/ingatan_shiro.json
+      - ./isekai_world.json:/app/isekai_world.json
+      # Persist profiles
+      - ./profile:/app/profile
+      # Persist cache
+      - ./.cache:/app/.cache
+      # Persist configs
+      - ./model_config.json:/app/model_config.json
+    
+    environment:
+      # Python encoding
+      PYTHONUNBUFFERED: 1
+      PYTHONIOENCODING: utf-8
+      # Flask
+      FLASK_ENV: production
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Resource limits (optional, uncomment untuk limit)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '4'
+    #       memory: 8G
+    #     reservations:
+    #       memory: 6G
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7474"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Named volume (optional, untuk production)
+# volumes:
+#   shiro_data:
+#     driver: local

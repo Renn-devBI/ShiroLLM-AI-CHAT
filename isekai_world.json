@@ -1,0 +1,10 @@
+{
+  "world_name": "Arcadia",
+  "locations": {
+    "home": "Pondok Kayu",
+    "visited": []
+  },
+  "shiro_role": "Adik (Brocon)",
+  "relationship_level": 1,
+  "shared_memories": []
+}
