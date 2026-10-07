@@ -1,32 +1,30 @@
-# 🌸 ShiroLLM-AI-CHAT
-
-Chatbot AI Karakter Interaktif dengan Sistem Memori Bertingkat (Self-Learning), Emosi Dinamis, dan Anti-Halusinasi.
+# ShiroLLM-AI-CHAT
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Renn-devBI/ShiroLLM-AI-CHAT/blob/main/Shiro_LLMA_Colab.ipynb)
 
 ---
 
-## ✨ Fitur Unggulan
+## Fitur Unggulan
 
-- **🧠 Model Tercanggih & Beragam**:
+- **Model Tercanggih & Beragam**:
   - `Lumimaid-v0.2-8B-Q5_K_M` *(Rekomendasi Utama)*: Fine-tuned khusus roleplay dan percakapan karakter ekspresif.
   - `Qwen3-4B-Q4_K_M`: Model penalaran cerdas & cepat.
   - `Llama-3.2-3B-Instruct`: Sangat cepat dan efisien.
   - `Phi-3-mini-4k-instruct`: Ringan dan hemat memori.
-- **💡 Continuous Self-Learning**:
+- **Continuous Self-Learning**:
   - AI secara otomatis mengekstrak fakta, preferensi pengguna (suka/tidak suka), janji, dan peristiwa dari percakapan maupun responsnya sendiri.
   - Fakta disimpan secara terstruktur dan diingat lintas sesi percakapan.
-- **🛡️ Anti-Halusinasi & Konteks Bersih**:
+- **Anti-Halusinasi & Konteks Bersih**:
   - Konteks percakapan diseleksi secara cerdas (`get_smart_memory_context`) tanpa token sampah.
   - Sistem kompresi memori otomatis (`compress_old_messages`).
-- **⚡ Google Colab Ready (Akselerasi GPU)**:
+- **Google Colab Ready (Akselerasi GPU)**:
   - Buka notebook `Shiro_LLMA_Colab.ipynb` untuk menjalankan AI di cloud dengan GPU T4/A100 gratis tanpa membebani komputer lokal Anda!
-- **🌐 Antarmuka Web Modern**:
+- **Antarmuka Web Modern**:
   - UI responsif, avatar kustom, panel statistik emosi real-time, dan fitur switch model langsung dari browser.
 
 ---
 
-## 🚀 Cara Menjalankan
+## Cara Menjalankan
 
 ### Opsi 1: Menjalankan di Google Colab (Gratis GPU, Rekomendasi!)
 1. Buka file [`Shiro_LLMA_Colab.ipynb`](Shiro_LLMA_Colab.ipynb) di Google Colab dengan mengklik badge di atas.
@@ -68,7 +66,7 @@ Chatbot AI Karakter Interaktif dengan Sistem Memori Bertingkat (Self-Learning), 
 
 ---
 
-## 📁 Struktur Direktori
+## Struktur Direktori
 
 ```
 Shiro-LLMA/
