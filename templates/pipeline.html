@@ -151,140 +151,14 @@
 
         .wf-canvas {
             flex: 1;
-            overflow: auto;
-            padding: 40px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 24px;
             display: flex;
+            flex-direction: column;
             align-items: center;
+            justify-content: flex-start;
             position: relative;
-        }
-
-        .wf-nodes-flow {
-            display: flex;
-            align-items: center;
-            gap: 36px;
-            min-width: max-content;
-            padding: 20px 10px;
-        }
-
-        .wf-node-card {
-            width: 250px;
-            background: #111827;
-            border: 1px solid #1e293b;
-            border-radius: 12px;
-            padding: 16px;
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-        }
-
-        .wf-node-card:hover {
-            border-color: #3b82f6;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.15);
-        }
-
-        .wf-node-card.active {
-            border-color: #38bdf8;
-            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25), 0 8px 24px rgba(56, 189, 248, 0.2);
-            background: #131c2e;
-        }
-
-        .wf-node-card.running {
-            border-color: #f59e0b;
-            animation: node-pulse 1.5s infinite;
-        }
-
-        @keyframes node-pulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
-            50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
-        }
-
-        .wf-node-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 12px;
-        }
-
-        .wf-node-icon-box {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 17px;
-            color: white;
-        }
-
-        .wf-node-status {
-            font-size: 11px;
-            font-weight: 600;
-            padding: 3px 7px;
-            border-radius: 9999px;
-            background: #1e293b;
-            color: #94a3b8;
-        }
-
-        .wf-node-status.success {
-            background: rgba(16, 185, 129, 0.15);
-            color: #10b981;
-        }
-
-        .wf-node-status.running {
-            background: rgba(245, 158, 11, 0.15);
-            color: #f59e0b;
-        }
-
-        .wf-node-name {
-            font-size: 13px;
-            font-weight: 600;
-            color: #f8fafc;
-            margin-bottom: 4px;
-        }
-
-        .wf-node-summary {
-            font-size: 11px;
-            color: #94a3b8;
-            line-height: 1.4;
-            height: 32px;
-            overflow: hidden;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-        }
-
-        .wf-node-footer {
-            margin-top: 12px;
-            padding-top: 10px;
-            border-top: 1px solid #1e293b;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 11px;
-            color: #64748b;
-        }
-
-        .wf-connector-line {
-            display: flex;
-            align-items: center;
-            color: #334155;
-            font-size: 20px;
-            position: relative;
-        }
-
-        .wf-connector-line::after {
-            content: '';
-            width: 24px;
-            height: 2px;
-            background: #334155;
-            display: block;
-        }
-
-        .wf-connector-line.active::after {
-            background: linear-gradient(90deg, #2563eb, #38bdf8);
-            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
         }
 
         /* Inspector Drawer */
@@ -415,7 +289,7 @@
         <!-- Main Workflow Canvas -->
         <div class="wf-main">
             <div class="wf-canvas">
-                <div id="nodes-flow-container" class="wf-nodes-flow">
+                <div id="nodes-flow-container" class="flowchart-canvas" style="max-width: 920px; width: 100%;">
                     <!-- Populated dynamically via JavaScript -->
                 </div>
             </div>
@@ -447,6 +321,70 @@
         let currentTrace = null;
         let selectedNodeId = null;
         let activeTab = 'output';
+        let simTimers = [];
+
+        function clearSim() {
+            simTimers.forEach(t => clearTimeout(t));
+            simTimers = [];
+        }
+
+        function startSim(inputText) {
+            clearSim();
+            currentTrace = {
+                total_duration_ms: 0,
+                nodes: [
+                    { id: "node_input", name: "Input Ingestion", type: "trigger", icon: "ph-chat-circle-dots", color: "#3b82f6", status: "running", duration_ms: 0, summary: "Menerima input query...", data_in: { message: inputText }, data_out: {} },
+                    { id: "node_emotion", name: "Emotion & Tone Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#ec4899", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_memory", name: "Cognitive Memory & RDF Retrieval", type: "database", icon: "ph-brain", color: "#8b5cf6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_prompt", name: "Dynamic Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#06b6d4", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_llm", name: "Neural Inference Engine", type: "ai_model", icon: "ph-cpu", color: "#f59e0b", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_filter", name: "Anti-Hallucination & CoT Filter", type: "filter", icon: "ph-shield-check", color: "#10b981", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_state", name: "State & Persistence Sync", type: "persistence", icon: "ph-database", color: "#6366f1", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+                    { id: "node_output", name: "Response Delivery Stream", type: "output", icon: "ph-paper-plane-right", color: "#3b82f6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} }
+                ]
+            };
+            renderWorkflow(currentTrace);
+
+            simTimers.push(setTimeout(() => {
+                if (!currentTrace || !currentTrace.nodes) return;
+                currentTrace.nodes[0].status = 'success';
+                currentTrace.nodes[0].duration_ms = 14;
+                currentTrace.nodes[0].summary = `${(inputText || '').length} Karakter`;
+                currentTrace.nodes[1].status = 'running';
+                currentTrace.nodes[1].summary = 'Menganalisis emosi & tone...';
+                renderWorkflow(currentTrace);
+            }, 120));
+
+            simTimers.push(setTimeout(() => {
+                if (!currentTrace || !currentTrace.nodes) return;
+                currentTrace.nodes[1].status = 'success';
+                currentTrace.nodes[1].duration_ms = 10;
+                currentTrace.nodes[1].summary = 'Emosi terklasifikasi';
+                currentTrace.nodes[2].status = 'running';
+                currentTrace.nodes[2].summary = 'Mengambil fakta RDF & memori...';
+                renderWorkflow(currentTrace);
+            }, 280));
+
+            simTimers.push(setTimeout(() => {
+                if (!currentTrace || !currentTrace.nodes) return;
+                currentTrace.nodes[2].status = 'success';
+                currentTrace.nodes[2].duration_ms = 28;
+                currentTrace.nodes[2].summary = 'Memori & RDF dimuat';
+                currentTrace.nodes[3].status = 'running';
+                currentTrace.nodes[3].summary = 'Menyusun system prompt...';
+                renderWorkflow(currentTrace);
+            }, 480));
+
+            simTimers.push(setTimeout(() => {
+                if (!currentTrace || !currentTrace.nodes) return;
+                currentTrace.nodes[3].status = 'success';
+                currentTrace.nodes[3].duration_ms = 18;
+                currentTrace.nodes[3].summary = 'Prompt tersintesis';
+                currentTrace.nodes[4].status = 'running';
+                currentTrace.nodes[4].summary = 'Sedang inferensi neural di GPU...';
+                renderWorkflow(currentTrace);
+            }, 700));
+        }
 
         // Initialize SSE (Server-Sent Events) listener
         function initSSE() {
@@ -457,6 +395,7 @@
                 try {
                     const data = JSON.parse(event.data);
                     if (data && data.nodes) {
+                        clearSim();
                         currentTrace = data;
                         renderWorkflow(data);
                     }
@@ -488,7 +427,7 @@
             }
         }
 
-        // Render nodes and connectors
+        // Render nodes and connectors in 2-Stage Flowchart
         function renderWorkflow(trace) {
             const container = document.getElementById('nodes-flow-container');
             const totalTimeBadge = document.getElementById('total-time-badge');
@@ -499,35 +438,100 @@
 
             if (!trace.nodes || trace.nodes.length === 0) return;
 
-            let html = '';
-            trace.nodes.forEach((node, idx) => {
+            const stage1Nodes = trace.nodes.slice(0, 4);
+            const stage2Nodes = trace.nodes.slice(4, 8);
+
+            const stage1Chips = ['pesan teks', 'tone emosi', 'fakta RDF'];
+            const stage2Chips = ['raw token', '100% ID', 'sync memori'];
+
+            const renderCard = (node, idx) => {
                 const isSelected = selectedNodeId === node.id || (!selectedNodeId && idx === 0);
                 if (isSelected && !selectedNodeId) selectedNodeId = node.id;
 
-                const statusClass = node.status === 'success' ? 'success' : (node.status === 'running' ? 'running' : '');
-                const durationText = node.duration_ms ? `${node.duration_ms}ms` : '0ms';
+                const isRunning = node.status === 'running';
+                const isSuccess = node.status === 'success';
 
-                html += `
-                    <div class="wf-node-card ${isSelected ? 'active' : ''} ${node.status}" onclick="selectNode('${node.id}')">
-                        <div class="wf-node-header">
-                            <div class="wf-node-icon-box" style="background: ${node.color || '#3b82f6'};">
+                let badgeHtml = '';
+                if (isRunning) {
+                    badgeHtml = `<span class="flow-node-badge running"><i class="ph ph-spinner ph-spin"></i> Proses...</span>`;
+                } else if (isSuccess) {
+                    const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
+                    badgeHtml = `<span class="flow-node-badge success">✓ ${dur}</span>`;
+                } else {
+                    badgeHtml = `<span class="flow-node-badge idle"><i class="ph ph-clock"></i> Tunggu</span>`;
+                }
+
+                return `
+                    <div class="flow-node-card ${isSelected ? 'selected' : ''} ${node.status || ''}" onclick="selectNode('${node.id}')">
+                        <div class="flow-node-top">
+                            <div class="flow-node-icon" style="background: ${node.color || '#3b82f6'};">
                                 <i class="ph ${node.icon || 'ph-gear'}"></i>
                             </div>
-                            <span class="wf-node-status ${statusClass}">${node.status === 'success' ? '✓ ' + durationText : node.status}</span>
+                            ${badgeHtml}
                         </div>
-                        <div class="wf-node-name">${node.name}</div>
-                        <div class="wf-node-summary">${node.summary || 'Node active'}</div>
-                        <div class="wf-node-footer">
-                            <span>ID: ${node.id}</span>
-                            <span>${node.type || 'step'}</span>
-                        </div>
+                        <div class="flow-node-title" title="${node.name}">${node.name}</div>
+                        <div class="flow-node-summary">${node.summary || ''}</div>
                     </div>
                 `;
+            };
 
-                if (idx < trace.nodes.length - 1) {
-                    html += `<div class="wf-connector-line ${node.status === 'success' ? 'active' : ''}"><i class="ph ph-caret-right"></i></div>`;
+            const renderArrow = (active, chip) => {
+                return `
+                    <div class="flow-arrow-track ${active ? 'active' : ''}">
+                        <div class="flow-arrow-line">
+                            ${active ? '<div class="flow-pulse-beam"></div>' : ''}
+                        </div>
+                        <div class="flow-run-chip" title="${chip}">${chip}</div>
+                    </div>
+                `;
+            };
+
+            const stage1Ms = stage1Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
+            const stage2Ms = stage2Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
+            const stage1Done = stage1Nodes.every(n => n.status === 'success');
+
+            let html = `
+                <div class="flow-stage-bar">
+                    <span class="flow-stage-label"><i class="ph ph-lightning"></i> TAHAP 1: EKSTRAKSI &amp; SINTESIS KONTEKS</span>
+                    <span class="flow-stage-info">${Math.round(stage1Ms)}ms</span>
+                </div>
+                <div class="flow-stage-row">
+            `;
+
+            stage1Nodes.forEach((node, idx) => {
+                html += renderCard(node, idx);
+                if (idx < stage1Nodes.length - 1) {
+                    const isConnActive = node.status === 'success';
+                    html += renderArrow(isConnActive, stage1Chips[idx] || 'data');
                 }
             });
+
+            html += `
+                </div>
+                <div class="flow-bridge-row">
+                    <div class="flow-bridge-track ${stage1Done ? 'active' : ''}">
+                        <span>Kirim Prompt Terstruktur</span>
+                        <div class="bridge-pulse-dot ${stage1Done ? 'pulsing' : ''}"></div>
+                        <i class="ph ph-arrow-down-right"></i>
+                        <span>Injeksi ke GPU Neural Engine</span>
+                    </div>
+                </div>
+                <div class="flow-stage-bar">
+                    <span class="flow-stage-label"><i class="ph ph-cpu"></i> TAHAP 2: INFERENSI NEURAL &amp; SANITASI OUTPUT</span>
+                    <span class="flow-stage-info">${Math.round(stage2Ms)}ms</span>
+                </div>
+                <div class="flow-stage-row">
+            `;
+
+            stage2Nodes.forEach((node, idx) => {
+                html += renderCard(node, idx + 4);
+                if (idx < stage2Nodes.length - 1) {
+                    const isConnActive = node.status === 'success';
+                    html += renderArrow(isConnActive, stage2Chips[idx] || 'data');
+                }
+            });
+
+            html += `</div>`;
 
             container.innerHTML = html;
             updateInspector();
@@ -536,8 +540,7 @@
         // Select node
         function selectNode(nodeId) {
             selectedNodeId = nodeId;
-            document.querySelectorAll('.wf-node-card').forEach(card => card.classList.remove('active'));
-            // Re-render highlight
+            document.querySelectorAll('.flow-node-card').forEach(card => card.classList.remove('selected'));
             if (currentTrace) {
                 renderWorkflow(currentTrace);
             }
@@ -583,6 +586,7 @@
 
             btn.disabled = true;
             btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Berpikir...';
+            startSim(query);
 
             try {
                 const res = await fetch('/api/chat', {
@@ -591,13 +595,16 @@
                     body: JSON.stringify({ message: query })
                 });
                 const data = await res.json();
+                clearSim();
                 if (data.pipeline_trace) {
                     currentTrace = data.pipeline_trace;
                     renderWorkflow(currentTrace);
                 }
             } catch (err) {
+                clearSim();
                 console.error("Test execution error:", err);
             } finally {
+                clearSim();
                 btn.disabled = false;
                 btn.innerHTML = '<i class="ph ph-play"></i> Eksekusi';
                 input.value = '';

@@ -177,6 +177,7 @@ async function sendMessage() {
     status.textContent = 'Shiro sedang berpikir...';
     showTyping(true);
     if (pipelineNavDot) pipelineNavDot.classList.remove('hidden');
+    startPipelineAnimation(displayMsg);
 
     abortController = new AbortController();
 
@@ -201,12 +202,11 @@ async function sendMessage() {
         
         showTyping(false);
         addMessage('assistant', data.reply);
+        clearPipelineSimulation();
         
         if (data.pipeline_trace) {
             activePipelineTrace = data.pipeline_trace;
-            if (pipelineModal && !pipelineModal.classList.contains('hidden')) {
-                renderModalPipeline(activePipelineTrace);
-            }
+            renderModalPipeline(activePipelineTrace);
         }
         
         updateMemoryCount(); 
@@ -214,6 +214,7 @@ async function sendMessage() {
         startTriggerTimer(); 
         
     } catch (error) {
+        clearPipelineSimulation();
         if (error.name === 'AbortError') {
             console.log('Request stopped by user');
             showTyping(false);
@@ -225,6 +226,7 @@ async function sendMessage() {
             status.textContent = 'Terputus';
         }
     } finally {
+        clearPipelineSimulation();
         if (pipelineNavDot) pipelineNavDot.classList.add('hidden');
         isGenerating = false;
         userInput.disabled = false;
@@ -818,6 +820,76 @@ const modalJsonDisplay = document.getElementById('modal-json-display');
 let activePipelineTrace = null;
 let selectedModalNodeId = null;
 let modalActiveTab = 'output';
+let pipelineSimTimers = [];
+
+function clearPipelineSimulation() {
+    pipelineSimTimers.forEach(t => clearTimeout(t));
+    pipelineSimTimers = [];
+}
+
+function startPipelineAnimation(userInputText) {
+    clearPipelineSimulation();
+    
+    // Create an initial active simulated trace
+    activePipelineTrace = {
+        total_duration_ms: 0,
+        nodes: [
+            { id: "node_input", name: "Input Ingestion", type: "trigger", icon: "ph-chat-circle-dots", color: "#3b82f6", status: "running", duration_ms: 0, summary: "Menerima input chat...", data_in: { message: userInputText }, data_out: {} },
+            { id: "node_emotion", name: "Emotion & Tone Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#ec4899", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_memory", name: "Cognitive Memory & RDF Retrieval", type: "database", icon: "ph-brain", color: "#8b5cf6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_prompt", name: "Dynamic Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#06b6d4", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_llm", name: "Neural Inference Engine", type: "ai_model", icon: "ph-cpu", color: "#f59e0b", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_filter", name: "Anti-Hallucination & CoT Filter", type: "filter", icon: "ph-shield-check", color: "#10b981", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_state", name: "State & Persistence Sync", type: "persistence", icon: "ph-database", color: "#6366f1", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_output", name: "Response Delivery Stream", type: "output", icon: "ph-paper-plane-right", color: "#3b82f6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} }
+        ]
+    };
+    renderModalPipeline(activePipelineTrace);
+
+    // Step 1: Input ingestion finishes
+    pipelineSimTimers.push(setTimeout(() => {
+        if (!activePipelineTrace || !activePipelineTrace.nodes) return;
+        activePipelineTrace.nodes[0].status = 'success';
+        activePipelineTrace.nodes[0].duration_ms = 14;
+        activePipelineTrace.nodes[0].summary = `${(userInputText || '').length} Karakter`;
+        activePipelineTrace.nodes[1].status = 'running';
+        activePipelineTrace.nodes[1].summary = 'Menganalisis emosi & tone...';
+        renderModalPipeline(activePipelineTrace);
+    }, 120));
+
+    // Step 2: Emotion finishes
+    pipelineSimTimers.push(setTimeout(() => {
+        if (!activePipelineTrace || !activePipelineTrace.nodes) return;
+        activePipelineTrace.nodes[1].status = 'success';
+        activePipelineTrace.nodes[1].duration_ms = 10;
+        activePipelineTrace.nodes[1].summary = 'Emosi terklasifikasi';
+        activePipelineTrace.nodes[2].status = 'running';
+        activePipelineTrace.nodes[2].summary = 'Mengambil fakta RDF & memori...';
+        renderModalPipeline(activePipelineTrace);
+    }, 280));
+
+    // Step 3: Memory finishes
+    pipelineSimTimers.push(setTimeout(() => {
+        if (!activePipelineTrace || !activePipelineTrace.nodes) return;
+        activePipelineTrace.nodes[2].status = 'success';
+        activePipelineTrace.nodes[2].duration_ms = 28;
+        activePipelineTrace.nodes[2].summary = 'Memori & RDF dimuat';
+        activePipelineTrace.nodes[3].status = 'running';
+        activePipelineTrace.nodes[3].summary = 'Menyusun system prompt...';
+        renderModalPipeline(activePipelineTrace);
+    }, 480));
+
+    // Step 4: Prompt finishes, LLM begins running
+    pipelineSimTimers.push(setTimeout(() => {
+        if (!activePipelineTrace || !activePipelineTrace.nodes) return;
+        activePipelineTrace.nodes[3].status = 'success';
+        activePipelineTrace.nodes[3].duration_ms = 18;
+        activePipelineTrace.nodes[3].summary = 'Prompt tersintesis';
+        activePipelineTrace.nodes[4].status = 'running';
+        activePipelineTrace.nodes[4].summary = 'Sedang inferensi neural di GPU...';
+        renderModalPipeline(activePipelineTrace);
+    }, 700));
+}
 
 function openPipelineModal() {
     if (!pipelineModal) return;
@@ -855,35 +927,100 @@ function renderModalPipeline(trace) {
 
     if (!trace.nodes || trace.nodes.length === 0) return;
 
-    let html = '';
-    trace.nodes.forEach((node, idx) => {
+    const stage1Nodes = trace.nodes.slice(0, 4);
+    const stage2Nodes = trace.nodes.slice(4, 8);
+
+    const stage1Chips = ['pesan teks', 'tone emosi', 'fakta RDF'];
+    const stage2Chips = ['raw token', '100% ID', 'sync memori'];
+
+    const renderCard = (node, idx) => {
         const isSelected = selectedModalNodeId === node.id || (!selectedModalNodeId && idx === 0);
         if (isSelected && !selectedModalNodeId) selectedModalNodeId = node.id;
 
-        const statusClass = node.status === 'success' ? 'success' : (node.status === 'running' ? 'running' : '');
-        const durationText = node.duration_ms ? `${node.duration_ms}ms` : '0ms';
+        const isRunning = node.status === 'running';
+        const isSuccess = node.status === 'success';
 
-        html += `
-            <div class="pipeline-node-item ${isSelected ? 'active' : ''} ${node.status}" onclick="selectModalNode('${node.id}')">
-                <div class="node-item-top">
-                    <div class="node-icon-avatar" style="background: ${node.color || '#3b82f6'};">
+        let badgeHtml = '';
+        if (isRunning) {
+            badgeHtml = `<span class="flow-node-badge running"><i class="ph ph-spinner ph-spin"></i> Proses...</span>`;
+        } else if (isSuccess) {
+            const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
+            badgeHtml = `<span class="flow-node-badge success">✓ ${dur}</span>`;
+        } else {
+            badgeHtml = `<span class="flow-node-badge idle"><i class="ph ph-clock"></i> Tunggu</span>`;
+        }
+
+        return `
+            <div class="flow-node-card ${isSelected ? 'selected' : ''} ${node.status || ''}" onclick="selectModalNode('${node.id}')">
+                <div class="flow-node-top">
+                    <div class="flow-node-icon" style="background: ${node.color || '#3b82f6'};">
                         <i class="ph ${node.icon || 'ph-gear'}"></i>
                     </div>
-                    <span class="node-status-tag ${statusClass}">${node.status === 'success' ? '✓ ' + durationText : node.status}</span>
+                    ${badgeHtml}
                 </div>
-                <div class="node-item-title">${node.name}</div>
-                <div class="node-item-summary">${node.summary || ''}</div>
-                <div class="node-item-footer">
-                    <span>${node.type || 'step'}</span>
-                    <span class="node-inspect-hint">Lihat Data →</span>
-                </div>
+                <div class="flow-node-title" title="${node.name}">${node.name}</div>
+                <div class="flow-node-summary">${node.summary || ''}</div>
             </div>
         `;
+    };
 
-        if (idx < trace.nodes.length - 1) {
-            html += `<div class="node-flow-arrow ${node.status === 'success' ? 'active' : ''}"><i class="ph ph-caret-right"></i></div>`;
+    const renderArrow = (active, chip) => {
+        return `
+            <div class="flow-arrow-track ${active ? 'active' : ''}">
+                <div class="flow-arrow-line">
+                    ${active ? '<div class="flow-pulse-beam"></div>' : ''}
+                </div>
+                <div class="flow-run-chip" title="${chip}">${chip}</div>
+            </div>
+        `;
+    };
+
+    const stage1Ms = stage1Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
+    const stage2Ms = stage2Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
+    const stage1Done = stage1Nodes.every(n => n.status === 'success');
+
+    let html = `
+        <div class="flow-stage-bar">
+            <span class="flow-stage-label"><i class="ph ph-lightning"></i> TAHAP 1: EKSTRAKSI &amp; SINTESIS KONTEKS</span>
+            <span class="flow-stage-info">${Math.round(stage1Ms)}ms</span>
+        </div>
+        <div class="flow-stage-row">
+    `;
+
+    stage1Nodes.forEach((node, idx) => {
+        html += renderCard(node, idx);
+        if (idx < stage1Nodes.length - 1) {
+            const isConnActive = node.status === 'success';
+            html += renderArrow(isConnActive, stage1Chips[idx] || 'data');
         }
     });
+
+    html += `
+        </div>
+        <div class="flow-bridge-row">
+            <div class="flow-bridge-track ${stage1Done ? 'active' : ''}">
+                <span>Kirim Prompt Terstruktur</span>
+                <div class="bridge-pulse-dot ${stage1Done ? 'pulsing' : ''}"></div>
+                <i class="ph ph-arrow-down-right"></i>
+                <span>Injeksi ke GPU Neural Engine</span>
+            </div>
+        </div>
+        <div class="flow-stage-bar">
+            <span class="flow-stage-label"><i class="ph ph-cpu"></i> TAHAP 2: INFERENSI NEURAL &amp; SANITASI OUTPUT</span>
+            <span class="flow-stage-info">${Math.round(stage2Ms)}ms</span>
+        </div>
+        <div class="flow-stage-row">
+    `;
+
+    stage2Nodes.forEach((node, idx) => {
+        html += renderCard(node, idx + 4);
+        if (idx < stage2Nodes.length - 1) {
+            const isConnActive = node.status === 'success';
+            html += renderArrow(isConnActive, stage2Chips[idx] || 'data');
+        }
+    });
+
+    html += `</div>`;
 
     modalNodesContainer.innerHTML = html;
     updateModalInspector();
@@ -891,7 +1028,7 @@ function renderModalPipeline(trace) {
 
 function selectModalNode(nodeId) {
     selectedModalNodeId = nodeId;
-    document.querySelectorAll('.pipeline-node-item').forEach(item => item.classList.remove('active'));
+    document.querySelectorAll('.flow-node-card').forEach(item => item.classList.remove('selected'));
     if (activePipelineTrace) {
         renderModalPipeline(activePipelineTrace);
     }
