@@ -52,6 +52,7 @@ from datetime import datetime
 from collections import defaultdict
 import re
 from memory_optimization import get_smart_memory_context, compress_old_messages
+import web_reader
 
 # --- By CONFIG ---
 MEMORY_FILE = "ingatan_shiro.json"
@@ -779,7 +780,58 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
                         return fallback_vision, latest_pipeline_trace
                     return fallback_vision
 
+        # -------------------------------------------------------------
+        # ONLINE WEB READING & REAL-TIME BROWSING
+        # -------------------------------------------------------------
+        web_data = None
+        web_prompt_addon = ""
+        try:
+            web_intent = web_reader.detect_web_intent(user_input)
+            if web_intent["type"] == "url" and web_intent["urls"]:
+                target_url = web_intent["urls"][0]
+                print(f"🌐 [Web Reader] Membaca URL: {target_url}")
+                fetch_res = web_reader.fetch_url(target_url)
+                if fetch_res.get("success"):
+                    web_data = {
+                        "source": target_url,
+                        "title": fetch_res.get("title", "Halaman Web"),
+                        "content": fetch_res.get("content", "")
+                    }
+                    web_prompt_addon = (
+                        f"\n\n### INFORMASI HASIL PEMBACAAN DARI HALAMAN WEB NYATA ({target_url}):\n"
+                        f"Judul Halaman: {web_data['title']}\n"
+                        f"Isi Konten Utama:\n{web_data['content']}\n"
+                        "Gunakan informasi di atas untuk menjawab dan menjelaskan kepada Kakak dengan gaya manja, cerdas, dan penuh kasih sayang khas Shiro!\n"
+                    )
+                elif fetch_res.get("is_cloudflare"):
+                    web_prompt_addon = (
+                        f"\n\n[Catatan Sistem: Halaman {target_url} terhalang proteksi Cloudflare Turnstile/Bot Challenge. Sampaikan kepada Kakak secara sopan dan manja bahwa situs tersebut diproteksi bot security.]\n"
+                    )
+            elif web_intent["type"] == "search" and web_intent["query"]:
+                search_q = web_intent["query"]
+                print(f"🔍 [Web Search] Mencari info online: {search_q}")
+                s_res = web_reader.search_wikipedia_online(search_q)
+                if s_res.get("success") and s_res.get("results"):
+                    snippets = "\n".join([f"- {r['title']}: {r['snippet']} ({r['url']})" for r in s_res["results"]])
+                    web_data = {
+                        "source": f"Pencarian: {search_q}",
+                        "title": f"Hasil Pencarian: {search_q}",
+                        "content": snippets
+                    }
+                    web_prompt_addon = (
+                        f"\n\n### INFORMASI HASIL PENCARIAN ONLINE REAL-TIME:\n"
+                        f"Topik: {search_q}\n"
+                        f"Ringkasan:\n{snippets}\n"
+                        "Gunakan fakta di atas untuk menjawab pertanyaan Kakak dengan gaya Shiro!\n"
+                    )
+        except Exception as e_web:
+            print(f"Warning in online web reader: {e_web}")
+
         t_input_dur = (time.perf_counter() - t0) * 1000
+        summary_node1 = f"{raw_chars} Karakter" + (" + Visual Kamera/Foto" if has_image else "")
+        if web_data:
+            summary_node1 += f" • 🌐 Web ({web_data['title'][:25]})"
+
         nodes.append({
             "id": "node_input",
             "name": "Input Ingestion",
@@ -788,15 +840,17 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
             "color": "#3b82f6",
             "status": "success",
             "duration_ms": round(t_input_dur, 2),
-            "summary": f"{raw_chars} Karakter" + (" + Visual Kamera/Foto" if has_image else ""),
+            "summary": summary_node1,
             "data_in": {
                 "message": user_input,
                 "has_image": has_image,
-                "image_bytes_approx": img_len
+                "image_bytes_approx": img_len,
+                "web_intent": web_intent if 'web_intent' in locals() else None
             },
             "data_out": {
                 "processed_text": user_input,
                 "source": "web_or_api",
+                "web_ingested": bool(web_data),
                 "timestamp": datetime.now().isoformat()
             }
         })
@@ -909,7 +963,7 @@ ATURAN MUTLAK (ANTI-HALUSINASI & ANTI-ENGLISH):
 4. DILARANG menyebut karakter khayalan lain atau 'kami semua'. Di sini hanya ada Shiro dan Kakak!
 5. Tunjukkan tindakan dan emosi Shiro di dalam tanda bintang *...*, contoh: *tersenyum manis*, *memeluk lengan Kakak*, *mengedipkan mata*.
 6. Respons harus padat, hangat, dan natural (2-3 kalimat).
-{conversation_summary}{facts_summary}{exemplar_prompt}
+{conversation_summary}{facts_summary}{exemplar_prompt}{web_prompt_addon}
 Sekarang, langsung jawab Kakak sebagai Shiro dalam Bahasa Indonesia tanpa awalan apa pun!"""
 
         msgs = [{"role": "system", "content": system_prompt}]
@@ -1064,12 +1118,32 @@ Sekarang, langsung jawab Kakak sebagai Shiro dalam Bahasa Indonesia tanpa awalan
         })
 
         # -------------------------------------------------------------
-        # NODE 7: State & Persistence Sync
+        # NODE 7: State & Persistence Sync (Termasuk Pembelajaran Web)
         # -------------------------------------------------------------
         t0 = time.perf_counter()
         current_mood = memory.agent_persona.get("current_mood", "Neutral")
         emo_state = memory.agent_persona.get("emotional_state", {})
+
+        # Integrasikan pengetahuan web ke memori RDF & training_data permanen
+        if web_data:
+            try:
+                web_reader.integrate_web_knowledge(
+                    memory_manager=memory,
+                    user_input=user_input,
+                    assistant_reply=cleaned_reply,
+                    web_title=web_data["title"],
+                    url_or_query=web_data["source"],
+                    web_content=web_data["content"]
+                )
+                print(f"🧠 [Online Learning] Pengetahuan web berhasil diintegrasikan ke memori & training_data: {web_data['title']}")
+            except Exception as e_web_save:
+                print(f"Warning integrating web knowledge: {e_web_save}")
+
         t_state_dur = (time.perf_counter() - t0) * 1000
+        state_summary = f"Mood: {current_mood}"
+        if web_data:
+            state_summary += " • 🧠 Web Data Learned"
+
         nodes.append({
             "id": "node_state",
             "name": "State & Persistence Sync",
@@ -1078,14 +1152,16 @@ Sekarang, langsung jawab Kakak sebagai Shiro dalam Bahasa Indonesia tanpa awalan
             "color": "#6366f1",
             "status": "success",
             "duration_ms": round(t_state_dur, 2),
-            "summary": f"Mood: {current_mood}",
+            "summary": state_summary,
             "data_in": {
-                "reply": cleaned_reply
+                "reply": cleaned_reply,
+                "web_learned": bool(web_data)
             },
             "data_out": {
                 "current_mood": current_mood,
                 "emotional_state": emo_state,
-                "total_turns": memory.system_metadata.get("total_turns", 0)
+                "total_turns": memory.system_metadata.get("total_turns", 0),
+                "web_data_integrated": bool(web_data)
             }
         })
 

@@ -385,6 +385,26 @@ class AdvancedMemoryManager:
         
         return ""
     
+    def add_fact(self, subject: str, predicate: str, obj: str, confidence: float = 0.9):
+        """Menambahkan fakta pengetahuan langsung ke knowledge_base RDF Shiro"""
+        with self.lock:
+            facts = self.knowledge_base.setdefault("facts", [])
+            for f in facts:
+                if f.get("subject", "").lower() == subject.lower() and f.get("predicate", "").lower() == predicate.lower():
+                    f["object"] = obj
+                    f["confidence"] = confidence
+                    f["updated_at"] = datetime.now().isoformat()
+                    return
+            facts.append({
+                "subject": subject,
+                "predicate": predicate,
+                "object": obj,
+                "confidence": confidence,
+                "created_at": datetime.now().isoformat()
+            })
+            if len(facts) > 200:
+                self.knowledge_base["facts"] = facts[-200:]
+    
     def _extract_facts_from_conversations(self, conversations: List[Dict]):
         """Extract RDF-like facts from conversations"""
         for msg in conversations:
