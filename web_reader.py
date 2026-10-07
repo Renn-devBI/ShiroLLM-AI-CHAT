@@ -146,13 +146,62 @@ def clean_html_content(html: str, max_chars: int = 3500) -> Tuple[str, str]:
         text = text[:max_chars] + " ... (konten web dipotong untuk efisiensi context)"
     return title, text
 
+def fetch_fandom_mediawiki(url: str, timeout: int = 12) -> Optional[Dict[str, Any]]:
+    """
+    Ekstrak artikel dari Fandom / Wikia / Wikipedia menggunakan MediaWiki API resmi.
+    Menghindari blokir Cloudflare Managed Challenge pada halaman HTML desktop Fandom!
+    """
+    m = re.match(r'https?://([^/]+)(?:/([a-zA-Z-]+))?/wiki/([^/?#]+)', url)
+    if not m:
+        return None
+    domain = m.group(1).lower()
+    if "fandom.com" not in domain and "wikia.org" not in domain and "wikipedia.org" not in domain:
+        return None
+    subpath = f"/{m.group(2)}" if m.group(2) else ""
+    page = urllib.parse.unquote(m.group(3)).replace("_", " ")
+    
+    api_url = f"https://{domain}{subpath}/api.php"
+    params = {
+        "action": "parse",
+        "page": page,
+        "prop": "text",
+        "format": "json"
+    }
+    try:
+        req_headers = dict(BROWSER_HEADERS)
+        if requests:
+            r = requests.get(api_url, params=params, headers=req_headers, timeout=timeout, verify=False)
+            if r.status_code == 200:
+                data = r.json()
+                raw_html = data.get("parse", {}).get("text", {}).get("*", "")
+                if raw_html:
+                    page_title = data.get("parse", {}).get("title", page)
+                    _, clean_text = clean_html_content(raw_html, max_chars=4000)
+                    return {
+                        "success": True,
+                        "url": url,
+                        "title": f"{page_title} - {domain}",
+                        "content": clean_text,
+                        "error": None,
+                        "is_cloudflare": False
+                    }
+    except Exception as e_api:
+        pass
+    return None
+
 def fetch_url(url: str, timeout: int = 12) -> Dict[str, Any]:
     """
     Mengambil isi URL dengan penanganan Cloudflare / Anti-Bot:
-    1. Menggunakan curl_cffi jika tersedia (TLS Fingerprint Impersonation Chrome 124)
-    2. Fallback ke requests dengan browser headers
-    3. Fallback ke urllib.request
+    1. Otomatis gunakan MediaWiki API untuk Fandom/Wikia/Wikipedia (Bypass Cloudflare 100%)
+    2. Menggunakan curl_cffi jika tersedia (TLS Fingerprint Impersonation Chrome 124)
+    3. Fallback ke requests dengan browser headers
+    4. Fallback ke urllib.request
     """
+    # 0. Penanganan khusus Fandom / Wikia / MediaWiki untuk menghindari Cloudflare block
+    wiki_res = fetch_fandom_mediawiki(url, timeout=timeout)
+    if wiki_res and wiki_res.get("success"):
+        return wiki_res
+
     result = {
         "success": False,
         "url": url,

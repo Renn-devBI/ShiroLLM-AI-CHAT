@@ -263,6 +263,32 @@ body {
     color: #ffffff;
 }
 
+/* Chat Links Styling */
+.chat-link, .bubble a {
+    color: #60a5fa !important;
+    text-decoration: underline !important;
+    text-underline-offset: 3px;
+    word-break: break-all;
+    cursor: pointer;
+    font-weight: 500;
+    transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.chat-link:hover, .bubble a:hover {
+    color: #93c5fd !important;
+    opacity: 0.9;
+    text-decoration: underline !important;
+}
+
+.message.user .bubble a, .message.user .chat-link {
+    color: #e0f2fe !important;
+    text-decoration: underline !important;
+}
+
+.message.user .bubble a:hover, .message.user .chat-link:hover {
+    color: #ffffff !important;
+}
+
 /* Action Floating Tooltip (Copy/Edit) */
 .message-actions {
     position: absolute;

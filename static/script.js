@@ -34,6 +34,7 @@ function getCurrentTime() {
 
 // Parse message formatting
 function parseMessageContent(text) {
+    if (!text) return '';
     // Escape HTML first
     let escaped = document.createElement('div');
     escaped.textContent = text;
@@ -47,6 +48,28 @@ function parseMessageContent(text) {
     
     // Parse *italic/action* text
     content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    
+    // Parse Markdown links [text](url) lebih dulu
+    const mdLinks = [];
+    content = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\s<>"']+)\)/g, function(match, label, rawUrl) {
+        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
+        let placeholder = `___SHIRO_MD_LINK_${mdLinks.length}___`;
+        mdLinks.push(`<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${label}</a>`);
+        return placeholder;
+    });
+
+    // Parse plain URL menjadi link yang bisa diklik dan digarisbawahi
+    const urlRegex = /(https?:\/\/[^\s<>"']+)/g;
+    content = content.replace(urlRegex, function(match) {
+        let cleanUrl = match.replace(/[.,;!?)]+$/, '');
+        let trailing = match.slice(cleanUrl.length);
+        return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${cleanUrl}</a>${trailing}`;
+    });
+
+    // Kembalikan placeholder Markdown links
+    mdLinks.forEach((linkHtml, idx) => {
+        content = content.replace(`___SHIRO_MD_LINK_${idx}___`, linkHtml);
+    });
     
     return content;
 }
