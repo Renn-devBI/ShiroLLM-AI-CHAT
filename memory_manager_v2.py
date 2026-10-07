@@ -19,6 +19,7 @@ from collections import defaultdict
 from typing import Dict, List, Any, Optional
 import hashlib
 import threading
+import shutil
 
 class AdvancedMemoryManager:
     """Enhanced memory management system with sophisticated tracking"""
@@ -27,6 +28,10 @@ class AdvancedMemoryManager:
         self.lock = threading.RLock()
         self.memory_file = memory_file
         self.world_file = world_file
+        # Deteksi otomatis Google Drive jika berjalan di Colab
+        self.drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
+        if not self.drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):
+            self.drive_dir = "/content/drive/MyDrive/Shiro_Memory"
         self.initialize_memory()
         self.load_world()
         self.load_memory()
@@ -121,6 +126,13 @@ class AdvancedMemoryManager:
     
     def load_world(self):
         """Load world/setting dari file atau gunakan default"""
+        if self.drive_dir and os.path.exists(self.drive_dir):
+            drive_world = os.path.join(self.drive_dir, os.path.basename(self.world_file))
+            if os.path.exists(drive_world) and not os.path.exists(self.world_file):
+                try:
+                    shutil.copy2(drive_world, self.world_file)
+                except Exception:
+                    pass
         if os.path.exists(self.world_file):
             try:
                 with open(self.world_file, 'r', encoding='utf-8') as f:
@@ -131,6 +143,19 @@ class AdvancedMemoryManager:
     
     def load_memory(self):
         """Load memory from file"""
+        # Pulihkan ingatan dari Google Drive jika ada dan lokal belum ada atau lebih usang
+        if self.drive_dir and os.path.exists(self.drive_dir):
+            drive_mem = os.path.join(self.drive_dir, os.path.basename(self.memory_file))
+            if os.path.exists(drive_mem):
+                should_restore = not os.path.exists(self.memory_file) or (
+                    os.path.getsize(drive_mem) > os.path.getsize(self.memory_file) and os.path.getsize(self.memory_file) < 500
+                )
+                if should_restore:
+                    try:
+                        shutil.copy2(drive_mem, self.memory_file)
+                        print(f"[Memory] Memori dipulihkan dari Google Drive: {drive_mem}")
+                    except Exception as e_res:
+                        print(f"Warning: Gagal memulihkan ingatan dari Google Drive: {e_res}")
         if os.path.exists(self.memory_file):
             try:
                 with open(self.memory_file, 'r', encoding='utf-8') as f:
@@ -695,6 +720,15 @@ class AdvancedMemoryManager:
                 with open(tmp_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
                 os.replace(tmp_path, self.memory_file)
+                
+                # Real-time auto-sync ke Google Drive jika aktif
+                if self.drive_dir and os.path.exists(self.drive_dir):
+                    try:
+                        shutil.copy2(self.memory_file, os.path.join(self.drive_dir, os.path.basename(self.memory_file)))
+                        if os.path.exists(self.world_file):
+                            shutil.copy2(self.world_file, os.path.join(self.drive_dir, os.path.basename(self.world_file)))
+                    except Exception as drive_err:
+                        pass
                 
                 print(f"[Memory] Saved: {len(self.short_term_history)} messages, {len(self.knowledge_base['facts'])} facts (total turns: {self.system_metadata['total_turns']})")
             

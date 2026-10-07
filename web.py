@@ -41,6 +41,7 @@ except ImportError:
 from werkzeug.utils import secure_filename
 from memory_manager_v2 import AdvancedMemoryManager
 import json
+import shutil
 import random
 import base64
 import time
@@ -103,12 +104,31 @@ def get_or_create_api_key():
     env_key = os.environ.get("SHIRO_API_KEY", "").strip()
     if env_key:
         return env_key
+    
+    drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
+    if not drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):
+        drive_dir = "/content/drive/MyDrive/Shiro_Memory"
+
+    # Pulihkan dari Google Drive jika ada di Drive tapi belum di lokal
+    if drive_dir and os.path.exists(drive_dir):
+        drive_key = os.path.join(drive_dir, API_KEY_FILE)
+        if not os.path.exists(API_KEY_FILE) and os.path.exists(drive_key):
+            try:
+                shutil.copy2(drive_key, API_KEY_FILE)
+            except Exception:
+                pass
+
     if os.path.exists(API_KEY_FILE):
         try:
             with open(API_KEY_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 key = data.get("api_key", "").strip()
                 if key:
+                    if drive_dir and os.path.exists(drive_dir):
+                        try:
+                            shutil.copy2(API_KEY_FILE, os.path.join(drive_dir, API_KEY_FILE))
+                        except Exception:
+                            pass
                     return key
         except Exception:
             pass
@@ -117,6 +137,11 @@ def get_or_create_api_key():
     try:
         with open(API_KEY_FILE, "w", encoding="utf-8") as f:
             json.dump({"api_key": new_key, "created_at": datetime.now().isoformat()}, f, indent=2)
+        if drive_dir and os.path.exists(drive_dir):
+            try:
+                shutil.copy2(API_KEY_FILE, os.path.join(drive_dir, API_KEY_FILE))
+            except Exception:
+                pass
     except Exception as e:
         print(f"Warning: Could not save API key file: {e}")
     return new_key
@@ -1521,6 +1546,18 @@ def upload_profile():
         profile_file = os.path.join(PROFILE_DIR, f'{profile_type}.json')
         with open(profile_file, 'w', encoding='utf-8') as f:
             json.dump(profile, f, ensure_ascii=False, indent=2)
+        
+        # Real-time auto-sync profile ke Google Drive jika aktif
+        drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
+        if not drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):
+            drive_dir = "/content/drive/MyDrive/Shiro_Memory"
+        if drive_dir and os.path.exists(drive_dir):
+            try:
+                drive_prof_dir = os.path.join(drive_dir, "profile")
+                os.makedirs(drive_prof_dir, exist_ok=True)
+                shutil.copy2(profile_file, os.path.join(drive_prof_dir, f'{profile_type}.json'))
+            except Exception:
+                pass
         
         return jsonify({
             "success": True,
