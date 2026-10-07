@@ -147,9 +147,17 @@ class AdvancedMemoryManager:
         if self.drive_dir and os.path.exists(self.drive_dir):
             drive_mem = os.path.join(self.drive_dir, os.path.basename(self.memory_file))
             if os.path.exists(drive_mem):
-                should_restore = not os.path.exists(self.memory_file) or (
-                    os.path.getsize(drive_mem) > os.path.getsize(self.memory_file) and os.path.getsize(self.memory_file) < 500
-                )
+                should_restore = not os.path.exists(self.memory_file)
+                if not should_restore and os.path.getsize(drive_mem) > 100:
+                    try:
+                        with open(self.memory_file, 'r', encoding='utf-8') as f_loc:
+                            loc_data = json.load(f_loc)
+                            loc_turns = loc_data.get("system_metadata", {}).get("total_turns", 0)
+                            loc_hist = len(loc_data.get("short_term_history", []))
+                            if (loc_turns == 0 and loc_hist == 0) or os.path.getsize(drive_mem) > os.path.getsize(self.memory_file):
+                                should_restore = True
+                    except Exception:
+                        should_restore = True
                 if should_restore:
                     try:
                         shutil.copy2(drive_mem, self.memory_file)
