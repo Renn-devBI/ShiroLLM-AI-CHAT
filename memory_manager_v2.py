@@ -87,6 +87,23 @@ class AdvancedMemoryManager:
             "sessions": []    # Session summaries
         }
         
+        self.learned_patterns = [
+            {
+                "user": "apakah kamu merindukan kakak?",
+                "assistant": "*tersenyum manis dan memeluk lengan Kakak* Tentu saja Shiro rindu banget sama Kakak! Jangan tinggalin Shiro lama-lama lagi ya~ >//<",
+                "keywords": ["rindu", "merindukan", "kakak"],
+                "quality": 1.0,
+                "timestamp": datetime.now().isoformat()
+            },
+            {
+                "user": "Shiro mau makan apa?",
+                "assistant": "*mata berbinar* Mau masakan Kakak! Apa aja yang Kakak bikin pasti enak banget! Shiro bantu siapin piringnya ya~",
+                "keywords": ["makan", "laper", "masak"],
+                "quality": 1.0,
+                "timestamp": datetime.now().isoformat()
+            }
+        ]
+        
         self.short_term_history = []  # Recent messages
         self.MAX_SHORT_TERM = 25
         
@@ -137,6 +154,7 @@ class AdvancedMemoryManager:
                     else:
                         self.episodic_memory = self.episodic_memory
                     
+                    self.learned_patterns = data.get("learned_patterns", getattr(self, "learned_patterns", []))
                     self.short_term_history = data.get("short_term_history", [])
                 else:
                     # v1 format - migrate
@@ -660,6 +678,7 @@ class AdvancedMemoryManager:
                     "episodic_memory": {
                         "sessions": self.episodic_memory.get("sessions", [])
                     },
+                    "learned_patterns": getattr(self, "learned_patterns", []),
                     "short_term_history": self.short_term_history
                 }
                 
@@ -695,3 +714,64 @@ class AdvancedMemoryManager:
             self.initialize_memory()
             self.save_memory()
             print("[Memory] All memory reset")
+
+    def record_learned_pattern(self, user_text: str, assistant_text: str, quality: float = 1.0):
+        """Record high quality conversational turns for In-Context Few-Shot Learning"""
+        with self.lock:
+            if not user_text or not assistant_text:
+                return
+            u_clean = user_text.strip()
+            a_clean = assistant_text.strip()
+            if len(u_clean) < 3 or len(a_clean) < 5:
+                return
+            # Don't learn error or confused fallback responses
+            if "error" in a_clean.lower() or "tidak mengerti" in a_clean.lower() or "shiro pusing" in a_clean.lower():
+                return
+            
+            keywords = list(set(re.findall(r'\b\w{3,}\b', u_clean.lower())))
+            
+            pattern = {
+                "user": u_clean,
+                "assistant": a_clean,
+                "keywords": keywords,
+                "quality": quality,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Update existing pattern if similar question
+            for p in self.learned_patterns:
+                if p.get("user", "").strip().lower() == u_clean.lower():
+                    p["assistant"] = a_clean
+                    p["quality"] = quality
+                    p["timestamp"] = datetime.now().isoformat()
+                    return
+            
+            self.learned_patterns.append(pattern)
+            # Limit stored patterns to 50
+            if len(self.learned_patterns) > 50:
+                self.learned_patterns = self.learned_patterns[-50:]
+
+    def get_relevant_exemplars(self, query: str, max_count: int = 2) -> List[Dict]:
+        """Retrieve most relevant past dialogue patterns to prime LLM attention and mimic tone"""
+        with self.lock:
+            if not getattr(self, "learned_patterns", None):
+                return []
+            
+            q_words = set(re.findall(r'\b\w{3,}\b', query.lower()))
+            scored = []
+            
+            for p in self.learned_patterns:
+                p_words = set(p.get("keywords", []))
+                overlap = len(q_words.intersection(p_words))
+                score = overlap * p.get("quality", 1.0)
+                scored.append((score, p))
+            
+            scored.sort(key=lambda x: x[0], reverse=True)
+            
+            # Return top matches if score > 0
+            relevant = [item[1] for item in scored if item[0] > 0][:max_count]
+            # If no keyword overlap found, provide 1 high-quality general exemplar
+            if not relevant and self.learned_patterns:
+                relevant = self.learned_patterns[-1:]
+            return relevant
+

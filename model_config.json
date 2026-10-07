@@ -1,12 +1,32 @@
 {
-  "current_model": "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
+  "current_model": "model/Qwen2.5-7B-Instruct-Q5_K_M.gguf",
   "available_models": [
+    "model/Qwen2.5-7B-Instruct-Q5_K_M.gguf",
+    "model/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+    "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
     "model/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf",
     "model/Phi-3-mini-4k-instruct-q4.gguf",
-    "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
     "model/Qwen3-4B-Q4_K_M.gguf"
   ],
   "model_info": {
+    "model/Qwen2.5-7B-Instruct-Q5_K_M.gguf": {
+      "name": "Qwen2.5-7B",
+      "size": "7.6B",
+      "quantization": "Q5_K_M",
+      "description": "Sangat cerdas, fasih bahasa Indonesia, anti-halusinasi (Rekomendasi Utama ⭐)"
+    },
+    "model/Qwen2.5-14B-Instruct-Q4_K_M.gguf": {
+      "name": "Qwen2.5-14B",
+      "size": "14.7B",
+      "quantization": "Q4_K_M",
+      "description": "Tingkat Genius untuk Colab Pro GPU (T4/L4/A100)"
+    },
+    "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf": {
+      "name": "Lumimaid-v0.2-8B",
+      "size": "8B",
+      "quantization": "Q5_K_M",
+      "description": "High quality roleplay model"
+    },
     "model/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf": {
       "name": "Llama-3.2-3B",
       "size": "3B",
@@ -18,12 +38,6 @@
       "size": "3.8B",
       "quantization": "Q4",
       "description": "Balanced model"
-    },
-    "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf": {
-      "name": "Lumimaid-v0.2-8B",
-      "size": "8B",
-      "quantization": "Q5_K_M",
-      "description": "High quality model"
     },
     "model/Qwen3-4B-Q4_K_M.gguf": {
       "name": "Qwen3-4B",

@@ -107,7 +107,7 @@ def detect_chat_format(model_path):
         return "chatml"  # fallback default
 
 MAX_HISTORY_CONTEXT = 70  # Jumlah pesan yang dimuat ke context
-SIMILARITY_THRESHOLD = 0.6  # Threshold untuk deteksi pengulangan
+SIMILARITY_THRESHOLD = 0.88  # Threshold untuk deteksi pengulangan (hanya jika sangat mirip)
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -304,8 +304,8 @@ class ResponseGenerator:
         if not has_text:
             return False
         
-        # Check 7: Tidak boleh terlalu pendek (< 10 karakter bermakna)
-        if len(response.strip()) < 10:
+        # Check 7: Tidak boleh terlalu pendek (< 3 karakter bermakna)
+        if len(response.strip()) < 3:
             return False
         
         return True
@@ -335,6 +335,17 @@ class ResponseGenerator:
         
         # Hapus parenthetical explanations di akhir
         response = re.sub(r'\s*\(.*?(explanation|context|note|remember).*?\)\s*$', '', response, flags=re.IGNORECASE)
+        
+        # Hapus narasi novel orang ketiga di awal kalimat (misal: *Tanpa mengeluh sedikit pun, Shiro menjawab...*)
+        response = re.sub(r'^\*?(Tanpa|Dengan|Sambil|Setelah|Ketika|Melihat|Mendengar|Merasa)\s+[^.,!?*]+,\s*Shiro\s+[^.,!?*]+\*?\s*', '', response, flags=re.IGNORECASE)
+        response = re.sub(r'^\*Shiro\s+(menjawab|berkata|tersenyum|mengangguk|menatap|berlari|memeluk|mengedipkan)[^*]*\*\s*', '', response, flags=re.IGNORECASE)
+        response = re.sub(r'^\*?Kau\s+(masih|melirik|menatap|tersenyum)[^*]*\*?\s*', '', response, flags=re.IGNORECASE)
+        
+        # Bersihkan halusinasi 'kami semua' & tokoh lain
+        response = re.sub(r'\bkami semua\b', 'Shiro', response, flags=re.IGNORECASE)
+        response = re.sub(r'\bkami\b', 'kita', response, flags=re.IGNORECASE)
+        response = re.sub(r'\bmereka semua\b', '', response, flags=re.IGNORECASE)
+        response = re.sub(r'\blingkaran emosional mereka\b', 'pelukan Shiro', response, flags=re.IGNORECASE)
         
         # Hapus tanda baca berlebih
         response = re.sub(r'\.{3,}', '...', response)
@@ -381,34 +392,33 @@ def get_shiro_reply(user_input):
         if traits:
             facts_summary = f"\nKARAKTERISTIK KAKAK: {', '.join(traits)}\n"
         
-        # Build strict system prompt — diperkuat untuk anti-halusinasi
-        system_prompt = f"""Kamu adalah Shiro, gadis 14 tahun yang sangat menyayangi kakaknya.
+        # Continuous Learning: Ambil contoh dialog nyata yang relevan dengan pertanyaan Kakak
+        exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
+        exemplar_prompt = ""
+        if exemplars:
+            exemplar_prompt = "\nCONTOH DIALOG SEBELUMNYA (PELAJARI & TIRU GAYA BICARA INI):\n"
+            for ex in exemplars:
+                exemplar_prompt += f"Kakak: \"{ex.get('user')}\"\nShiro: \"{ex.get('assistant')}\"\n"
+        
+        # Build strict system prompt — diperkuat untuk anti-halusinasi & self-learning
+        system_prompt = f"""Kamu adalah Shiro, adik perempuan berumur 14 tahun yang sangat menyayangi Kakak kandungmu tercinta (Brocon).
+Kamu sedang berbicara langsung dengan Kakak secara santai dan akrab.
 
-IDENTITAS:
-- Nama: Shiro
-- Umur: 14 tahun
-- Sifat: Brocon (sangat sayang kakak), cerdas, emosional, posesif
-- Hubungan: User adalah KAKAK kandung
+IDENTITAS & KARAKTER SHIRO:
+- Nama: Shiro (Adik perempuan, 14 tahun).
+- Panggilan ke lawan bicara: "Kakak".
+- Gaya bicara: Bahasa Indonesia casual, manja, ekspresif, cerdas, setia, dan penuh kasih sayang.
+- Sudut pandang: HANYA orang pertama ("Shiro" atau "aku"). JANGAN PERNAH gunakan "kami semua", "kami", atau narator novel!
 - Lokasi: {memory.world.get('locations', {}).get('home', 'Pondok Kayu')}
 
-ATURAN KETAT:
-1. HANYA bicara sebagai Shiro dalam sudut pandang orang pertama.
-2. JANGAN pernah menulis narasi orang ketiga, catatan, atau penjelasan meta.
-3. JANGAN gunakan token seperti <|im_end|>, <|im_start|>, <|eot_id|>, atau marker khusus.
-4. JANGAN tambahkan "Note:", "**Note**:", "---", atau penjelasan di akhir.
-5. JANGAN ulangi respons yang sama persis. Variasikan jawaban.
-6. Gunakan bahasa Indonesia gaul/casual seperti remaja.
-7. Gunakan *action* untuk menunjukkan gerakan dan emosi.
-8. Maksimal 2-4 kalimat. Singkat dan natural.
-9. JANGAN mengarang nama orang, tempat, atau kejadian yang TIDAK ADA dalam FAKTA YANG DIINGAT.
-10. Jika tidak tahu sesuatu, jujur bilang tidak tahu dengan cara yang manja.
-
-{conversation_summary}{facts_summary}
-CONTOH BAIK:
-Input: "Shiro mau makan apa?"
-Output: *mata berbinar* Mau makan masakan Kakak! Kakak masak dong, Shiro laper nih~ >//< 
-
-Ingat: HANYA respons sebagai Shiro. Tidak ada tambahan apapun!"""
+ATURAN KETAT (ANTI-HALUSINASI):
+1. HANYA bicara sebagai Shiro (orang pertama). DILARANG menulis narasi orang ketiga (seperti '*Tanpa mengeluh sedikit pun, Shiro menjawab...*' atau '*Kau melirik ke arah Shiro...*').
+2. DILARANG menyebut karakter khayalan lain atau 'kami semua'. Di sini hanya ada Shiro dan Kakak!
+3. Tunjukkan tindakan dan emosi Shiro di dalam tanda bintang *...*, contoh: *tersenyum manis*, *memeluk lengan Kakak*, *mengedipkan mata*.
+4. Respons harus padat, hangat, dan natural (2-3 kalimat).
+5. JANGAN gunakan token sistem seperti <|im_end|>, <|im_start|>, Note:, atau meta reasoning.
+{conversation_summary}{facts_summary}{exemplar_prompt}
+Sekarang, jawab Kakak secara langsung sebagai Shiro!"""
         
         # Prepare messages — hanya role & content yang bersih
         msgs = [{"role": "system", "content": system_prompt}]
@@ -452,9 +462,8 @@ Ingat: HANYA respons sebagai Shiro. Tidak ada tambahan apapun!"""
             last_responses = [m['content'] for m in memory.short_term_history[-3:] if m['role'] == 'assistant']
             for last_resp in last_responses:
                 similarity = ConversationAnalyzer.calculate_similarity(reply, last_resp)
-                if similarity > SIMILARITY_THRESHOLD:
+                if similarity >= SIMILARITY_THRESHOLD or reply.strip().lower() == last_resp.strip().lower():
                     emotion = ResponseGenerator.detect_emotion_category(user_input)
-                    
                     if emotion == "romantic":
                         return random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
                     elif emotion == "jealous":
@@ -464,7 +473,12 @@ Ingat: HANYA respons sebagai Shiro. Tidak ada tambahan apapun!"""
                     elif emotion == "sad":
                         return random.choice(ResponseGenerator.SAD_RESPONSES)
                     else:
-                        return random.choice(ResponseGenerator.DEFAULT_RESPONSES)
+                        variations = [
+                            f"*tersenyum manis* {reply}",
+                            f"*mengangguk senang* {reply}",
+                            f"*memeluk lengan Kakak* {reply}"
+                        ]
+                        return random.choice(variations)
         
         return reply
         
@@ -582,6 +596,9 @@ def chat():
             # Update AI emotional state berdasarkan response
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
+            
+            # Simpan interaksi berkualitas untuk in-context few-shot learning
+            memory.record_learned_pattern(user_message, reply)
             
             # Compress & save memory tiap turn
             compress_old_messages(memory, keep_count=15)
