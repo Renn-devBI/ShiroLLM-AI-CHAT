@@ -767,6 +767,10 @@ if __name__ == '__main__':
         model_name = os.path.basename(current_model_path)
         print(f"✓ Model loaded: {model_name}")
         print(f"✓ Context Window: {CONTEXT_SIZE} tokens")
+        if GPU_LAYERS != 0:
+            print(f"🚀 Akselerasi GPU AKTIF (Layers: {GPU_LAYERS})")
+        else:
+            print("⚠️ Mode: CPU (Lambat! Di Colab pastikan Runtime -> Change runtime type -> T4/A100 GPU)")
     except Exception as e:
         print(f"❌ Error loading model: {e}")
         sys.exit(1)
