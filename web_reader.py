@@ -76,22 +76,30 @@ def detect_web_intent(text: str) -> Dict[str, Any]:
             "query": None
         }
 
-    # Kata kunci pencarian online
+    # Normalisasi typo dan singkatan sebelum mencocokkan kata kunci
+    try:
+        from typo_helper import normalize_typos
+        normalized_text, _ = normalize_typos(text)
+    except Exception:
+        normalized_text = text
+
+    # Kata kunci pencarian online (toleran terhadap typo/singkatan)
     search_keywords = [
         "cari di web", "cari di internet", "browsing tentang", "browsing dong",
         "search online", "cari info tentang", "cari informasi tentang",
-        "cek di internet", "baca web tentang", "buka website"
+        "cek di internet", "baca web tentang", "buka website", "cariin tentang",
+        "googling tentang", "baca tentang", "info tentang", "cek info"
     ]
-    text_lower = text.lower()
-    for kw in search_keywords:
-        if kw in text_lower:
-            query = re.sub(rf".*?{re.escape(kw)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
-            if query:
-                return {
-                    "type": "search",
-                    "urls": [],
-                    "query": query
-                }
+    for candidate in [text.lower(), normalized_text.lower()]:
+        for kw in search_keywords:
+            if kw in candidate:
+                query = re.sub(rf".*?{re.escape(kw)}", "", normalized_text, flags=re.IGNORECASE).strip(" :?,.!")
+                if query:
+                    return {
+                        "type": "search",
+                        "urls": [],
+                        "query": query
+                    }
     return {
         "type": "none",
         "urls": [],
@@ -160,7 +168,10 @@ def fetch_fandom_mediawiki(url: str, timeout: int = 12) -> Optional[Dict[str, An
     subpath = f"/{m.group(2)}" if m.group(2) else ""
     page = urllib.parse.unquote(m.group(3)).replace("_", " ")
     
-    api_url = f"https://{domain}{subpath}/api.php"
+    if "wikipedia.org" in domain:
+        api_url = f"https://{domain}/w/api.php"
+    else:
+        api_url = f"https://{domain}{subpath}/api.php"
     params = {
         "action": "parse",
         "page": page,

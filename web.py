@@ -53,6 +53,7 @@ from collections import defaultdict
 import re
 from memory_optimization import get_smart_memory_context, compress_old_messages
 import web_reader
+import typo_helper
 
 # --- By CONFIG ---
 MEMORY_FILE = "ingatan_shiro.json"
@@ -722,9 +723,12 @@ class ResponseGenerator:
         response = re.sub(r'!{2,}', '!', response)
         response = re.sub(r'\?{2,}', '?', response)
         
-        # 12. Hapus whitespace berlebih
-        response = re.sub(r'\s+', ' ', response)
-        response = re.sub(r'\s+([.,!?])', r'\1', response)
+        # 12. Hapus whitespace berlebih namun pertahankan pemisahan baris / paragraf (Shift+Enter)
+        response = response.replace('\r\n', '\n').replace('\r', '\n')
+        response = re.sub(r'[ \t]+', ' ', response)
+        response = re.sub(r' +([.,!?])', r'\1', response)
+        response = re.sub(r'\n{3,}', '\n\n', response)
+        response = '\n'.join([line.strip() for line in response.split('\n')])
         
         # 13. Hapus HTML/XML remnants
         response = re.sub(r'</?[^>]+>', '', response)
@@ -748,6 +752,10 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
         has_image = bool(image_base64)
         raw_chars = len(user_input) if user_input else 0
         img_len = len(image_base64) if image_base64 else 0
+        
+        # Analisis Typo & Singkatan Bahasa Indonesia (Typo-Tolerant Intelligence)
+        normalized_input, typo_corrections = typo_helper.normalize_typos(user_input)
+        typo_prompt_addon = typo_helper.get_typo_understanding_prompt(typo_corrections) if typo_corrections else ""
         
         # Penanganan khusus jika Kakak mengirim gambar:
         if image_base64:
@@ -829,6 +837,8 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
 
         t_input_dur = (time.perf_counter() - t0) * 1000
         summary_node1 = f"{raw_chars} Karakter" + (" + Visual Kamera/Foto" if has_image else "")
+        if typo_corrections:
+            summary_node1 += f" • ✍️ Typo Tolerant ({len(typo_corrections)} kata)"
         if web_data:
             summary_node1 += f" • 🌐 Web ({web_data['title'][:25]})"
 
@@ -845,10 +855,12 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
                 "message": user_input,
                 "has_image": has_image,
                 "image_bytes_approx": img_len,
-                "web_intent": web_intent if 'web_intent' in locals() else None
+                "web_intent": web_intent if 'web_intent' in locals() else None,
+                "typo_corrections": typo_corrections
             },
             "data_out": {
                 "processed_text": user_input,
+                "normalized_text": normalized_input,
                 "source": "web_or_api",
                 "web_ingested": bool(web_data),
                 "timestamp": datetime.now().isoformat()
@@ -859,8 +871,8 @@ def get_shiro_reply(user_input, image_base64=None, return_trace=False):
         # NODE 2: Emotion & Tone Classifier
         # -------------------------------------------------------------
         t0 = time.perf_counter()
-        user_emotion = ResponseGenerator.detect_emotion_category(user_input)
-        u_lower = user_input.lower()
+        user_emotion = ResponseGenerator.detect_emotion_category(normalized_input)
+        u_lower = normalized_input.lower()
         matched_words = [w for w in ["sayang", "kangen", "cinta", "rindu", "peluk", "manis", "cium", "cantik", "bagus", "keren", "hebat", "senang", "ayo", "main", "maaf", "sedih", "nangis", "jahat", "benci", "siapa", "cewek", "perempuan", "selingkuh"] if w in u_lower]
         t_emotion_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
@@ -963,7 +975,8 @@ ATURAN MUTLAK (ANTI-HALUSINASI & ANTI-ENGLISH):
 4. DILARANG menyebut karakter khayalan lain atau 'kami semua'. Di sini hanya ada Shiro dan Kakak!
 5. Tunjukkan tindakan dan emosi Shiro di dalam tanda bintang *...*, contoh: *tersenyum manis*, *memeluk lengan Kakak*, *mengedipkan mata*.
 6. Respons harus padat, hangat, dan natural (2-3 kalimat).
-{conversation_summary}{facts_summary}{exemplar_prompt}{web_prompt_addon}
+7. PEMAHAMAN TYPO & SINGKATAN CHAT: Shiro adalah adik jenius yang sangat peka dan cerdas. Pahami maksud Kakak meskipun ada salah ketik (typo), huruf tertukar/hilang, atau singkatan chat (seperti 'bca' -> baca, 'klo' -> kalau, 'bsa' -> bisa, 'shrio' -> Shiro, 'tlg' -> tolong, 'skrg' -> sekarang, dll). JANGAN PERNAH mengkritik atau mempermasalahkan typo Kakak, langsung tangkap maksud sebenarnya dan jawab dengan manja, cerdas, dan penuh kasih sayang khas Shiro!
+{conversation_summary}{facts_summary}{exemplar_prompt}{web_prompt_addon}{typo_prompt_addon}
 Sekarang, langsung jawab Kakak sebagai Shiro dalam Bahasa Indonesia tanpa awalan apa pun!"""
 
         msgs = [{"role": "system", "content": system_prompt}]

@@ -237,6 +237,8 @@ body {
     max-width: 76%;
     position: relative;
     word-wrap: break-word;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .bubble em {
@@ -384,11 +386,14 @@ body {
     color: var(--text-primary);
     font-size: 0.95rem;
     font-family: inherit;
-    padding: 6px 0;
+    padding: 4px 0;
     resize: none;
-    max-height: 130px;
+    height: 24px;
+    min-height: 24px;
+    max-height: 140px;
     overflow-y: auto;
     line-height: 1.5;
+    box-sizing: border-box;
 }
 
 .chat-input:focus {

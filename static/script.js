@@ -70,6 +70,9 @@ function parseMessageContent(text) {
     mdLinks.forEach((linkHtml, idx) => {
         content = content.replace(`___SHIRO_MD_LINK_${idx}___`, linkHtml);
     });
+
+    // Konversi baris baru (Shift+Enter / newline) menjadi <br> agar rapi dan tidak menyatu
+    content = content.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
     
     return content;
 }
@@ -114,13 +117,10 @@ function addMessage(role, content, imageUrl = null) {
         attachmentHTML = `<img src="${imageUrl}" class="chat-img-attachment" alt="Foto Visual">`;
     }
 
-    // Render HTML Message
+    // Render HTML Message (tanpa spasi/newline berlebih di dalam bubble)
     messageDiv.innerHTML = `
         ${role === 'assistant' ? avatarHTML : ''}
-        <div class="bubble" data-original-text="${escapedContent}">
-            ${attachmentHTML}
-            ${formattedContent}
-        </div>
+        <div class="bubble" data-original-text="${escapedContent}">${attachmentHTML}${formattedContent}</div>
         ${role === 'user' ? avatarHTML : ''}
     `;
     
@@ -192,6 +192,7 @@ async function sendMessage() {
     const currentImgUrl = sendingImage ? sendingImage.dataUrl : null;
     
     userInput.value = '';
+    adjustInputHeight();
     clearAttachedImage();
     
     const displayMsg = message || (sendingImage ? 'Kakak memperlihatkan gambar visual ini.' : '');
@@ -338,11 +339,20 @@ async function loadChatHistory() {
 sendBtn.addEventListener('click', sendMessage);
 stopBtn.addEventListener('click', stopGeneration);
 
+// Auto-resize input textarea saat mengetik atau menekan Shift+Enter
+function adjustInputHeight() {
+    if (!userInput) return;
+    userInput.style.height = 'auto';
+    const scrollH = userInput.scrollHeight;
+    const targetH = Math.min(Math.max(scrollH, 24), 140);
+    userInput.style.height = targetH + 'px';
+}
+
 userInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-        // Shift+Enter = baris baru
+        // Shift+Enter = baris baru (auto-expand tinggi input)
         if (e.shiftKey) {
-            // Biarkan default behavior (insert newline)
+            setTimeout(adjustInputHeight, 0);
             return;
         }
         // Enter saja = kirim
@@ -354,6 +364,7 @@ userInput.addEventListener('keydown', (e) => {
 });
 
 userInput.addEventListener('input', () => {
+    adjustInputHeight();
     // Reset timer jika Kakak sedang aktif mengetik agar tidak diganggu
     clearTimeout(triggerTimer);
     startTriggerTimer();
@@ -421,6 +432,7 @@ document.addEventListener('mouseover', (e) => {
         e.preventDefault();
         e.stopPropagation();
         userInput.value = originalText;
+        adjustInputHeight();
         userInput.focus();
         userInput.setSelectionRange(userInput.value.length, userInput.value.length);
     });
