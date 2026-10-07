@@ -299,7 +299,11 @@ def detect_chat_format(model_path):
 MAX_HISTORY_CONTEXT = 70  # Jumlah pesan yang dimuat ke context
 SIMILARITY_THRESHOLD = 0.88  # Threshold untuk deteksi pengulangan (hanya jika sangat mirip)
 
-sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 app = Flask(__name__, 
     template_folder='templates',
