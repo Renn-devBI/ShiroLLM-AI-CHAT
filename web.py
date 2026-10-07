@@ -520,13 +520,15 @@ def auto_trigger():
     global SHIRO_SERIAL_QUESTIONS
     try:
         with memory.lock:
-            if SHIRO_SERIAL_QUESTIONS >= 3:
-                return jsonify({"status": "idle", "reason": "max_questions_reached"})
+            # Batasi hanya 1 inisiatif saja, tidak boleh spam beruntun sampai Kakak membalas
+            if SHIRO_SERIAL_QUESTIONS >= 1:
+                return jsonify({"status": "idle", "reason": "already_initiated"})
 
             trigger_prompt = (
-                "Kakak sedang diam. Berikan satu pertanyaan singkat yang natural, "
-                "manja, atau peduli untuk memancing Kakak bicara lagi. "
-                "Jangan terlalu panjang, pastikan sesuai dengan mood saat ini."
+                "Kakak sudah lama tidak bersuara. Sebagai Shiro (adik perempuan), berikan SATU sapaan santai atau perhatian kecil "
+                "(misalnya: tanya Kakak lagi sibuk apa, celetukan manja, atau sapaan hangat). "
+                "ATURAN: Maksimal 1-2 kalimat pendek, sudut pandang orang pertama 'Shiro/aku', "
+                "JANGAN gunakan narasi novel orang ketiga, JANGAN mengulang kalimat sebelumnya."
             )
             
             reply = get_shiro_reply(trigger_prompt)

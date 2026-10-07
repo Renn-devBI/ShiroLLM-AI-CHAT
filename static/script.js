@@ -118,14 +118,16 @@ function showTyping(show) {
     }
 }
 
-// Trigger message after delay
+// Trigger inisiatif Shiro setelah hening lama (Inisiatif natural, bukan spam)
 function startTriggerTimer() {
     clearTimeout(triggerTimer);
     
-    const randomDelay = Math.floor(Math.random() * (15000 - 5000 + 1)) + 5000;
+    // Tunggu hening 2.5 - 4 menit (150.000 - 240.000 ms), BUKAN 5 detik!
+    const naturalDelay = Math.floor(Math.random() * (240000 - 150000 + 1)) + 150000;
     
     triggerTimer = setTimeout(() => {
-        if (isGenerating) return; 
+        // Jangan ganggu jika sedang generate atau Kakak sedang mengetik pesan
+        if (isGenerating || (userInput && userInput.value.trim().length > 0)) return; 
 
         fetch('/api/trigger', {
             method: 'POST',
@@ -133,14 +135,13 @@ function startTriggerTimer() {
         })
         .then(res => res.json())
         .then(data => {
-            if (data.reply) {
+            if (data.reply && data.status !== 'idle') {
                 addMessage('assistant', data.reply); 
-                
-                startTriggerTimer(); 
+                // Cukup 1 inisiatif sampai Kakak membalas — jangan loop panggil startTriggerTimer lagi!
             }
         })
         .catch(err => console.error("Trigger fetch error:", err));
-    }, randomDelay);
+    }, naturalDelay);
 }
 
 // Send message main function
@@ -284,6 +285,12 @@ userInput.addEventListener('keydown', (e) => {
             sendMessage();
         }
     }
+});
+
+userInput.addEventListener('input', () => {
+    // Reset timer jika Kakak sedang aktif mengetik agar tidak diganggu
+    clearTimeout(triggerTimer);
+    startTriggerTimer();
 });
 
 resetBtn.addEventListener('click', resetMemory);
