@@ -30,7 +30,10 @@ if sys.platform.startswith("linux"):
                     pass
 
 from flask import Flask, render_template, request, jsonify, send_file
-from llama_cpp import Llama
+try:
+    from llama_cpp import Llama
+except ImportError:
+    Llama = None
 from werkzeug.utils import secure_filename
 from memory_manager_v2 import AdvancedMemoryManager
 import json
@@ -49,7 +52,73 @@ CONTEXT_SIZE = 4096
 PROFILE_DIR = "profile"
 MODEL_DIR = "model"
 MODEL_CONFIG_FILE = "model_config.json"
+API_KEY_FILE = "api_key.json"
 SHIRO_SERIAL_QUESTIONS = 0
+
+def get_or_create_api_key():
+    """Load or generate a persistent API Key for external bots/apps (WhatsApp, VTuber, etc.)"""
+    env_key = os.environ.get("SHIRO_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    if os.path.exists(API_KEY_FILE):
+        try:
+            with open(API_KEY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                key = data.get("api_key", "").strip()
+                if key:
+                    return key
+        except Exception:
+            pass
+    import secrets
+    new_key = "shiro-sk-" + secrets.token_hex(16)
+    try:
+        with open(API_KEY_FILE, "w", encoding="utf-8") as f:
+            json.dump({"api_key": new_key, "created_at": datetime.now().isoformat()}, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Could not save API key file: {e}")
+    return new_key
+
+def verify_api_key(allow_web_ui=True):
+    """
+    Verifikasi API Key dari request:
+    - Header: Authorization: Bearer <key>
+    - Header: X-API-Key: <key>
+    - Query Param: ?api_key=<key>
+    Jika allow_web_ui=True, permintaan langsung dari browser Web UI internal diizinkan.
+    """
+    expected_key = get_or_create_api_key()
+    
+    # 1. Header Authorization: Bearer <token>
+    auth_header = request.headers.get("Authorization", "").strip()
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+        if token == expected_key:
+            return True
+            
+    # 2. Header X-API-Key
+    x_key = request.headers.get("X-API-Key", "").strip()
+    if x_key and x_key == expected_key:
+        return True
+        
+    # 3. Query Param
+    q_key = request.args.get("api_key", "").strip()
+    if q_key and q_key == expected_key:
+        return True
+        
+    # 4. Internal Browser Web UI
+    if allow_web_ui:
+        sec_fetch = request.headers.get("Sec-Fetch-Site", "")
+        referer = request.headers.get("Referer", "")
+        host = request.headers.get("Host", "")
+        if sec_fetch in ["same-origin", "same-site"]:
+            return True
+        if referer and host and host in referer:
+            return True
+        remote_addr = request.remote_addr or ""
+        if remote_addr in ["127.0.0.1", "localhost", "::1"] and not auth_header and not x_key:
+            return True
+            
+    return False
 
 # Profile & Model directories
 if not os.path.exists(PROFILE_DIR):
@@ -568,8 +637,12 @@ def auto_trigger():
 @app.route('/api/chat', methods=['POST'])
 def chat():
     global SHIRO_SERIAL_QUESTIONS # Sytem Srial Questions
+    # Verifikasi API Key (izinkan browser Web UI internal, wajibkan key untuk external request)
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized: Invalid or missing API Key. Use 'Authorization: Bearer <key>' or 'X-API-Key: <key>'"}), 401
+        
     try:
-        data = request.json
+        data = request.json or {}
         user_message = data.get('message', '').strip()
         
         if not user_message:
@@ -623,6 +696,122 @@ def chat():
             "reply": "*menatap kakak* Shiro bingung... Kakak bisa ulangi?",
             "error": "Processing error"
         }), 500
+
+@app.route('/v1/chat/completions', methods=['POST'])
+def openai_chat_completions():
+    """
+    OpenAI-compatible Chat Completions API endpoint.
+    Kompatibel dengan semua AI client: WhatsApp Bot, Telegram Bot, VTuber, LangChain, dsb.
+    Header: Authorization: Bearer <SHIRO_API_KEY>
+    """
+    if not verify_api_key(allow_web_ui=False):
+        return jsonify({
+            "error": {
+                "message": "Invalid or missing API Key. Provide 'Authorization: Bearer <SHIRO_API_KEY>' or 'X-API-Key: <SHIRO_API_KEY>'",
+                "type": "invalid_request_error",
+                "code": "unauthorized"
+            }
+        }), 401
+        
+    try:
+        import time
+        import secrets
+        data = request.json or {}
+        messages = data.get("messages", [])
+        model_name = data.get("model", "Qwen3-32B")
+        
+        if not messages:
+            return jsonify({
+                "error": {
+                    "message": "No messages provided in request",
+                    "type": "invalid_request_error"
+                }
+            }), 400
+            
+        # Ambil pesan user terakhir
+        user_message = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                user_message = msg.get("content", "").strip()
+                break
+                
+        if not user_message:
+            user_message = messages[-1].get("content", "").strip()
+            
+        with memory.lock:
+            memory.add_message("user", user_message)
+            reply = get_shiro_reply(user_message)
+            memory.add_message("assistant", reply)
+            memory.record_learned_pattern(user_message, reply)
+            memory.update_emotional_state_from_response(reply)
+            memory.update_mood_from_emotions()
+            compress_old_messages(memory, keep_count=15)
+            memory.save_memory()
+            
+        response_id = f"chatcmpl-shiro-{secrets.token_hex(8)}"
+        created_time = int(time.time())
+        prompt_tokens = len(user_message.split())
+        comp_tokens = len(reply.split())
+        
+        return jsonify({
+            "id": response_id,
+            "object": "chat.completion",
+            "created": created_time,
+            "model": model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": reply
+                    },
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": comp_tokens,
+                "total_tokens": prompt_tokens + comp_tokens
+            }
+        })
+    except Exception as e:
+        print(f"Error in /v1/chat/completions: {e}")
+        return jsonify({
+            "error": {
+                "message": str(e),
+                "type": "server_error"
+            }
+        }), 500
+
+@app.route('/v1/models', methods=['GET'])
+def openai_models():
+    """List available models for OpenAI SDK client compatibility"""
+    config = load_model_config()
+    current = config.get("current_model", "model/Qwen3-32B-Q4_K_M.gguf")
+    current_name = os.path.basename(current).replace(".gguf", "")
+    
+    models = [
+        {"id": "Qwen3-32B", "object": "model", "created": 1728300000, "owned_by": "shiro"},
+        {"id": "Qwen2.5-7B", "object": "model", "created": 1728300000, "owned_by": "shiro"},
+        {"id": current_name, "object": "model", "created": 1728300000, "owned_by": "shiro"}
+    ]
+    return jsonify({"object": "list", "data": models})
+
+@app.route('/api/key', methods=['GET'])
+def get_api_key_info():
+    """Get active API Key and connection info for external bots/clients"""
+    key = get_or_create_api_key()
+    host_url = request.host_url.rstrip('/')
+    return jsonify({
+        "api_key": key,
+        "openai_base_url": f"{host_url}/v1",
+        "chat_completions_url": f"{host_url}/v1/chat/completions",
+        "direct_chat_url": f"{host_url}/api/chat",
+        "documentation": {
+            "auth_header": f"Authorization: Bearer {key}",
+            "x_api_key": f"X-API-Key: {key}"
+        }
+    })
 
 @app.route('/api/reset', methods=['POST'])
 def reset():
@@ -835,8 +1024,16 @@ if __name__ == '__main__':
     memory = AdvancedMemoryManager(MEMORY_FILE, WORLD_FILE)
     
     try:
-        print("\n🚀 Starting server...")
-        print("📍 Access at: http://127.0.0.1:7474")
+        active_api_key = get_or_create_api_key()
+        print("\n" + "=" * 60)
+        print("🚀 SERVER SHIRO LLMA AKTIF!")
+        print("📍 Web UI Lokal: http://127.0.0.1:7474")
+        print("=" * 60)
+        print("🔑 API INTEGRATION (WhatsApp Bot / VTuber / Eksternal):")
+        print(f"👉 SHIRO API KEY: {active_api_key}")
+        print("👉 OpenAI Base URL: http://127.0.0.1:7474/v1")
+        print("👉 Chat Endpoint  : http://127.0.0.1:7474/v1/chat/completions")
+        print("=" * 60)
         print("💡 Press Ctrl+C to stop\n")
         
         app.run(
