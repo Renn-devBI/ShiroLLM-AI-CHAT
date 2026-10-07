@@ -59,12 +59,28 @@ from shiro.persona import build_system_prompt
 # --- By CONFIG ---
 MEMORY_FILE = "ingatan_shiro.json"
 WORLD_FILE = "isekai_world.json"
-CONTEXT_SIZE = 4096
+CONTEXT_SIZE = int(os.environ.get("SHIRO_CONTEXT_SIZE", "8192"))
 PROFILE_DIR = "profile"
 MODEL_DIR = "model"
 MODEL_CONFIG_FILE = "model_config.json"
 API_KEY_FILE = "api_key.json"
 SHIRO_SERIAL_QUESTIONS = 0
+
+def get_active_model_ctx(model=None, fallback=CONTEXT_SIZE):
+    """Mengambil kapasitas context window aktual dari model LLM yang sedang aktif"""
+    if model is None:
+        return fallback
+    n = getattr(model, 'n_ctx', None)
+    if callable(n):
+        try:
+            val = int(n())
+            if val > 0:
+                return val
+        except Exception:
+            pass
+    elif isinstance(n, int) and n > 0:
+        return n
+    return fallback
 
 # --- Real-Time Neural Execution Pipeline (n8n-style Workflow Visualizer) ---
 latest_pipeline_trace = {
@@ -849,6 +865,70 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         else:
             msgs.append({"role": "user", "content": user_input})
 
+        # -------------------------------------------------------------
+        # SMART TOKEN BUDGET GUARD & ADAPTIVE TRUNCATOR
+        # Menjamin prompt + output tokens selalu muat dalam context window model
+        # -------------------------------------------------------------
+        from shiro.memory.optimization import calculate_messages_tokens, trim_text_to_token_budget
+        
+        active_ctx = get_active_model_ctx(llm, CONTEXT_SIZE)
+        max_output_tokens = 450
+        safety_headroom = 150
+        max_allowed_prompt = max(1000, active_ctx - max_output_tokens - safety_headroom)
+        
+        user_turn_msg = msgs[-1]
+        current_prompt_tokens = calculate_messages_tokens(msgs, llm)
+        if current_prompt_tokens > max_allowed_prompt:
+            print(f"⚠️ [Token Budget Guard] Total token ({current_prompt_tokens}) melebihi batas aman ({max_allowed_prompt}/{active_ctx}). Melakukan adaptasi cerdas...")
+            
+            # 1. Pangkas riwayat percakapan lama terlebih dahulu (prioritas utama adalah dokumen & input Kakak)
+            while clean_context and calculate_messages_tokens([{"role": "system", "content": system_prompt}] + clean_context + [user_turn_msg], llm) > max_allowed_prompt:
+                clean_context.pop(0)
+
+            # 2. Jika masih melebihi batas dan terdapat lampiran dokumen
+            if has_doc and document_info and calculate_messages_tokens([{"role": "system", "content": system_prompt}] + clean_context + [user_turn_msg], llm) > max_allowed_prompt:
+                base_system = build_system_prompt(
+                    home_location=memory.world.get('locations', {}).get('home', 'Pondok Kayu'),
+                    conversation_summary=conversation_summary,
+                    facts_summary=facts_summary,
+                    exemplar_prompt=exemplar_prompt,
+                    web_prompt_addon=web_prompt_addon,
+                    typo_prompt_addon=typo_prompt_addon,
+                    document_prompt_addon="",
+                    cross_session_addon=cross_session_addon
+                )
+                used_tokens = calculate_messages_tokens([{"role": "system", "content": base_system}] + clean_context + [user_turn_msg], llm)
+                remaining_doc_tokens = max(300, max_allowed_prompt - used_tokens - 100)
+                
+                doc_full_text = document_info.get("text", "")
+                trimmed_text = trim_text_to_token_budget(
+                    doc_full_text,
+                    remaining_doc_tokens,
+                    suffix="\n\n... [Sisa teks dokumen dipotong otomatis agar pas dengan kapasitas memori AI] ..."
+                )
+                if len(trimmed_text) < len(doc_full_text):
+                    print(f"✂️ [Adaptive Truncator] Memangkas teks dokumen dari {len(doc_full_text)} -> {len(trimmed_text)} karakter (~{remaining_doc_tokens} tokens).")
+                    trimmed_doc_info = dict(document_info)
+                    trimmed_doc_info["text"] = trimmed_text
+                    doc_prompt_addon = build_document_prompt(trimmed_doc_info, user_input)
+                    system_prompt = build_system_prompt(
+                        home_location=memory.world.get('locations', {}).get('home', 'Pondok Kayu'),
+                        conversation_summary=conversation_summary,
+                        facts_summary=facts_summary,
+                        exemplar_prompt=exemplar_prompt,
+                        web_prompt_addon=web_prompt_addon,
+                        typo_prompt_addon=typo_prompt_addon,
+                        document_prompt_addon=doc_prompt_addon,
+                        cross_session_addon=cross_session_addon
+                    )
+
+            # Susun ulang daftar pesan akhir
+            msgs = [{"role": "system", "content": system_prompt}]
+            msgs.extend(clean_context)
+            msgs.append(user_turn_msg)
+            final_tokens = calculate_messages_tokens(msgs, llm)
+            print(f"✓ [Token Budget Guard] Prompt siap: {final_tokens} tokens (Batas Aman: {max_allowed_prompt}/{active_ctx})")
+
         t_prompt_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
             "id": "node_prompt",
@@ -888,10 +968,27 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
                      "<|end|>", "<|end_of_text|>", "Okay, let me", "The user is"]
         }
 
-        res = llm.create_chat_completion(
-            messages=msgs,
-            **gen_params
-        )
+        try:
+            res = llm.create_chat_completion(
+                messages=msgs,
+                **gen_params
+            )
+        except Exception as inf_err:
+            err_str = str(inf_err).lower()
+            if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
+                print(f"⚠️ [Context Guard] Exception exceed context window tertangkap: {inf_err}. Menjalankan pemangkasan darurat...")
+                emergency_msgs = [{"role": "system", "content": system_prompt[:1200] + "\n[Catatan: Dokumen sangat panjang, jawab inti pertanyaan Kakak secara padat.]"}]
+                if has_doc and document_info:
+                    doc_snip = document_info.get("text", "")[:2500]
+                    emergency_msgs.append({"role": "user", "content": f"[Dokumen {doc_name}]:\n{doc_snip}\n\n{user_input}"})
+                else:
+                    emergency_msgs.append(user_turn_msg)
+                res = llm.create_chat_completion(
+                    messages=emergency_msgs,
+                    **gen_params
+                )
+            else:
+                raise inf_err
 
         raw_reply = res['choices'][0]['message']['content'].strip()
         t_llm_dur = (time.perf_counter() - t0) * 1000

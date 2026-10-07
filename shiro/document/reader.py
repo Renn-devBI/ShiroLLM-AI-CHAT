@@ -18,11 +18,14 @@ SUPPORTED_EXTENSIONS = {
     ".ini", ".cfg", ".sql", ".js", ".css", ".tsv"
 }
 
-def extract_text_from_file(file_path: str, filename: Optional[str] = None, max_chars: int = 15000) -> Dict[str, Any]:
+def extract_text_from_file(file_path: str, filename: Optional[str] = None, max_chars: Optional[int] = None) -> Dict[str, Any]:
     """
     Extract readable text from a supported document file.
     Truncates gracefully if content exceeds max_chars to preserve LLM context budget.
     """
+    if max_chars is None:
+        max_chars = int(os.environ.get("SHIRO_MAX_DOC_CHARS", "12000"))
+
     if not filename:
         filename = os.path.basename(file_path)
 

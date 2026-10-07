@@ -84,7 +84,7 @@ def compress_old_messages(memory, keep_count=15):
     print(f"[Memory] Now storing {len(memory.short_term_history)} recent messages")
 
 
-def diagnose_memory_status(memory, context_window=4096):
+def diagnose_memory_status(memory, context_window=8192):
     """
     Diagnose current memory usage and hallucination risk
     
@@ -126,12 +126,12 @@ def diagnose_memory_status(memory, context_window=4096):
     }
 
 
-def calculate_token_budget(context_window=4096, max_response=800, system_overhead=250):
+def calculate_token_budget(context_window=8192, max_response=800, system_overhead=250):
     """
     Calculate available token budget for conversation history and memory facts.
     
     Args:
-        context_window: Total context window size (default: 4096)
+        context_window: Total context window size (default: 8192)
         max_response: Allocated tokens for model generation (default: 800)
         system_overhead: Approximate tokens for system prompt and instructions (default: 250)
         
@@ -139,6 +139,80 @@ def calculate_token_budget(context_window=4096, max_response=800, system_overhea
         Available token budget
     """
     return max(500, context_window - max_response - system_overhead)
+
+
+def estimate_tokens(text: str) -> int:
+    """
+    Estimate token count for Indonesian & English text.
+    Conservative: ~3 characters per token to ensure safety against context overflow.
+    """
+    if not text:
+        return 0
+    return int(len(text) / 3.0) + 2
+
+
+def calculate_messages_tokens(messages, model=None) -> int:
+    """
+    Calculate total tokens used by a list of chat completion messages.
+    Uses model.tokenize if available, otherwise falls back to estimate_tokens.
+    """
+    total = 0
+    for m in messages:
+        c = m.get("content", "")
+        if isinstance(c, str):
+            if model is not None and hasattr(model, "tokenize"):
+                try:
+                    total += len(model.tokenize(c.encode("utf-8", errors="ignore"))) + 4
+                    continue
+                except Exception:
+                    pass
+            total += estimate_tokens(c) + 4
+        elif isinstance(c, list):
+            for part in c:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        txt = part.get("text", "")
+                        if model is not None and hasattr(model, "tokenize"):
+                            try:
+                                total += len(model.tokenize(txt.encode("utf-8", errors="ignore"))) + 4
+                                continue
+                            except Exception:
+                                pass
+                        total += estimate_tokens(txt) + 4
+                    elif part.get("type") == "image_url":
+                        total += 576  # Standard vision patch tokens
+    return total
+
+
+def trim_text_to_token_budget(text: str, max_tokens: int, suffix: str = "\n\n... [Teks dipotong agar pas dalam batas memori AI] ...") -> str:
+    """
+    Trim long text to fit within a specific token budget cleanly.
+    """
+    if not text or max_tokens <= 0:
+        return ""
+    
+    current_tokens = estimate_tokens(text)
+    if current_tokens <= max_tokens:
+        return text
+    
+    suffix_tokens = estimate_tokens(suffix)
+    allowed_content_tokens = max(50, max_tokens - suffix_tokens)
+    max_chars = int(allowed_content_tokens * 3.0)
+    
+    if len(text) <= max_chars:
+        return text
+    
+    truncated = text[:max_chars]
+    # Try to break cleanly at paragraph or newline boundary
+    last_newline = truncated.rfind("\n")
+    if last_newline > int(max_chars * 0.75):
+        truncated = truncated[:last_newline]
+    else:
+        last_space = truncated.rfind(" ")
+        if last_space > int(max_chars * 0.85):
+            truncated = truncated[:last_space]
+            
+    return truncated + suffix
 
 
 # Usage Examples:

@@ -8,6 +8,11 @@ from shiro.document.reader import (
     build_document_prompt,
     SUPPORTED_EXTENSIONS
 )
+from shiro.memory.optimization import (
+    estimate_tokens,
+    calculate_messages_tokens,
+    trim_text_to_token_budget
+)
 
 class TestDocumentReader(unittest.TestCase):
     def setUp(self):
@@ -73,6 +78,39 @@ class TestDocumentReader(unittest.TestCase):
         self.assertEqual(res["file_count"], 2)
         self.assertIn("Dokumen pertama", res["text"])
         self.assertIn("Dokumen Kedua", res["text"])
+
+    def test_document_max_chars_truncation(self):
+        sample_path = os.path.join(self.temp_dir.name, "long_doc.txt")
+        long_text = "Kata ini berulang. " * 500  # ~9500 chars
+        with open(sample_path, "w", encoding="utf-8") as f:
+            f.write(long_text)
+
+        res = extract_text_from_file(sample_path, max_chars=1000)
+        self.assertTrue(res["success"])
+        self.assertTrue(res["truncated"])
+        self.assertTrue(len(res["text"]) < 1200)
+        self.assertIn("dipotong", res["text"])
+
+    def test_token_estimation_and_budget_trimming(self):
+        sample_text = "Shiro adalah adik yang cerdas dan setia menemani Kakak bermain game di akhir pekan."
+        tokens = estimate_tokens(sample_text)
+        self.assertGreater(tokens, 10)
+        self.assertLess(tokens, 100)
+
+        very_long_text = "Ini adalah paragraf cerita yang panjang sekali untuk pengujian memori AI. " * 100
+        trimmed = trim_text_to_token_budget(very_long_text, max_tokens=150)
+        self.assertLess(estimate_tokens(trimmed), 170)
+        self.assertIn("dipotong", trimmed)
+
+    def test_calculate_messages_tokens(self):
+        msgs = [
+            {"role": "system", "content": "Kamu adalah Shiro."},
+            {"role": "user", "content": "Halo Shiro!"},
+            {"role": "assistant", "content": "Halo juga Kakak tersayang!"}
+        ]
+        total_tokens = calculate_messages_tokens(msgs)
+        self.assertGreater(total_tokens, 15)
+        self.assertLess(total_tokens, 100)
 
 if __name__ == '__main__':
     unittest.main()
