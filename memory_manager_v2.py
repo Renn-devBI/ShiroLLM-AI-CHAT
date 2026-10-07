@@ -154,7 +154,14 @@ class AdvancedMemoryManager:
                     else:
                         self.episodic_memory = self.episodic_memory
                     
-                    self.learned_patterns = data.get("learned_patterns", getattr(self, "learned_patterns", []))
+                    loaded_patterns = data.get("learned_patterns", getattr(self, "learned_patterns", []))
+                    clean_patterns = []
+                    for p in loaded_patterns:
+                        a_txt = p.get("assistant", "").lower()
+                        if "<think>" in a_txt or "</think>" in a_txt or "let me break this down" in a_txt or "possible responses" in a_txt:
+                            continue
+                        clean_patterns.append(p)
+                    self.learned_patterns = clean_patterns
                     self.short_term_history = data.get("short_term_history", [])
                 else:
                     # v1 format - migrate
@@ -730,6 +737,12 @@ class AdvancedMemoryManager:
             if "error" in a_clean.lower() or "tidak mengerti" in a_clean.lower() or "shiro pusing" in a_clean.lower():
                 return
             
+            # Don't learn reasoning/think tags or English reasoning leakage
+            if "<think>" in a_clean.lower() or "</think>" in a_clean.lower():
+                return
+            if any(k in a_clean.lower() for k in ["let me break this down", "the user is", "possible responses", "let's craft", "character traits"]):
+                return
+            
             keywords = list(set(re.findall(r'\b\w{3,}\b', u_clean.lower())))
             
             pattern = {
@@ -763,10 +776,20 @@ class AdvancedMemoryManager:
             if not getattr(self, "learned_patterns", None):
                 return []
             
+            # Pastikan hanya pattern yang bersih tanpa reasoning/CoT yang dijadikan contoh
+            clean_candidates = [
+                p for p in self.learned_patterns
+                if "<think>" not in p.get("assistant", "")
+                and "let me break this down" not in p.get("assistant", "").lower()
+                and not any(x in p.get("assistant", "").lower() for x in ["possible responses", "let's craft", "the user is"])
+            ]
+            if not clean_candidates:
+                return []
+            
             q_words = set(re.findall(r'\b\w{3,}\b', query.lower()))
             scored = []
             
-            for p in self.learned_patterns:
+            for p in clean_candidates:
                 p_words = set(p.get("keywords", []))
                 overlap = len(q_words.intersection(p_words))
                 score = overlap * p.get("quality", 1.0)

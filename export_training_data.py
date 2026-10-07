@@ -36,7 +36,15 @@ def export_data(memory_path="ingatan_shiro.json", base_output_dir="training_data
     vision_pairs = []
 
     def is_valid_response(a):
-        return a and not a.startswith("*bingung*") and "error" not in a.lower()
+        if not a or len(a.strip()) < 5:
+            return False
+        if a.startswith("*bingung*") or "error" in a.lower():
+            return False
+        if "<think>" in a.lower() or "</think>" in a.lower():
+            return False
+        if any(k in a.lower() for k in ["let me break this down", "the user is", "possible responses", "let's craft"]):
+            return False
+        return True
 
     # 1. Ekstrak dari learned_patterns
     patterns = data.get("learned_patterns", [])
