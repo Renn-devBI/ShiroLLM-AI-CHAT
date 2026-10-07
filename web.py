@@ -1231,10 +1231,21 @@ def pipeline_events():
 
     return Response(event_stream(), mimetype="text/event-stream")
 
+def _format_message_for_api(msg):
+    """Format single message dictionary to ensure valid URLs for frontend viewing"""
+    m = dict(msg)
+    img = m.get("image")
+    if img and not img.startswith("data:") and not img.startswith("http://") and not img.startswith("https://") and not img.startswith("/"):
+        m["image"] = "/" + img
+    doc = m.get("document_name")
+    if doc and not m.get("document_url"):
+        m["document_url"] = f"/api/files/{doc}"
+    return m
+
 @app.route('/api/history', methods=['GET'])
 def get_history():
     return jsonify({
-        "history": memory.short_term_history,
+        "history": [_format_message_for_api(m) for m in memory.short_term_history],
         "count": len(memory.short_term_history),
         "metadata": memory.system_metadata,
         "user_profile": memory.user_profile,
@@ -1359,13 +1370,26 @@ def chat():
             # Detect emotion dari user message
             user_emotion = ResponseGenerator.detect_emotion_category(user_message)
             
-            # Add user message to memory
+            # Add user message to memory with document and image metadata
             log_msg = user_message
             if image_base64:
                 log_msg = f"[Gambar/Kamera Dikirim] {user_message}"
             elif document_name:
                 log_msg = f"[Dokumen: {document_name}] {user_message}"
-            memory.add_message("user", log_msg, image_path=saved_img_rel)
+
+            img_url = f"/{saved_img_rel}" if saved_img_rel else None
+            doc_url = f"/api/files/{document_name}" if document_name else None
+            doc_type = os.path.splitext(document_name)[1].lower().replace(".", "") if document_name else None
+
+            memory.add_message(
+                "user", 
+                log_msg, 
+                image_path=img_url,
+                document_name=document_name,
+                document_url=doc_url,
+                document_type=doc_type,
+                document_text=document_text
+            )
             
             # Generate reply
             reply, trace = get_shiro_reply(
@@ -1398,7 +1422,11 @@ def chat():
                 "mood": memory.agent_persona.get("current_mood", "Neutral"),
                 "topics": memory.system_metadata.get("topics_discussed", []),
                 "has_image": bool(image_base64),
+                "image_url": img_url,
                 "has_document": bool(document_info),
+                "document_name": document_name,
+                "document_url": doc_url,
+                "document_type": doc_type,
                 "active_session_id": getattr(memory, "active_session_id", "default"),
                 "pipeline_trace": trace
             })
@@ -1443,10 +1471,56 @@ def upload_document():
 
         preview = res["text"][:200] + ("..." if len(res["text"]) > 200 else "")
         res["preview"] = preview
+        res["url"] = f"/api/files/{f.filename}"
+        res["filename"] = f.filename
         return jsonify(res)
     except Exception as e:
         print(f"Error in upload_document: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/files/<path:filename>', methods=['GET'])
+def get_uploaded_file(filename):
+    """Serve uploaded document or file from data/uploads/"""
+    upload_dir = os.path.abspath(os.path.join("data", "uploads"))
+    target = os.path.abspath(os.path.join(upload_dir, filename))
+    if not target.startswith(upload_dir) or not os.path.exists(target):
+        return jsonify({"error": "File tidak ditemukan"}), 404
+    
+    as_attachment = request.args.get('download', '0') == '1'
+    return send_file(target, as_attachment=as_attachment)
+
+@app.route('/api/document/preview', methods=['GET'])
+def preview_document():
+    """Retrieve extracted text and metadata of an uploaded document"""
+    filename = request.args.get('filename')
+    if not filename:
+        return jsonify({"success": False, "error": "Parameter filename wajib diisi"}), 400
+    
+    upload_dir = os.path.abspath(os.path.join("data", "uploads"))
+    target = os.path.abspath(os.path.join(upload_dir, filename))
+    if not target.startswith(upload_dir) or not os.path.exists(target):
+        return jsonify({"success": False, "error": "File tidak ditemukan"}), 404
+
+    from shiro.document import extract_text_from_file
+    res = extract_text_from_file(target, filename=filename)
+    res["url"] = f"/api/files/{filename}"
+    return jsonify(res)
+
+@app.route('/api/images/<path:filename>', methods=['GET'])
+@app.route('/images/<path:filename>', methods=['GET'])
+def get_uploaded_image(filename):
+    """Serve image from training_data/vision/images/ or data/uploads/"""
+    v_dir = os.path.abspath(os.path.join("training_data", "vision", "images"))
+    target_v = os.path.abspath(os.path.join(v_dir, filename))
+    if target_v.startswith(v_dir) and os.path.exists(target_v):
+        return send_file(target_v)
+    
+    u_dir = os.path.abspath(os.path.join("data", "uploads"))
+    target_u = os.path.abspath(os.path.join(u_dir, filename))
+    if target_u.startswith(u_dir) and os.path.exists(target_u):
+        return send_file(target_u)
+        
+    return jsonify({"error": "Gambar tidak ditemukan"}), 404
 
 @app.route('/api/sessions', methods=['GET'])
 def list_sessions():
@@ -1457,7 +1531,7 @@ def list_sessions():
             return jsonify({
                 "sessions": memory.get_sessions_list(),
                 "active_session_id": getattr(memory, "active_session_id", "default"),
-                "messages": memory.short_term_history
+                "messages": [_format_message_for_api(m) for m in memory.short_term_history]
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1497,7 +1571,7 @@ def switch_session():
             return jsonify({
                 "success": True,
                 "active_session_id": session_id,
-                "messages": memory.short_term_history,
+                "messages": [_format_message_for_api(m) for m in memory.short_term_history],
                 "sessions": memory.get_sessions_list()
             })
     except Exception as e:
@@ -1513,7 +1587,7 @@ def delete_session(session_id):
             return jsonify({
                 "success": ok,
                 "active_session_id": memory.active_session_id,
-                "messages": memory.short_term_history,
+                "messages": [_format_message_for_api(m) for m in memory.short_term_history],
                 "sessions": memory.get_sessions_list()
             })
     except Exception as e:

@@ -327,6 +327,72 @@
                     <button type="button" onclick="switchModel()" class="btn-primary">Terapkan Pergantian Model</button>
                 </div>
             </div>
+    </div>
+
+    <!-- Image Lightbox Modal -->
+    <div id="image-lightbox-modal" class="image-lightbox-backdrop hidden" onclick="handleLightboxBackdropClick(event)">
+        <div class="lightbox-container" onclick="event.stopPropagation()">
+            <div class="lightbox-toolbar">
+                <div class="lightbox-title-wrap">
+                    <i class="ph ph-image"></i>
+                    <span id="lightbox-title">Pratinjau Gambar</span>
+                </div>
+                <div class="lightbox-actions">
+                    <a id="lightbox-open-newtab" href="#" target="_blank" class="btn-icon" title="Buka Gambar Asli di Tab Baru">
+                        <i class="ph ph-arrow-square-out"></i>
+                    </a>
+                    <a id="lightbox-download-btn" href="#" download class="btn-icon" title="Unduh Gambar">
+                        <i class="ph ph-download-simple"></i>
+                    </a>
+                    <button id="close-lightbox-btn" class="btn-icon lightbox-close-btn" type="button" onclick="closeImageLightbox()" title="Tutup (Esc)">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="lightbox-content-box">
+                <img id="lightbox-img" src="" alt="Pratinjau Gambar">
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Viewer Modal -->
+    <div id="doc-viewer-modal" class="modal-backdrop hidden" onclick="handleDocModalBackdropClick(event)">
+        <div class="modal-dialog doc-dialog" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="doc-modal-title">
+                    <div class="doc-icon-badge" id="doc-modal-icon-badge">
+                        <i id="doc-modal-icon" class="ph ph-file-text"></i>
+                    </div>
+                    <div class="doc-modal-header-meta">
+                        <h2 id="doc-modal-filename">document.pdf</h2>
+                        <span id="doc-modal-sub" class="pipeline-modal-sub">Pratinjau Dokumen Lampiran</span>
+                    </div>
+                </div>
+                <div class="pipeline-modal-actions">
+                    <button type="button" class="btn-secondary btn-sm" id="doc-modal-copy-btn" onclick="copyDocModalContent()" title="Salin Teks Dokumen">
+                        <i class="ph ph-copy"></i> Salin Teks
+                    </button>
+                    <a id="doc-modal-download-link" href="#" target="_blank" class="btn-secondary btn-sm" title="Buka Berkas Asli di Tab Baru">
+                        <i class="ph ph-arrow-square-out"></i> Buka Asli
+                    </a>
+                    <button id="close-doc-modal" class="btn-icon" type="button" onclick="closeDocModal()" title="Tutup (Esc)">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tab Switcher for PDF/Docs (Frame View vs Extracted Text) -->
+            <div class="modal-tabs" id="doc-modal-tabs">
+                <button class="tab-btn active" id="tab-btn-doc-frame" type="button" onclick="switchDocViewMode('frame')">Tampilan Dokumen</button>
+                <button class="tab-btn" id="tab-btn-doc-text" type="button" onclick="switchDocViewMode('text')">Teks Ekstraksi</button>
+            </div>
+
+            <div class="doc-modal-body">
+                <iframe id="doc-modal-iframe" class="doc-iframe" src="" frameborder="0"></iframe>
+                <div id="doc-modal-text-wrapper" class="doc-text-wrapper hidden">
+                    <pre><code id="doc-modal-text-display">// Memuat isi teks dokumen...</code></pre>
+                </div>
+            </div>
         </div>
     </div>
 

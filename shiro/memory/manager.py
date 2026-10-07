@@ -554,7 +554,17 @@ class AdvancedMemoryManager:
         
         return facts
     
-    def add_message(self, role: str, content: str, emotion: str = "neutral", image_path: Optional[str] = None):
+    def add_message(
+        self, 
+        role: str, 
+        content: str, 
+        emotion: str = "neutral", 
+        image_path: Optional[str] = None,
+        document_name: Optional[str] = None,
+        document_url: Optional[str] = None,
+        document_type: Optional[str] = None,
+        document_text: Optional[str] = None
+    ):
         """Add message to short-term history and self-learn from conversation & response"""
         with self.lock:
             message = {
@@ -566,6 +576,14 @@ class AdvancedMemoryManager:
             }
             if image_path:
                 message["image"] = image_path
+            if document_name:
+                message["document_name"] = document_name
+            if document_url:
+                message["document_url"] = document_url
+            if document_type:
+                message["document_type"] = document_type
+            if document_text:
+                message["document_text"] = document_text[:5000]
             
             if role == "assistant":
                 message["actions"] = self._extract_actions(content)

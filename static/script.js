@@ -96,7 +96,7 @@ function parseMessageContent(text) {
 let attachedImage = null; // { dataUrl: string, name: string }
 
 // Add message ke chat dengan Avatar, Dokumen & Visual Attachment
-function addMessage(role, content, imageUrl = null, docName = null) {
+function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
     
@@ -129,10 +129,67 @@ function addMessage(role, content, imageUrl = null, docName = null) {
     
     let attachmentHTML = '';
     if (docName) {
-        attachmentHTML += `<div class="doc-badge-pill"><i class="ph ph-file-text"></i> ${docName}</div>`;
+        const ext = (docName.split('.').pop() || '').toLowerCase();
+        let iconClass = 'ph-file-text';
+        let badgeColor = 'badge-txt';
+        let typeLabel = (docType || ext).toUpperCase() || 'DOC';
+        
+        if (ext === 'pdf') {
+            iconClass = 'ph-file-pdf';
+            badgeColor = 'badge-pdf';
+            typeLabel = 'PDF';
+        } else if (['doc', 'docx'].includes(ext)) {
+            iconClass = 'ph-file-doc';
+            badgeColor = 'badge-doc';
+            typeLabel = 'WORD';
+        } else if (['csv', 'tsv'].includes(ext)) {
+            iconClass = 'ph-file-csv';
+            badgeColor = 'badge-csv';
+            typeLabel = 'CSV';
+        } else if (['py', 'js', 'json', 'html', 'css', 'sql', 'xml'].includes(ext)) {
+            iconClass = 'ph-file-code';
+            badgeColor = 'badge-code';
+            typeLabel = ext.toUpperCase();
+        }
+
+        const safeFilename = (docName || 'document').replace(/"/g, '&quot;');
+        const safeDocUrl = docUrl || `/api/files/${encodeURIComponent(docName)}`;
+        const jsFilename = (docName || 'document').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const jsUrl = safeDocUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const jsType = ext.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+        attachmentHTML += `
+            <div class="chat-doc-card ${badgeColor}" onclick="openDocModal('${jsFilename}', '${jsUrl}', '${jsType}')" title="Klik untuk membuka dokumen ${safeFilename}">
+                <div class="chat-doc-icon">
+                    <i class="ph ${iconClass}"></i>
+                    <span class="chat-doc-type">${typeLabel}</span>
+                </div>
+                <div class="chat-doc-info">
+                    <div class="chat-doc-name" title="${safeFilename}">${safeFilename}</div>
+                    <div class="chat-doc-meta">
+                        <span>Dokumen Lampiran</span>
+                        <span class="chat-doc-dot">•</span>
+                        <span class="chat-doc-action"><i class="ph ph-eye"></i> Klik untuk Melihat</span>
+                    </div>
+                </div>
+                <button type="button" class="chat-doc-open-btn" onclick="event.stopPropagation(); window.open('${jsUrl}', '_blank')" title="Buka File Asli di Tab Baru">
+                    <i class="ph ph-arrow-square-out"></i>
+                </button>
+            </div>
+        `;
     }
+
     if (imageUrl) {
-        attachmentHTML += `<img src="${imageUrl}" class="chat-img-attachment" alt="Foto Visual">`;
+        const jsImgUrl = imageUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        attachmentHTML += `
+            <div class="chat-img-wrapper" onclick="openImageLightbox('${jsImgUrl}', 'Foto Lampiran Chat')" title="Klik untuk memperbesar gambar">
+                <img src="${imageUrl}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">
+                <div class="chat-img-overlay">
+                    <i class="ph ph-arrows-out-simple"></i>
+                    <span>Perbesar</span>
+                </div>
+            </div>
+        `;
     }
 
     // Render HTML Message (tanpa spasi/newline berlebih di dalam bubble)
@@ -226,7 +283,15 @@ async function sendMessage() {
         }
     }
     
-    addMessage('user', displayMsg, currentImgUrl, sendingDoc ? sendingDoc.filename : null);
+    addMessage(
+        'user', 
+        displayMsg, 
+        currentImgUrl, 
+        sendingDoc ? sendingDoc.filename : null,
+        sendingDoc ? sendingDoc.url : null,
+        sendingDoc ? sendingDoc.file_type : null,
+        sendingDoc ? sendingDoc.text : null
+    );
     
     status.textContent = 'Shiro sedang berpikir...';
     showTyping(true);
@@ -364,7 +429,15 @@ async function loadChatHistory() {
         
         // Render History
         data.history.forEach(msg => {
-            addMessage(msg.role, msg.content);
+            addMessage(
+                msg.role, 
+                msg.content, 
+                msg.image || null, 
+                msg.document_name || null,
+                msg.document_url || null,
+                msg.document_type || null,
+                msg.document_text || null
+            );
         });
         
         updateMemoryCount();
@@ -456,7 +529,15 @@ async function switchSession(sessionId) {
             `;
             if (data.messages && data.messages.length > 0) {
                 data.messages.forEach(msg => {
-                    addMessage(msg.role, msg.content);
+                    addMessage(
+                        msg.role, 
+                        msg.content, 
+                        msg.image || null, 
+                        msg.document_name || null,
+                        msg.document_url || null,
+                        msg.document_type || null,
+                        msg.document_text || null
+                    );
                 });
             }
             updateMemoryCount();
@@ -495,7 +576,15 @@ async function deleteCurrentSession() {
             `;
             if (data.messages && data.messages.length > 0) {
                 data.messages.forEach(msg => {
-                    addMessage(msg.role, msg.content);
+                    addMessage(
+                        msg.role, 
+                        msg.content, 
+                        msg.image || null, 
+                        msg.document_name || null,
+                        msg.document_url || null,
+                        msg.document_type || null,
+                        msg.document_text || null
+                    );
                 });
             }
             await loadSessions();
@@ -850,7 +939,8 @@ async function uploadDocumentFile(file) {
                 text: data.text,
                 filename: data.filename,
                 file_type: data.file_type,
-                char_count: data.char_count
+                char_count: data.char_count,
+                url: data.url
             });
             status.textContent = 'Dokumen siap';
         } else {
@@ -1361,6 +1451,220 @@ if (closePipelineModalBtn) closePipelineModalBtn.addEventListener('click', close
 if (pipelineModal) {
     pipelineModal.addEventListener('click', (e) => {
         if (e.target === pipelineModal) closePipelineModal();
+    });
+}
+
+// --- Image Lightbox Modal Controller ---
+const imageLightboxModal = document.getElementById('image-lightbox-modal');
+const lightboxImg = document.getElementById('lightbox-img');
+const lightboxTitle = document.getElementById('lightbox-title');
+const lightboxOpenNewtab = document.getElementById('lightbox-open-newtab');
+const lightboxDownloadBtn = document.getElementById('lightbox-download-btn');
+const closeLightboxBtn = document.getElementById('close-lightbox-btn');
+
+function openImageLightbox(src, title = 'Pratinjau Gambar') {
+    if (!imageLightboxModal || !lightboxImg) return;
+    lightboxImg.src = src;
+    if (lightboxTitle) lightboxTitle.textContent = title;
+    if (lightboxOpenNewtab) lightboxOpenNewtab.href = src;
+    if (lightboxDownloadBtn) {
+        lightboxDownloadBtn.href = src;
+        lightboxDownloadBtn.download = `shiro_img_${Date.now()}.jpg`;
+    }
+    imageLightboxModal.classList.remove('hidden');
+}
+
+function closeImageLightbox() {
+    if (!imageLightboxModal) return;
+    imageLightboxModal.classList.add('hidden');
+    if (lightboxImg) lightboxImg.src = '';
+}
+
+function handleLightboxBackdropClick(e) {
+    if (e.target === imageLightboxModal) {
+        closeImageLightbox();
+    }
+}
+
+if (closeLightboxBtn) closeLightboxBtn.addEventListener('click', closeImageLightbox);
+
+// --- Document Viewer Modal Controller ---
+const docViewerModal = document.getElementById('doc-viewer-modal');
+const docModalFilename = document.getElementById('doc-modal-filename');
+const docModalSub = document.getElementById('doc-modal-sub');
+const docModalIconBadge = document.getElementById('doc-modal-icon-badge');
+const docModalIcon = document.getElementById('doc-modal-icon');
+const docModalDownloadLink = document.getElementById('doc-modal-download-link');
+const docModalTabs = document.getElementById('doc-modal-tabs');
+const tabBtnDocFrame = document.getElementById('tab-btn-doc-frame');
+const tabBtnDocText = document.getElementById('tab-btn-doc-text');
+const docModalIframe = document.getElementById('doc-modal-iframe');
+const docModalTextWrapper = document.getElementById('doc-modal-text-wrapper');
+const docModalTextDisplay = document.getElementById('doc-modal-text-display');
+const closeDocModalBtn = document.getElementById('close-doc-modal');
+
+let currentDocModalContent = "";
+let currentDocViewMode = "frame";
+
+async function openDocModal(filename, url, ext = "") {
+    if (!docViewerModal) return;
+
+    if (!ext) {
+        ext = (filename.split('.').pop() || '').toLowerCase();
+    }
+
+    if (docModalFilename) docModalFilename.textContent = filename;
+    if (docModalSub) docModalSub.textContent = `Pratinjau Berkas (${ext.toUpperCase()})`;
+    
+    const fileUrl = url || `/api/files/${encodeURIComponent(filename)}`;
+    if (docModalDownloadLink) {
+        docModalDownloadLink.href = fileUrl;
+    }
+
+    if (docModalIcon) {
+        if (ext === 'pdf') {
+            docModalIcon.className = 'ph ph-file-pdf';
+        } else if (['doc', 'docx'].includes(ext)) {
+            docModalIcon.className = 'ph ph-file-doc';
+        } else if (['csv', 'tsv'].includes(ext)) {
+            docModalIcon.className = 'ph ph-file-csv';
+        } else if (['py', 'js', 'json', 'html', 'css', 'sql'].includes(ext)) {
+            docModalIcon.className = 'ph ph-file-code';
+        } else {
+            docModalIcon.className = 'ph ph-file-text';
+        }
+    }
+
+    const isPdf = ext === 'pdf';
+
+    if (docModalIframe) {
+        if (isPdf) {
+            docModalIframe.src = fileUrl;
+            docModalIframe.classList.remove('hidden');
+        } else {
+            docModalIframe.src = '';
+            docModalIframe.classList.add('hidden');
+        }
+    }
+
+    if (isPdf) {
+        if (docModalTabs) docModalTabs.style.display = 'flex';
+        switchDocViewMode('frame');
+    } else {
+        if (docModalTabs) docModalTabs.style.display = 'none';
+        switchDocViewMode('text');
+    }
+
+    if (docModalTextDisplay) {
+        docModalTextDisplay.textContent = "Sedang membaca isi berkas...";
+    }
+    
+    try {
+        const res = await fetch(`/api/document/preview?filename=${encodeURIComponent(filename)}`);
+        if (res.ok) {
+            const data = await res.json();
+            currentDocModalContent = data.text || "// Dokumen kosong atau tidak memiliki teks yang dapat diekstrak.";
+            if (docModalTextDisplay) {
+                docModalTextDisplay.textContent = currentDocModalContent;
+            }
+            if (docModalSub) {
+                const chars = data.char_count || currentDocModalContent.length;
+                docModalSub.textContent = `${ext.toUpperCase()} • ${chars.toLocaleString()} karakter • ${data.page_count ? data.page_count + ' halaman' : 'Teks terurai'}`;
+            }
+        } else {
+            if (docModalTextDisplay) {
+                docModalTextDisplay.textContent = `Dokumen '${filename}' siap diunduh atau dibuka langsung.\nKlik 'Buka Asli' untuk membuka file lengkap.`;
+            }
+        }
+    } catch (err) {
+        if (docModalTextDisplay) {
+            docModalTextDisplay.textContent = `Gagal memuat teks: ${err.message || 'Error koneksi'}`;
+        }
+    }
+
+    docViewerModal.classList.remove('hidden');
+}
+
+function closeDocModal() {
+    if (!docViewerModal) return;
+    docViewerModal.classList.add('hidden');
+    if (docModalIframe) docModalIframe.src = '';
+    currentDocModalContent = "";
+}
+
+function handleDocModalBackdropClick(e) {
+    if (e.target === docViewerModal) {
+        closeDocModal();
+    }
+}
+
+function switchDocViewMode(mode) {
+    currentDocViewMode = mode;
+    if (tabBtnDocFrame) tabBtnDocFrame.classList.toggle('active', mode === 'frame');
+    if (tabBtnDocText) tabBtnDocText.classList.toggle('active', mode === 'text');
+
+    if (mode === 'frame') {
+        if (docModalIframe) docModalIframe.classList.remove('hidden');
+        if (docModalTextWrapper) docModalTextWrapper.classList.add('hidden');
+    } else {
+        if (docModalIframe) docModalIframe.classList.add('hidden');
+        if (docModalTextWrapper) docModalTextWrapper.classList.remove('hidden');
+    }
+}
+
+async function copyDocModalContent() {
+    if (!currentDocModalContent) return;
+    try {
+        await navigator.clipboard.writeText(currentDocModalContent);
+        const copyBtn = document.getElementById('doc-modal-copy-btn');
+        if (copyBtn) {
+            const oldHtml = copyBtn.innerHTML;
+            copyBtn.innerHTML = '<i class="ph ph-check"></i> Tersalin!';
+            setTimeout(() => { copyBtn.innerHTML = oldHtml; }, 2000);
+        }
+    } catch (err) {
+        console.error("Gagal menyalin teks:", err);
+    }
+}
+
+if (closeDocModalBtn) closeDocModalBtn.addEventListener('click', closeDocModal);
+
+// Global Keyboard Shortcuts (Escape to close any open modal)
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (imageLightboxModal && !imageLightboxModal.classList.contains('hidden')) {
+            closeImageLightbox();
+        } else if (docViewerModal && !docViewerModal.classList.contains('hidden')) {
+            closeDocModal();
+        } else if (pipelineModal && !pipelineModal.classList.contains('hidden')) {
+            closePipelineModal();
+        } else if (settingsModal && !settingsModal.classList.contains('hidden')) {
+            closeSettings();
+        }
+    }
+});
+
+// Click listener on image preview thumbnail before sending
+if (imagePreviewThumb) {
+    imagePreviewThumb.style.cursor = 'pointer';
+    imagePreviewThumb.title = 'Klik untuk melihat pratinjau gambar';
+    imagePreviewThumb.addEventListener('click', () => {
+        if (attachedImage && attachedImage.dataUrl) {
+            openImageLightbox(attachedImage.dataUrl, attachedImage.name || 'Pratinjau Lampiran Gambar');
+        }
+    });
+}
+
+// Click listener on doc preview card before sending
+const docPreviewCardEl = document.querySelector('.doc-preview-card');
+if (docPreviewCardEl) {
+    docPreviewCardEl.style.cursor = 'pointer';
+    docPreviewCardEl.title = 'Klik untuk melihat pratinjau dokumen';
+    docPreviewCardEl.addEventListener('click', (e) => {
+        if (e.target.closest('#remove-doc-btn')) return;
+        if (attachedDocument) {
+            openDocModal(attachedDocument.filename, attachedDocument.url || '', attachedDocument.file_type || '');
+        }
     });
 }
 
