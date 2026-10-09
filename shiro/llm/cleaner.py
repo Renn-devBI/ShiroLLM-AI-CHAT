@@ -226,10 +226,15 @@ VTUBER_JAPANESE_FALLBACKS = {
         '[Sad] "うぅ…そんなこと言われたら、シロ泣いちゃうよ〜…"',
         '[Sad] "レンクさん、シロのこと嫌いになっちゃったの…？"'
     ],
+    "neutral": [
+        '[Mouth Smile] "うん！シロはいつでもここにいるよ〜！何をお話しする？"',
+        '[Eye Smile] "レンクさん、今日もお疲れ様〜！シロとお話ししよ！✨"',
+        '[Tease] "ふふっ、どうしたの？シロの顔が見たくなっちゃった？"'
+    ],
     "default": [
         '[Mouth Smile] "うん！シロはいつでもここにいるよ〜！何をお話しする？"',
-        '[Tease] "ふふっ、どうしたの？シロの顔が見たくなっちゃった？"',
-        '[Neutral] "シロは準備万端だよ！何か手伝えることはある？"'
+        '[Eye Smile] "ふふっ、レンクさんとお話しできてシロ嬉しいな！✨"',
+        '[Tease] "ふふっ、どうしたの？シロの顔が見たくなっちゃった？"'
     ]
 }
 
@@ -242,7 +247,7 @@ def clean_vtuber_response(response: str, user_input: str = "") -> str:
     Membersihkan respons untuk VTuber Engine (v2):
     - Menghapus CoT/reasoning dan token teknis
     - Menjamin format [Tag] di awal kalimat
-    - Memastikan output berbahasa Jepang (jika model meleset ke bahasa Indonesia/Inggris, gunakan fallback Jepang)
+    - Memastikan output berbahasa Jepang (jika model merespons dalam bahasa Indonesia, terjemahkan dinamis ke Jepang)
     """
     cleaned = clean_response(response)
     if not cleaned:
@@ -252,20 +257,51 @@ def clean_vtuber_response(response: str, user_input: str = "") -> str:
     valid_tags = ["[Sad]", "[Angry]", "[Surprised]", "[Shocked]", "[Eye Smile]", "[Excited]", "[Flustered]", "[Mouth Smile]", "[Tease]", "[Neutral]"]
     has_tag = any(cleaned.startswith(tag) for tag in valid_tags)
     
+    tag_prefix = "[Mouth Smile]"
     if not has_tag:
         tag_match = re.search(r'\[(Sad|Angry|Surprised|Shocked|Eye Smile|Excited|Flustered|Mouth Smile|Tease|Neutral)\]', cleaned, re.IGNORECASE)
         if tag_match:
             tag_name = tag_match.group(1).title()
-            tag_str = f"[{tag_name}]"
+            tag_prefix = f"[{tag_name}]"
             cleaned_text = cleaned.replace(tag_match.group(0), "").strip()
-            cleaned = f"{tag_str} {cleaned_text}"
+            cleaned = f"{tag_prefix} {cleaned_text}"
         else:
             cleaned = f'[Mouth Smile] "{cleaned}"' if not cleaned.startswith('"') else f'[Mouth Smile] {cleaned}'
-            
+    else:
+        for tag in valid_tags:
+            if cleaned.startswith(tag):
+                tag_prefix = tag
+                break
+
     # 2. Cek apakah ada karakter bahasa Jepang.
     # Jika TIDAK ADA karakter Jepang sama sekali (model merespons bahasa Indonesia),
-    # ganti dengan respon Jepang autentik agar VoiceVox tidak error/aneh.
+    # coba terjemahkan kalimat aktualnya ke Bahasa Jepang secara dinamis agar konteks obrolan tetap nyambung!
     if not is_japanese_text(cleaned):
+        cleaned_dialogue = cleaned
+        for tag in valid_tags:
+            if cleaned_dialogue.startswith(tag):
+                cleaned_dialogue = cleaned_dialogue[len(tag):].strip()
+                break
+        cleaned_dialogue = cleaned_dialogue.strip(' "“\'”')
+
+        translated_jp = ""
+        try:
+            import urllib.request
+            import urllib.parse
+            import json
+            t_url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=" + urllib.parse.quote(cleaned_dialogue)
+            req = urllib.request.Request(t_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                    translated_jp = "".join([item[0] for item in data[0] if item and len(item) > 0 and item[0]]).strip()
+        except Exception:
+            pass
+
+        if translated_jp and is_japanese_text(translated_jp):
+            return f'{tag_prefix} "{translated_jp}"'
+
+        # Fallback offline jika terjemahan tidak tersedia
         from shiro.nlp.emotion import detect_emotion_category
         cat = detect_emotion_category(user_input) if user_input else "default"
         pool = VTUBER_JAPANESE_FALLBACKS.get(cat, VTUBER_JAPANESE_FALLBACKS["default"])
