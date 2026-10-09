@@ -301,11 +301,11 @@ def clean_vtuber_response(response: str, user_input: str = "") -> str:
         if translated_jp and is_japanese_text(translated_jp):
             return f'{tag_prefix} "{translated_jp}"'
 
-        # Fallback offline jika terjemahan tidak tersedia
-        from shiro.nlp.emotion import detect_emotion_category
-        cat = detect_emotion_category(user_input) if user_input else "default"
-        pool = VTUBER_JAPANESE_FALLBACKS.get(cat, VTUBER_JAPANESE_FALLBACKS["default"])
-        return random.choice(pool)
+        # Jika terjemahan ke Jepang offline / tidak tersedia,
+        # JANGAN PERNAH membuang jawaban cerdas model dengan canned fallback!
+        # Kembalikan teks asli model dengan tag emosi agar client (run.py)
+        # dapat menerjemahkannya untuk VoiceVox serta menampilkan teks aslinya di subtitle!
+        return f'{tag_prefix} "{cleaned_dialogue}"'
 
     return cleaned
 
