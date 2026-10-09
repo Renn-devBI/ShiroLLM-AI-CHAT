@@ -54,7 +54,7 @@ import re
 from memory_optimization import get_smart_memory_context, compress_old_messages
 import web_reader
 import typo_helper
-from shiro.persona import build_system_prompt
+from shiro.persona import build_system_prompt, build_vtuber_system_prompt, build_custom_system_prompt
 
 # --- By CONFIG ---
 MEMORY_FILE = "ingatan_shiro.json"
@@ -260,8 +260,10 @@ if not os.path.exists(PROFILE_DIR):
 if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
-# Vision Chat Handler instance
+# Vision Chat Handler, LLM & Memory instances
 vision_chat_handler = None
+llm = None
+memory = AdvancedMemoryManager(MEMORY_FILE, WORLD_FILE)
 
 def is_running_in_colab():
     """Deteksi apakah server berjalan di Google Colab atau komputer lokal"""
@@ -622,7 +624,13 @@ class ResponseGenerator:
         from shiro.llm.cleaner import clean_response as _cr
         return _cr(response)
 
-def get_shiro_reply(user_input, image_base64=None, document_info=None, return_trace=False):
+    @staticmethod
+    def clean_vtuber_response(response, user_input=""):
+        """Pembersihan khusus VTuber: wajib tag ekspresi & output bahasa Jepang"""
+        from shiro.llm.cleaner import clean_vtuber_response as _cvr
+        return _cvr(response, user_input)
+
+def get_shiro_reply(user_input, image_base64=None, document_info=None, return_trace=False, api_version="v1", custom_system_prompt=None, incoming_messages=None):
     t_start_total = time.perf_counter()
     nodes = []
     try:
@@ -759,6 +767,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
                 "processed_text": user_input,
                 "normalized_text": normalized_input,
                 "source": "web_or_api",
+                "api_version": api_version,
                 "web_ingested": bool(web_data),
                 "doc_ingested": has_doc,
                 "timestamp": datetime.now().isoformat()
@@ -773,6 +782,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         u_lower = normalized_input.lower()
         matched_words = [w for w in ["sayang", "kangen", "cinta", "rindu", "peluk", "manis", "cium", "cantik", "bagus", "keren", "hebat", "senang", "ayo", "main", "maaf", "sedih", "nangis", "jahat", "benci", "siapa", "cewek", "perempuan", "selingkuh"] if w in u_lower]
         t_emotion_dur = (time.perf_counter() - t0) * 1000
+        target_persona_label = "VTuber Waifu (Japanese)" if api_version == "v2" else ("Custom Base Prompt" if api_version == "v3" else "Brocon (Adik Manja)")
         nodes.append({
             "id": "node_emotion",
             "name": "Emotion & Tone Classifier",
@@ -781,14 +791,14 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             "color": "#ec4899",
             "status": "success",
             "duration_ms": round(t_emotion_dur, 2),
-            "summary": f"Kategori: {user_emotion.capitalize()}",
+            "summary": f"Kategori: {user_emotion.capitalize()} ({api_version.upper()})",
             "data_in": {
                 "text": user_input
             },
             "data_out": {
                 "category": user_emotion,
                 "matched_keywords": matched_words,
-                "target_persona": "Brocon (Adik Manja)"
+                "target_persona": target_persona_label
             }
         })
 
@@ -796,52 +806,65 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         # NODE 3: Cognitive Memory & RDF Retrieval
         # -------------------------------------------------------------
         t0 = time.perf_counter()
-        recent_context = get_smart_memory_context(memory, limit=8)
-        clean_context = []
-        for msg in recent_context:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "assistant":
-                content = ResponseGenerator.clean_response(content)
-                if not ResponseGenerator.validate_response(content, ""):
-                    continue
-            clean_context.append({
-                "role": role,
-                "content": content
-            })
-
-        # Sanitasi konteks visual jika Kakak mengirim gambar baru:
-        # Hapus deskripsi spesifik gambar lama agar model tidak terbiasa mengulang kata-kata dari gambar sebelumnya (seperti 'poster tersebut')
-        if has_image:
-            sanitized_context = []
-            for msg in clean_context:
-                m_copy = dict(msg)
-                if m_copy.get("role") == "user" and ("[gambar" in m_copy.get("content", "").lower() or "[visual" in m_copy.get("content", "").lower()):
-                    m_copy["content"] = "[Kakak memperlihatkan gambar visual pada obrolan sebelumnya]"
-                elif m_copy.get("role") == "assistant":
-                    txt = m_copy.get("content", "")
-                    if any(w in txt.lower() for w in ["memandang gambar", "poster tersebut", "gambar visual ini", "poster"]):
-                        m_copy["content"] = "*tersenyum manis* Shiro sudah melihat gambar Kakak yang sebelumnya. Nah, sekarang gambar baru apa yang Kakak bawa ini?"
-                sanitized_context.append(m_copy)
-            clean_context = sanitized_context
-
-        facts = memory.knowledge_base.get("facts", [])
-        relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.8][:5]
-        traits = memory.user_profile.get("personality_traits", [])
-
-        # PENTING: Jika Kakak mengirim gambar visual, filter agar TIDAK menyertakan exemplar gambar lama
-        # yang bisa menyebabkan model meniru/mengulang deskripsi gambar sebelumnya!
-        if has_image:
-            exemplars = [ex for ex in memory.get_relevant_exemplars(user_input, max_count=2) 
-                         if not ex.get("image") and not any(k in ex.get("user", "").lower() for k in ["[gambar", "kamera", "visual", "foto"])]
+        if api_version in ["v2", "v3"] and incoming_messages:
+            clean_context = []
+            for msg in incoming_messages:
+                r = msg.get("role")
+                c = msg.get("content", "")
+                if r in ["user", "assistant"] and msg != incoming_messages[-1]:
+                    txt_c = c if isinstance(c, str) else str(c)
+                    clean_context.append({"role": r, "content": txt_c})
+            clean_context = clean_context[-6:]
+            exemplars = []
+            relevant_facts = []
+            traits = []
+            cross_session_addon = ""
+            has_cross_session = False
+            summary_node3 = f"{api_version.upper()} Context ({len(clean_context)} Turn)"
         else:
-            exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
-        
-        # Cross-Session Memory Recall
-        cross_session_addon = memory.get_cross_session_context(normalized_input)
-        has_cross_session = bool(cross_session_addon)
-        summary_node3 = f"{len(relevant_facts)} Fakta RDF • {len(exemplars)} Exemplars"
-        if has_cross_session:
+            recent_context = get_smart_memory_context(memory, limit=8)
+            clean_context = []
+            for msg in recent_context:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "assistant":
+                    content = ResponseGenerator.clean_response(content)
+                    if not ResponseGenerator.validate_response(content, ""):
+                        continue
+                clean_context.append({
+                    "role": role,
+                    "content": content
+                })
+
+            # Sanitasi konteks visual jika Kakak mengirim gambar baru:
+            if has_image:
+                sanitized_context = []
+                for msg in clean_context:
+                    m_copy = dict(msg)
+                    if m_copy.get("role") == "user" and ("[gambar" in m_copy.get("content", "").lower() or "[visual" in m_copy.get("content", "").lower()):
+                        m_copy["content"] = "[Kakak memperlihatkan gambar visual pada obrolan sebelumnya]"
+                    elif m_copy.get("role") == "assistant":
+                        txt = m_copy.get("content", "")
+                        if any(w in txt.lower() for w in ["memandang gambar", "poster tersebut", "gambar visual ini", "poster"]):
+                            m_copy["content"] = "*tersenyum manis* Shiro sudah melihat gambar Kakak yang sebelumnya. Nah, sekarang gambar baru apa yang Kakak bawa ini?"
+                    sanitized_context.append(m_copy)
+                clean_context = sanitized_context
+
+            facts = memory.knowledge_base.get("facts", [])
+            relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.8][:5]
+            traits = memory.user_profile.get("personality_traits", [])
+
+            if has_image:
+                exemplars = [ex for ex in memory.get_relevant_exemplars(user_input, max_count=2) 
+                             if not ex.get("image") and not any(k in ex.get("user", "").lower() for k in ["[gambar", "kamera", "visual", "foto"])]
+            else:
+                exemplars = memory.get_relevant_exemplars(user_input, max_count=2)
+            
+            cross_session_addon = memory.get_cross_session_context(normalized_input)
+            has_cross_session = bool(cross_session_addon)
+            summary_node3 = f"{len(relevant_facts)} Fakta RDF • {len(exemplars)} Exemplars"
+            if has_cross_session:
+                summary_node3 += " • Cross-Session Memory"
             summary_node3 += " • Cross-Session Memory"
 
         t_mem_dur = (time.perf_counter() - t0) * 1000
@@ -887,44 +910,95 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             for ex in exemplars:
                 exemplar_prompt += f"Kakak: \"{ex.get('user')}\"\nShiro: \"{ex.get('assistant')}\"\n"
 
-        system_prompt = build_system_prompt(
-            home_location=memory.world.get('locations', {}).get('home', 'Pondok Kayu'),
-            conversation_summary=conversation_summary,
-            facts_summary=facts_summary,
-            exemplar_prompt=exemplar_prompt,
-            web_prompt_addon=web_prompt_addon,
-            typo_prompt_addon=typo_prompt_addon,
-            document_prompt_addon=doc_prompt_addon,
-            cross_session_addon=cross_session_addon
-        )
-
-        msgs = [{"role": "system", "content": system_prompt}]
-        msgs.extend(clean_context)
-
-        if image_base64 and has_vision:
-            img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
-            custom_q = user_input.strip() if user_input.strip() and not user_input.startswith("Kakak memperlihatkan gambar") else ""
-            if custom_q:
-                prompt_text = (
-                    f"[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini sambil bertanya: \"{custom_q}\".\n"
-                    f"TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, dan detail visual di dalam GAMBAR TERBARU INI secara langsung. "
-                    f"Jawab pertanyaan Kakak secara spesifik sesuai apa yang benar-benar ada di gambar baru ini (jangan pernah mengulang atau mengaitkan dengan gambar dari obrolan sebelumnya)!"
-                )
+        if api_version == "v2":
+            # VTuber Persona Mode (100% Japanese with [Tag])
+            client_sys = custom_system_prompt or ""
+            if not client_sys and incoming_messages:
+                for m in incoming_messages:
+                    if m.get("role") == "system":
+                        client_sys = m.get("content", "")
+                        break
+            system_prompt = build_vtuber_system_prompt(
+                owner_name="Renku",
+                custom_instruction=client_sys
+            )
+            msgs = [{"role": "system", "content": system_prompt}]
+            msgs.extend(clean_context)
+            vtuber_user_prompt = f"{user_input}\n(必ず[Tag]を付けて日本語で可愛く返答してください / Reply in native Japanese with [Tag])"
+            if image_base64 and has_vision:
+                img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
+                msgs.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"[VTuber Vision Screen / Camera]: {vtuber_user_prompt}"},
+                        {"type": "image_url", "image_url": {"url": img_url}}
+                    ]
+                })
             else:
-                prompt_text = (
-                    "[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini kepadamu, Shiro!\n"
-                    "TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, orang/benda, dan suasana yang terlihat di dalam GAMBAR BARU INI secara langsung. "
-                    "Jelaskan apa yang kamu lihat sekarang secara segar, unik, dan mendetail dengan gaya bicaramu yang manja, cerdas, dan hangat khas Shiro (jangan pernah mengulang deskripsi gambar sebelumnya)!"
-                )
-            msgs.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt_text},
-                    {"type": "image_url", "image_url": {"url": img_url}}
-                ]
-            })
+                msgs.append({"role": "user", "content": vtuber_user_prompt})
+
+        elif api_version == "v3":
+            # Custom Base Prompt Mode
+            sys_text = custom_system_prompt or ""
+            if not sys_text and incoming_messages:
+                for m in incoming_messages:
+                    if m.get("role") == "system":
+                        sys_text = m.get("content", "")
+                        break
+            system_prompt = build_custom_system_prompt(sys_text)
+            msgs = [{"role": "system", "content": system_prompt}]
+            msgs.extend(clean_context)
+            if image_base64 and has_vision:
+                img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
+                msgs.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_input},
+                        {"type": "image_url", "image_url": {"url": img_url}}
+                    ]
+                })
+            else:
+                msgs.append({"role": "user", "content": user_input})
+
         else:
-            msgs.append({"role": "user", "content": user_input})
+            # v1 Default (Indonesian Shiro Persona)
+            system_prompt = build_system_prompt(
+                home_location=memory.world.get('locations', {}).get('home', 'Pondok Kayu'),
+                conversation_summary=conversation_summary,
+                facts_summary=facts_summary,
+                exemplar_prompt=exemplar_prompt,
+                web_prompt_addon=web_prompt_addon,
+                typo_prompt_addon=typo_prompt_addon,
+                document_prompt_addon=doc_prompt_addon,
+                cross_session_addon=cross_session_addon
+            )
+            msgs = [{"role": "system", "content": system_prompt}]
+            msgs.extend(clean_context)
+
+            if image_base64 and has_vision:
+                img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
+                custom_q = user_input.strip() if user_input.strip() and not user_input.startswith("Kakak memperlihatkan gambar") else ""
+                if custom_q:
+                    prompt_text = (
+                        f"[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini sambil bertanya: \"{custom_q}\".\n"
+                        f"TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, dan detail visual di dalam GAMBAR TERBARU INI secara langsung. "
+                        f"Jawab pertanyaan Kakak secara spesifik sesuai apa yang benar-benar ada di gambar baru ini (jangan pernah mengulang atau mengaitkan dengan gambar dari obrolan sebelumnya)!"
+                    )
+                else:
+                    prompt_text = (
+                        "[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini kepadamu, Shiro!\n"
+                        "TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, orang/benda, dan suasana yang terlihat di dalam GAMBAR BARU INI secara langsung. "
+                        "Jelaskan apa yang kamu lihat sekarang secara segar, unik, dan mendetail dengan gaya bicaramu yang manja, cerdas, dan hangat khas Shiro (jangan pernah mengulang deskripsi gambar sebelumnya)!"
+                    )
+                msgs.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {"type": "image_url", "image_url": {"url": img_url}}
+                    ]
+                })
+            else:
+                msgs.append({"role": "user", "content": user_input})
 
         # -------------------------------------------------------------
         # SMART TOKEN BUDGET GUARD & ADAPTIVE TRUNCATOR
@@ -933,7 +1007,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         from shiro.memory.optimization import calculate_messages_tokens, trim_text_to_token_budget
         
         active_ctx = get_active_model_ctx(llm, CONTEXT_SIZE)
-        max_output_tokens = 450
+        max_output_tokens = 180 if api_version == "v2" else 450
         safety_headroom = 150
         max_allowed_prompt = max(1000, active_ctx - max_output_tokens - safety_headroom)
         
@@ -991,6 +1065,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             print(f"✓ [Token Budget Guard] Prompt siap: {final_tokens} tokens (Batas Aman: {max_allowed_prompt}/{active_ctx})")
 
         t_prompt_dur = (time.perf_counter() - t0) * 1000
+        constraints_list = ["100% Native Japanese with [Tag]", "VoiceVox Speech Opt"] if api_version == "v2" else (["Custom System Prompt"] if api_version == "v3" else ["100% Bahasa Indonesia", "Anti-CoT", "Anti-Hallucination"])
         nodes.append({
             "id": "node_prompt",
             "name": "Dynamic Prompt Synthesizer",
@@ -999,16 +1074,17 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             "color": "#06b6d4",
             "status": "success",
             "duration_ms": round(t_prompt_dur, 2),
-            "summary": f"{len(msgs)} Pesan Terstruktur",
+            "summary": f"{len(msgs)} Pesan ({api_version.upper()})",
             "data_in": {
-                "persona": "Shiro (Brocon)",
+                "persona": target_persona_label,
+                "api_version": api_version,
                 "rdf_facts_injected": len(relevant_facts),
                 "exemplars_injected": len(exemplars)
             },
             "data_out": {
                 "system_prompt_chars": len(system_prompt),
                 "total_messages": len(msgs),
-                "constraints": ["100% Bahasa Indonesia", "Anti-CoT", "Anti-Hallucination"]
+                "constraints": constraints_list
             }
         })
 
@@ -1017,13 +1093,13 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         # -------------------------------------------------------------
         t0 = time.perf_counter()
         gen_params = {
-            "temperature": 0.72 if has_image else 0.65,
+            "temperature": 0.72 if has_image else (0.70 if api_version == "v2" else 0.65),
             "repeat_penalty": 1.25 if has_image else 1.2,
             "frequency_penalty": 0.5 if has_image else 0.3,
             "presence_penalty": 0.3 if has_image else 0.0,
             "top_p": 0.92,
             "top_k": 40,
-            "max_tokens": 450,
+            "max_tokens": 180 if api_version == "v2" else 450,
             "stop": ["User:", "Kakak:", "Shiro:", "assistant:", "\n\n\n", "###", 
                      "Note:", "<|im_end|>", "<|im_start|>", "<|eot_id|>", 
                      "<|end|>", "<|end_of_text|>", "Okay, let me", "The user is"]
@@ -1038,7 +1114,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             err_str = str(inf_err).lower()
             if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
                 print(f"⚠️ [Context Guard] Exception exceed context window tertangkap: {inf_err}. Menjalankan pemangkasan darurat...")
-                emergency_msgs = [{"role": "system", "content": system_prompt[:1200] + "\n[Catatan: Dokumen sangat panjang, jawab inti pertanyaan Kakak secara padat.]"}]
+                emergency_msgs = [{"role": "system", "content": system_prompt[:1200] + "\n[Catatan: Ringkas jawaban secara padat.]"}]
                 if has_doc and document_info:
                     doc_snip = document_info.get("text", "")[:2500]
                     emergency_msgs.append({"role": "user", "content": f"[Dokumen {doc_name}]:\n{doc_snip}\n\n{user_input}"})
@@ -1080,22 +1156,31 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         had_think = ("<think>" in raw_reply.lower() or "</think>" in raw_reply.lower())
         had_cot = any(x in raw_reply.lower() for x in ["okay, let me", "let me break this down", "possible responses", "let's craft"])
 
-        cleaned_reply = ResponseGenerator.clean_response(raw_reply)
-        is_valid = ResponseGenerator.validate_response(cleaned_reply, user_input)
-        is_fallback = False
+        if api_version == "v2":
+            cleaned_reply = ResponseGenerator.clean_vtuber_response(raw_reply, user_input)
+            is_valid = True
+            is_fallback = False
+        elif api_version == "v3":
+            cleaned_reply = ResponseGenerator.clean_response(raw_reply)
+            is_valid = True
+            is_fallback = False
+        else:
+            cleaned_reply = ResponseGenerator.clean_response(raw_reply)
+            is_valid = ResponseGenerator.validate_response(cleaned_reply, user_input)
+            is_fallback = False
 
-        if not is_valid:
-            is_fallback = True
-            if user_emotion == "romantic":
-                cleaned_reply = random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
-            elif user_emotion == "jealous":
-                cleaned_reply = random.choice(ResponseGenerator.JEALOUS_RESPONSES)
-            elif user_emotion == "happy":
-                cleaned_reply = random.choice(ResponseGenerator.HAPPY_RESPONSES)
-            elif user_emotion == "sad":
-                cleaned_reply = random.choice(ResponseGenerator.SAD_RESPONSES)
-            else:
-                cleaned_reply = random.choice(ResponseGenerator.DEFAULT_RESPONSES)
+            if not is_valid:
+                is_fallback = True
+                if user_emotion == "romantic":
+                    cleaned_reply = random.choice(ResponseGenerator.ROMANTIC_RESPONSES)
+                elif user_emotion == "jealous":
+                    cleaned_reply = random.choice(ResponseGenerator.JEALOUS_RESPONSES)
+                elif user_emotion == "happy":
+                    cleaned_reply = random.choice(ResponseGenerator.HAPPY_RESPONSES)
+                elif user_emotion == "sad":
+                    cleaned_reply = random.choice(ResponseGenerator.SAD_RESPONSES)
+                else:
+                    cleaned_reply = random.choice(ResponseGenerator.DEFAULT_RESPONSES)
 
         # Check untuk duplicate responses (mencegah repetisi)
         if memory.short_term_history:
@@ -1103,13 +1188,16 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             for last_resp in last_responses:
                 similarity = ConversationAnalyzer.calculate_similarity(cleaned_reply, last_resp)
                 is_repetitive = (similarity >= SIMILARITY_THRESHOLD or cleaned_reply.strip().lower() == last_resp.strip().lower())
-                # Deteksi jika respon mengandung kata kunci spesifik gambar lama yang berulang (seperti 'poster')
                 if has_image and "poster tersebut" in cleaned_reply.lower() and "poster tersebut" in last_resp.lower():
                     is_repetitive = True
 
                 if is_repetitive:
                     print(f"⚠️ [Anti-Repetition] Respons terdeteksi duplikat/mirip ({similarity:.2f}) dengan giliran sebelumnya! Mengganti dengan respon segar...")
-                    if has_image:
+                    if api_version == "v2":
+                        from shiro.llm.cleaner import VTUBER_JAPANESE_FALLBACKS
+                        pool = VTUBER_JAPANESE_FALLBACKS.get(user_emotion, VTUBER_JAPANESE_FALLBACKS["default"])
+                        cleaned_reply = random.choice(pool)
+                    elif has_image:
                         visual_fallbacks = [
                             "*memperhatikan gambar baru dengan seksama* Wah, gambar yang ini beda dari sebelumnya ya Kak! Shiro melihat visual baru ini... coba Kakak kasih tahu Shiro, bagian mana dari gambar ini yang paling Kakak suka?",
                             "*tersenyum manis sambil mengamati gambar* Hehe, Kakak bawa gambar baru lagi! Menarik banget gambarnya, Kak! Mau Shiro jelaskan detail apa dari gambar ini?",
@@ -1239,7 +1327,12 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
 
     except Exception as e:
         print(f"Error generating response: {e}")
-        err_msg = f"*bingung* Kakak... Shiro tidak mengerti... (Error: {str(e)[:50]})"
+        if api_version == "v2":
+            err_msg = '[Sad] "ごめんなさい、ちょっとエラーが出ちゃったみたい…！"'
+        elif api_version == "v3":
+            err_msg = f"Error processing request: {str(e)[:50]}"
+        else:
+            err_msg = f"*bingung* Kakak... Shiro tidak mengerti... (Error: {str(e)[:50]})"
         err_trace = {
             "id": f"trace-err-{int(time.time()*1000)}",
             "timestamp": datetime.now().isoformat(),
@@ -1654,12 +1747,13 @@ def delete_session(session_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/v1/chat/completions', methods=['POST'])
-def openai_chat_completions():
+def handle_openai_chat_completions(api_version="v1"):
     """
-    OpenAI-compatible Chat Completions API endpoint.
-    Kompatibel dengan semua AI client: WhatsApp Bot, Telegram Bot, VTuber, LangChain, dsb.
-    Header: Authorization: Bearer <SHIRO_API_KEY>
+    OpenAI-compatible Chat Completions API endpoint handler:
+    - v1: Default Shiro (100% Bahasa Indonesia, Persona Adik Manja)
+    - v2: VTuber Engine (100% Japanese with [Tag] Expression Selector untuk VoiceVox TTS)
+    - v3: Custom Base Prompt (Bebas mengikuti system prompt dari payload client tanpa paksaan bahasa)
+    Header: Authorization: Bearer <SHIRO_API_KEY> atau X-API-Key: <SHIRO_API_KEY>
     """
     if not verify_api_key(allow_web_ui=False):
         return jsonify({
@@ -1684,7 +1778,21 @@ def openai_chat_completions():
                     "type": "invalid_request_error"
                 }
             }), 400
-            
+
+        # Ekstrak custom system prompt dari payload
+        client_system_prompt = data.get("custom_system_prompt") or data.get("system_prompt")
+        for msg in messages:
+            if msg.get("role") == "system":
+                client_system_prompt = msg.get("content", "")
+                break
+
+        # Deteksi otomatis VTuber jika client masih memanggil route /v1 tapi membawa prompt VTuber
+        effective_version = api_version
+        if api_version == "v1" and client_system_prompt:
+            lower_sys = client_system_prompt.lower()
+            if any(k in lower_sys for k in ["virtual youtuber", "vtuber", "native japanese", "voicevox", "suisei", "[tag]"]):
+                effective_version = "v2"
+
         # Ambil pesan user terakhir & ekstrak teks serta gambar multimodal (OpenAI format)
         user_message = ""
         image_base64 = None
@@ -1725,21 +1833,27 @@ def openai_chat_completions():
                     f_out.write(base64.b64decode(raw))
                 saved_img_rel = os.path.join("images", fn).replace("\\", "/")
             except Exception as e_img:
-                print(f"Warning saving vision image in v1 completions: {e_img}")
+                print(f"Warning saving vision image in completions: {e_img}")
 
         with memory.lock:
             log_msg = user_message if not image_base64 else f"[Visual VTuber/Webcam] {user_message}"
             memory.add_message("user", log_msg, image_path=saved_img_rel)
-            reply = get_shiro_reply(user_message, image_base64=image_base64)
+            reply = get_shiro_reply(
+                user_message,
+                image_base64=image_base64,
+                api_version=effective_version,
+                custom_system_prompt=client_system_prompt,
+                incoming_messages=messages
+            )
             memory.add_message("assistant", reply)
-            if not image_base64 or "poster tersebut" not in reply.lower():
+            if effective_version == "v1" and (not image_base64 or "poster tersebut" not in reply.lower()):
                 memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
             compress_old_messages(memory, keep_count=15)
             memory.save_memory()
             
-        response_id = f"chatcmpl-shiro-{secrets.token_hex(8)}"
+        response_id = f"chatcmpl-shiro-{effective_version}-{secrets.token_hex(8)}"
         created_time = int(time.time())
         prompt_tokens = len(user_message.split())
         comp_tokens = len(reply.split())
@@ -1749,6 +1863,7 @@ def openai_chat_completions():
             "object": "chat.completion",
             "created": created_time,
             "model": model_name,
+            "api_version": effective_version,
             "choices": [
                 {
                     "index": 0,
@@ -1766,7 +1881,7 @@ def openai_chat_completions():
             }
         })
     except Exception as e:
-        print(f"Error in /v1/chat/completions: {e}")
+        print(f"Error in /{api_version}/chat/completions: {e}")
         return jsonify({
             "error": {
                 "message": str(e),
@@ -1774,7 +1889,25 @@ def openai_chat_completions():
             }
         }), 500
 
+@app.route('/v1/chat/completions', methods=['POST'])
+def openai_chat_completions_v1():
+    return handle_openai_chat_completions(api_version="v1")
+
+@app.route('/v2/chat/completions', methods=['POST'])
+@app.route('/v2/v1/chat/completions', methods=['POST'])
+def openai_chat_completions_v2():
+    return handle_openai_chat_completions(api_version="v2")
+
+@app.route('/v3/chat/completions', methods=['POST'])
+@app.route('/v3/v1/chat/completions', methods=['POST'])
+def openai_chat_completions_v3():
+    return handle_openai_chat_completions(api_version="v3")
+
 @app.route('/v1/models', methods=['GET'])
+@app.route('/v2/models', methods=['GET'])
+@app.route('/v2/v1/models', methods=['GET'])
+@app.route('/v3/models', methods=['GET'])
+@app.route('/v3/v1/models', methods=['GET'])
 def openai_models():
     """List available models for OpenAI SDK client compatibility"""
     config = load_model_config()
@@ -1790,7 +1923,7 @@ def openai_models():
 
 @app.route('/api/key', methods=['GET'])
 def get_api_key_info():
-    """Get active API Key and connection info for external bots/clients"""
+    """Get active API Key and connection info for external bots/clients (v1, v2, v3)"""
     key = get_active_api_key()
     host_url = request.host_url.rstrip('/')
     return jsonify({
@@ -1798,6 +1931,26 @@ def get_api_key_info():
         "openai_base_url": f"{host_url}/v1",
         "chat_completions_url": f"{host_url}/v1/chat/completions",
         "direct_chat_url": f"{host_url}/api/chat",
+        "endpoints": {
+            "v1": {
+                "name": "Default Shiro (Bahasa Indonesia)",
+                "base_url": f"{host_url}/v1",
+                "chat_completions": f"{host_url}/v1/chat/completions",
+                "description": "Karakter adik manja Shiro dalam 100% Bahasa Indonesia"
+            },
+            "v2": {
+                "name": "VTuber Engine (Japanese VoiceVox)",
+                "base_url": f"{host_url}/v2",
+                "chat_completions": f"{host_url}/v2/chat/completions",
+                "description": "Karakter VTuber Waifu Shiro dalam 100% Bahasa Jepang dengan tag emosi [Tag] untuk VoiceVox TTS"
+            },
+            "v3": {
+                "name": "Custom Base Prompt",
+                "base_url": f"{host_url}/v3",
+                "chat_completions": f"{host_url}/v3/chat/completions",
+                "description": "Kustom base prompt bebas mengikuti instruksi system klien tanpa paksaan bahasa"
+            }
+        },
         "documentation": {
             "auth_header": f"Authorization: Bearer {key}",
             "x_api_key": f"X-API-Key: {key}"
@@ -1814,6 +1967,23 @@ def regenerate_api_key_route():
         "api_key": new_key,
         "message": "API Key baru berhasil di-generate!",
         "openai_base_url": f"{host_url}/v1",
+        "endpoints": {
+            "v1": {
+                "name": "Default Shiro (Bahasa Indonesia)",
+                "base_url": f"{host_url}/v1",
+                "chat_completions": f"{host_url}/v1/chat/completions"
+            },
+            "v2": {
+                "name": "VTuber Engine (Japanese VoiceVox)",
+                "base_url": f"{host_url}/v2",
+                "chat_completions": f"{host_url}/v2/chat/completions"
+            },
+            "v3": {
+                "name": "Custom Base Prompt",
+                "base_url": f"{host_url}/v3",
+                "chat_completions": f"{host_url}/v3/chat/completions"
+            }
+        },
         "documentation": {
             "auth_header": f"Authorization: Bearer {new_key}",
             "x_api_key": f"X-API-Key: {new_key}"
@@ -2142,8 +2312,12 @@ if __name__ == '__main__':
         print("=" * 60)
         print("API INTEGRATION (WhatsApp Bot / VTuber / Eksternal):")
         print(f"SHIRO API KEY: {active_api_key}")
-        print("OpenAI Base URL: http://127.0.0.1:7474/v1")
-        print("Chat Endpoint  : http://127.0.0.1:7474/v1/chat/completions")
+        print("👉 v1 (Default Shiro - ID)  : http://127.0.0.1:7474/v1")
+        print("👉 v2 (VTuber Engine - JP)  : http://127.0.0.1:7474/v2")
+        print("👉 v3 (Custom Base Prompt)  : http://127.0.0.1:7474/v3")
+        print("👉 Chat Endpoint (v1)       : http://127.0.0.1:7474/v1/chat/completions")
+        print("👉 Chat Endpoint (v2 VTuber): http://127.0.0.1:7474/v2/chat/completions")
+        print("👉 Chat Endpoint (v3 Custom): http://127.0.0.1:7474/v3/chat/completions")
         print("=" * 60)
         print("Press Ctrl+C to stop\n")
         

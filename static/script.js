@@ -850,6 +850,13 @@ async function loadApiKey() {
         if (res.ok) {
             const data = await res.json();
             input.value = data.api_key || '';
+            const origin = window.location.origin;
+            const elV1 = document.getElementById('endpoint-v1-url');
+            const elV2 = document.getElementById('endpoint-v2-url');
+            const elV3 = document.getElementById('endpoint-v3-url');
+            if (elV1) elV1.textContent = `${origin}/v1`;
+            if (elV2) elV2.textContent = `${origin}/v2`;
+            if (elV3) elV3.textContent = `${origin}/v3`;
         }
     } catch (e) {
         console.error('Error loading API key:', e);
@@ -865,6 +872,15 @@ function copyApiKey() {
         input.select();
         document.execCommand('copy');
         alert('API Key berhasil disalin!');
+    });
+}
+
+function copyEndpointUrl(path) {
+    const fullUrl = window.location.origin + path;
+    navigator.clipboard.writeText(fullUrl).then(() => {
+        alert(`URL ${fullUrl} berhasil disalin!`);
+    }).catch(() => {
+        prompt('Salin URL:', fullUrl);
     });
 }
 

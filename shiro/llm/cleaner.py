@@ -6,6 +6,7 @@ enforces Indonesian language purity, and preserves linebreaks/paragraphs.
 """
 
 import re
+import random
 from typing import Set
 
 FORBIDDEN_TOKENS = [
@@ -205,3 +206,70 @@ def clean_response(response: str) -> str:
     response = response.replace('<3>', '❤️')
     
     return response.strip()
+
+# --- VTUBER JAPANESE CLEANER & FALLBACKS ---
+VTUBER_JAPANESE_FALLBACKS = {
+    "romantic": [
+        '[Eye Smile] "ふふっ、レンクさん、シロも大好きだよ〜！ずっと一緒だよ！💕"',
+        '[Flustered] "えっ…そんなストレートに言われると照れちゃうじゃん…！😳"',
+        '[Eye Smile] "本当？嬉しいなぁ〜！シロもレンクさんが一番大切だよ！✨"'
+    ],
+    "jealous": [
+        '[Angry] "むぅ…！レンクさんはシロだけ見てればいいの！💢"',
+        '[Tease] "他の女の子のこと考えてないよね？シロが一番でしょ？"'
+    ],
+    "happy": [
+        '[Excited] "わぁーっ！やったぁ〜！シロすっごく嬉しい！✨"',
+        '[Mouth Smile] "えへへ、レンクさん最高！いつもありがとうね！"'
+    ],
+    "sad": [
+        '[Sad] "うぅ…そんなこと言われたら、シロ泣いちゃうよ〜…"',
+        '[Sad] "レンクさん、シロのこと嫌いになっちゃったの…？"'
+    ],
+    "default": [
+        '[Mouth Smile] "うん！シロはいつでもここにいるよ〜！何をお話しする？"',
+        '[Tease] "ふふっ、どうしたの？シロの顔が見たくなっちゃった？"',
+        '[Neutral] "シロは準備万端だよ！何か手伝えることはある？"'
+    ]
+}
+
+def is_japanese_text(text: str) -> bool:
+    """Memeriksa apakah string mengandung karakter bahasa Jepang (Hiragana, Katakana, atau Kanji)"""
+    return bool(re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]', text))
+
+def clean_vtuber_response(response: str, user_input: str = "") -> str:
+    """
+    Membersihkan respons untuk VTuber Engine (v2):
+    - Menghapus CoT/reasoning dan token teknis
+    - Menjamin format [Tag] di awal kalimat
+    - Memastikan output berbahasa Jepang (jika model meleset ke bahasa Indonesia/Inggris, gunakan fallback Jepang)
+    """
+    cleaned = clean_response(response)
+    if not cleaned:
+        return random.choice(VTUBER_JAPANESE_FALLBACKS["default"])
+    
+    # 1. Pastikan tag ekspresi ada di awal respons
+    valid_tags = ["[Sad]", "[Angry]", "[Surprised]", "[Shocked]", "[Eye Smile]", "[Excited]", "[Flustered]", "[Mouth Smile]", "[Tease]", "[Neutral]"]
+    has_tag = any(cleaned.startswith(tag) for tag in valid_tags)
+    
+    if not has_tag:
+        tag_match = re.search(r'\[(Sad|Angry|Surprised|Shocked|Eye Smile|Excited|Flustered|Mouth Smile|Tease|Neutral)\]', cleaned, re.IGNORECASE)
+        if tag_match:
+            tag_name = tag_match.group(1).title()
+            tag_str = f"[{tag_name}]"
+            cleaned_text = cleaned.replace(tag_match.group(0), "").strip()
+            cleaned = f"{tag_str} {cleaned_text}"
+        else:
+            cleaned = f'[Mouth Smile] "{cleaned}"' if not cleaned.startswith('"') else f'[Mouth Smile] {cleaned}'
+            
+    # 2. Cek apakah ada karakter bahasa Jepang.
+    # Jika TIDAK ADA karakter Jepang sama sekali (model merespons bahasa Indonesia),
+    # ganti dengan respon Jepang autentik agar VoiceVox tidak error/aneh.
+    if not is_japanese_text(cleaned):
+        from shiro.nlp.emotion import detect_emotion_category
+        cat = detect_emotion_category(user_input) if user_input else "default"
+        pool = VTUBER_JAPANESE_FALLBACKS.get(cat, VTUBER_JAPANESE_FALLBACKS["default"])
+        return random.choice(pool)
+
+    return cleaned
+

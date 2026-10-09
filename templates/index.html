@@ -340,13 +340,46 @@
                                 <i class="ph ph-copy"></i>
                             </button>
                         </div>
-                        <span class="field-help">Gunakan API Key ini pada header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code> untuk menghubungkan WhatsApp Bot, VTuber, Telegram, atau script Python eksternal.</span>
+                        <span class="field-help">Header: <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code>. Key yang sama berlaku untuk v1, v2, dan v3.</span>
                     </div>
 
                     <div style="margin-top: 15px; display: flex; gap: 10px;">
                         <button type="button" onclick="regenerateApiKey()" class="btn-primary" id="btn-regen-key">
                             <i class="ph ph-arrows-clockwise"></i> Generate Key Baru
                         </button>
+                    </div>
+
+                    <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <h4 style="font-size: 0.85rem; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);">Pilihan Route API (v1 / v2 / v3)</h4>
+                        
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            <div style="background: var(--bg-primary); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <span style="font-weight: 600; font-size: 0.82rem; color: #38bdf8;">v1 (Default - Bahasa Indonesia)</span>
+                                    <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyEndpointUrl('/v1')" title="Salin Base URL">Salin URL</button>
+                                </div>
+                                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary);" id="endpoint-v1-url">/v1</div>
+                                <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: 4px;">Persona Shiro Adik Manja 14 tahun dalam 100% Bahasa Indonesia. Cocok untuk WhatsApp, Telegram, Chatbot.</div>
+                            </div>
+
+                            <div style="background: var(--bg-primary); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <span style="font-weight: 600; font-size: 0.82rem; color: #ec4899;">v2 (VTuber Engine - Native Japanese VoiceVox)</span>
+                                    <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyEndpointUrl('/v2')" title="Salin Base URL">Salin URL</button>
+                                </div>
+                                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary);" id="endpoint-v2-url">/v2</div>
+                                <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: 4px;">Khusus aplikasi VTuber (<code>D:\Downloads\vtuber</code>) &amp; VoiceVox TTS. Wajib output 100% Bahasa Jepang dengan format tag <code>[Tag] "..."</code>.</div>
+                            </div>
+
+                            <div style="background: var(--bg-primary); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <span style="font-weight: 600; font-size: 0.82rem; color: #10b981;">v3 (Custom Base Prompt)</span>
+                                    <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyEndpointUrl('/v3')" title="Salin Base URL">Salin URL</button>
+                                </div>
+                                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary);" id="endpoint-v3-url">/v3</div>
+                                <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: 4px;">Bebas mengikuti custom system prompt klien tanpa paksaan bahasa. Fleksibel untuk coding, riset, atau asisten umum.</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
