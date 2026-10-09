@@ -306,11 +306,22 @@ def find_active_lora_path():
     if drive_dir and os.path.exists(os.path.join(drive_dir, "lora")):
         search_dirs.append(os.path.join(drive_dir, "lora"))
 
+    found_loras = []
     for d in search_dirs:
         if os.path.exists(d):
-            lora_files = sorted(glob.glob(os.path.join(d, "*.gguf")) + glob.glob(os.path.join(d, "*.bin")))
-            if lora_files:
-                return lora_files[0]
+            found_loras.extend(glob.glob(os.path.join(d, "*.gguf")) + glob.glob(os.path.join(d, "*.bin")))
+            found_loras.extend(glob.glob(os.path.join(d, "*", "*.gguf")) + glob.glob(os.path.join(d, "*", "*.bin")))
+
+    if found_loras:
+        # Urutkan berdasarkan nomor versi tertinggi (misal V2 lebih prioritas dibanding V1)
+        def _get_ver_key(p):
+            m = re.search(r'V(\d+)', os.path.basename(p), re.IGNORECASE)
+            if not m:
+                m = re.search(r'V(\d+)', os.path.dirname(p), re.IGNORECASE)
+            return int(m.group(1)) if m else 0
+
+        found_loras = sorted(list(set(found_loras)), key=_get_ver_key, reverse=True)
+        return found_loras[0]
     return None
 
 # Model configuration
@@ -341,7 +352,7 @@ def load_model_config():
             current_list.append(m)
     config["available_models"] = current_list
     
-    # Auto-generate metadata untuk model manual baru
+    # Auto-generate metadata untuk model manual baru & model hasil training (ShiroAI-LLM-V1, V2, dll.)
     if "model_info" not in config:
         config["model_info"] = {}
     for m in config["available_models"]:
@@ -351,11 +362,14 @@ def load_model_config():
             if os.path.exists(m):
                 size_gb = os.path.getsize(m) / (1024 * 1024 * 1024)
             size_str = f"~{size_gb:.1f} GB" if size_gb > 0 else "GGUF"
+            is_trained = "shiroai-llm-v" in basename.lower()
+            quant = "Fine-Tuned (LoRA)" if is_trained else "Manual/Auto"
+            desc = f"Model Hasil Pelatihan Mandiri: {basename} ({size_str})" if is_trained else f"Model Lokal (Manual): {basename} ({size_str})"
             config["model_info"][m] = {
                 "name": basename,
                 "size": size_str,
-                "quantization": "Manual/Auto",
-                "description": f"Model Lokal (Manual): {basename} ({size_str})"
+                "quantization": quant,
+                "description": desc
             }
 
     # Penentuan model aktif otomatis:
