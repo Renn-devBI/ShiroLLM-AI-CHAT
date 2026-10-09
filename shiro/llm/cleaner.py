@@ -247,11 +247,14 @@ def clean_vtuber_response(response: str, user_input: str = "") -> str:
     Membersihkan respons untuk VTuber Engine (v2):
     - Menghapus CoT/reasoning dan token teknis
     - Menjamin format [Tag] di awal kalimat
-    - Memastikan output berbahasa Jepang (jika model merespons dalam bahasa Indonesia, terjemahkan dinamis ke Jepang)
+    - Mengembalikan respons Bahasa Indonesia khas Shiro yang cerdas dan ekspresif
     """
     cleaned = clean_response(response)
     if not cleaned:
-        return random.choice(VTUBER_JAPANESE_FALLBACKS["default"])
+        from shiro.nlp.emotion import detect_emotion_category
+        cat = detect_emotion_category(user_input) if user_input else "default"
+        pool = VTUBER_JAPANESE_FALLBACKS.get(cat, VTUBER_JAPANESE_FALLBACKS["default"])
+        return random.choice(pool)
     
     # 1. Pastikan tag ekspresi ada di awal respons
     valid_tags = ["[Sad]", "[Angry]", "[Surprised]", "[Shocked]", "[Eye Smile]", "[Excited]", "[Flustered]", "[Mouth Smile]", "[Tease]", "[Neutral]"]
@@ -267,45 +270,6 @@ def clean_vtuber_response(response: str, user_input: str = "") -> str:
             cleaned = f"{tag_prefix} {cleaned_text}"
         else:
             cleaned = f'[Mouth Smile] "{cleaned}"' if not cleaned.startswith('"') else f'[Mouth Smile] {cleaned}'
-    else:
-        for tag in valid_tags:
-            if cleaned.startswith(tag):
-                tag_prefix = tag
-                break
-
-    # 2. Cek apakah ada karakter bahasa Jepang.
-    # Jika TIDAK ADA karakter Jepang sama sekali (model merespons bahasa Indonesia),
-    # coba terjemahkan kalimat aktualnya ke Bahasa Jepang secara dinamis agar konteks obrolan tetap nyambung!
-    if not is_japanese_text(cleaned):
-        cleaned_dialogue = cleaned
-        for tag in valid_tags:
-            if cleaned_dialogue.startswith(tag):
-                cleaned_dialogue = cleaned_dialogue[len(tag):].strip()
-                break
-        cleaned_dialogue = cleaned_dialogue.strip(' "“\'”')
-
-        translated_jp = ""
-        try:
-            import urllib.request
-            import urllib.parse
-            import json
-            t_url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=" + urllib.parse.quote(cleaned_dialogue)
-            req = urllib.request.Request(t_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-                    translated_jp = "".join([item[0] for item in data[0] if item and len(item) > 0 and item[0]]).strip()
-        except Exception:
-            pass
-
-        if translated_jp and is_japanese_text(translated_jp):
-            return f'{tag_prefix} "{translated_jp}"'
-
-        # Jika terjemahan ke Jepang offline / tidak tersedia,
-        # JANGAN PERNAH membuang jawaban cerdas model dengan canned fallback!
-        # Kembalikan teks asli model dengan tag emosi agar client (run.py)
-        # dapat menerjemahkannya untuk VoiceVox serta menampilkan teks aslinya di subtitle!
-        return f'{tag_prefix} "{cleaned_dialogue}"'
-
-    return cleaned
+    
+    return cleaned.strip()
 

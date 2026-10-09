@@ -42,12 +42,11 @@ class TestVTuberAndMultiVersionRoutes(unittest.TestCase):
         self.assertTrue(cleaned1.startswith("["), "Harus diawali tag ekspresi")
         self.assertTrue(is_japanese_text(cleaned1), "Harus mengandung karakter Jepang")
 
-        # 2. Output bahasa Indonesia (misal LLM meleset ke bahasa Indonesia): harus otomatis digantikan ke respons Jepang autentik
+        # 2. Output bahasa Indonesia: harus diawali [Tag] dan mempertahankan isi dialog cerdas Shiro
         raw_id = "Aduh... Renku bilang apa lagi? Tapi Shiro tahu banget kamu sayang aku!"
         cleaned2 = clean_vtuber_response(raw_id, "shiro kaka sayang kamu")
         self.assertTrue(cleaned2.startswith("["), "Harus diawali tag ekspresi")
-        self.assertTrue(is_japanese_text(cleaned2), "Harus dialihkan ke bahasa Jepang untuk VoiceVox TTS")
-        self.assertNotIn("Renku bilang apa lagi", cleaned2, "Teks Indonesia tidak boleh lolos ke VoiceVox")
+        self.assertIn("Shiro", cleaned2, "Respon asli Shiro harus dipertahankan")
 
         # 3. Output dengan tag di tengah: harus dipindahkan ke awal
         raw_mid = '何言ってるのよ！ふんだ！ [Angry]'

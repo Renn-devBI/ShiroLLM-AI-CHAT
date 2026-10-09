@@ -944,7 +944,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             )
             msgs = [{"role": "system", "content": system_prompt}]
             msgs.extend(clean_context)
-            vtuber_user_prompt = f"{user_input}\n(必ず[Tag]を付けて日本語で可愛く返答してください / Reply in native Japanese with [Tag])"
+            vtuber_user_prompt = f"{user_input}\n(Awali dengan [Tag] emosi yang tepat dan jawab dalam Bahasa Indonesia khas Shiro)"
             if image_base64 and has_vision:
                 img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
                 msgs.append({
