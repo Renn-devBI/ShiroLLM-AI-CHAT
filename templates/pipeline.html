@@ -16,7 +16,7 @@
 
         body {
             overflow: hidden !important;
-            background-color: #080c14;
+            background-color: #0c101d;
             color: #f1f5f9;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             margin: 0;
@@ -30,7 +30,7 @@
             flex-direction: column;
             width: 100vw;
             height: 100vh;
-            background-color: #080c14;
+            background-color: #0c101d;
         }
 
         /* Top Navigation Bar */
@@ -160,18 +160,34 @@
             height: calc(100vh - 56px);
         }
 
-        /* Interactive Canvas Viewport */
+        /* Interactive Canvas Viewport (n8n Infinite Grid) */
         .wf-canvas-viewport {
             flex: 1;
             position: relative;
             overflow: hidden;
-            background-color: #0b0f19;
-            cursor: grab;
+            background-color: #0c101d;
+            background-image: radial-gradient(circle, #25334c 1.5px, transparent 1.5px);
+            background-size: 24px 24px;
+            cursor: default;
             user-select: none;
+            outline: none;
+        }
+
+        .wf-canvas-viewport.grid-lines {
+            background-image: linear-gradient(to right, #172033 1px, transparent 1px),
+                              linear-gradient(to bottom, #172033 1px, transparent 1px);
+        }
+
+        .wf-canvas-viewport.grid-none {
+            background-image: none;
         }
 
         .wf-canvas-viewport.panning {
-            cursor: grabbing;
+            cursor: grabbing !important;
+        }
+
+        .wf-canvas-viewport.marquee-active {
+            cursor: crosshair !important;
         }
 
         /* Canvas Surface that scales and translates */
@@ -179,10 +195,20 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 3200px;
-            height: 2400px;
+            width: 3600px;
+            height: 2800px;
             transform-origin: 0 0;
             will-change: transform;
+        }
+
+        /* Selection Marquee Box */
+        .selection-marquee {
+            position: absolute;
+            border: 1px dashed #3b82f6;
+            background-color: rgba(59, 130, 246, 0.12);
+            pointer-events: none;
+            z-index: 85;
+            border-radius: 4px;
         }
 
         /* SVG Wire Connection Layer */
@@ -199,22 +225,58 @@
         .wire-path {
             fill: none;
             stroke: #334155;
-            stroke-width: 2px;
+            stroke-width: 2.2px;
             stroke-linecap: round;
-            transition: stroke 0.2s;
+            transition: stroke 0.15s, stroke-width 0.15s;
+            cursor: pointer;
+            pointer-events: stroke;
+        }
+
+        .wire-path:hover {
+            stroke: #60a5fa;
+            stroke-width: 3.5px;
+        }
+
+        .wire-path.selected {
+            stroke: #3b82f6 !important;
+            stroke-width: 3.5px !important;
         }
 
         .wire-path.active {
             stroke: #3b82f6;
-            stroke-width: 2px;
+            stroke-width: 2.5px;
         }
 
         .wire-pulse {
             fill: none;
-            stroke: #60a5fa;
+            stroke: #93c5fd;
             stroke-width: 2px;
             stroke-linecap: round;
             stroke-dasharray: 6 6;
+            pointer-events: none;
+        }
+
+        .wire-draft {
+            fill: none;
+            stroke: #3b82f6;
+            stroke-width: 2px;
+            stroke-linecap: round;
+            stroke-dasharray: 5 5;
+            pointer-events: none;
+        }
+
+        .wire-handle {
+            fill: #0f172a;
+            stroke: #3b82f6;
+            stroke-width: 2px;
+            cursor: pointer;
+            pointer-events: all;
+            transition: r 0.15s;
+        }
+
+        .wire-handle:hover {
+            fill: #3b82f6;
+            r: 7;
         }
 
         /* Nodes Layer */
@@ -227,17 +289,18 @@
             z-index: 10;
         }
 
-        /* Modern Draggable Flowchart Node Card */
+        /* Modern Draggable n8n Flowchart Node Card */
         .wf-node {
             position: absolute;
-            width: 200px;
-            background: #0d131f;
+            width: 210px;
+            background: #0f1624;
             border: 1px solid #1e293b;
             border-radius: 8px;
             padding: 10px 12px;
             cursor: pointer;
             transition: border-color 0.15s, background-color 0.15s;
             user-select: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
 
         .wf-node:hover {
@@ -245,8 +308,9 @@
         }
 
         .wf-node.selected {
-            border-color: #3b82f6;
-            background: #111a2c;
+            border-color: #3b82f6 !important;
+            background: #131e33 !important;
+            box-shadow: 0 0 0 1px #3b82f6, 0 4px 16px rgba(0, 0, 0, 0.4) !important;
         }
 
         .wf-node.running {
@@ -256,21 +320,22 @@
         .wf-node.dragging {
             opacity: 0.95;
             cursor: grabbing !important;
-            border-color: #3b82f6 !important;
             z-index: 100 !important;
         }
 
-        /* Ports on Node Edges */
+        /* Ports on Node Edges (n8n Input/Output Handles) */
         .wf-port {
             position: absolute;
             top: 50%;
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             background: #0f172a;
-            border: 1.5px solid #64748b;
+            border: 2px solid #64748b;
             transform: translateY(-50%);
             transition: all 0.15s;
+            cursor: crosshair;
+            z-index: 30;
         }
 
         .wf-port.port-in {
@@ -281,10 +346,16 @@
             right: -5px;
         }
 
-        .wf-node:hover .wf-port,
-        .wf-node.selected .wf-port {
+        .wf-port:hover {
+            transform: translateY(-50%) scale(1.35);
             border-color: #3b82f6;
             background: #3b82f6;
+        }
+
+        .wf-port.valid-target {
+            border-color: #10b981 !important;
+            background: #10b981 !important;
+            transform: translateY(-50%) scale(1.5) !important;
         }
 
         /* Node Inner Content */
@@ -350,17 +421,17 @@
             margin-top: 3px;
         }
 
-        /* Floating Canvas Toolbar Controls */
+        /* Floating Canvas Controls (n8n Style Toolbar) */
         .canvas-toolbar {
             position: absolute;
             bottom: 20px;
             left: 20px;
             display: flex;
             align-items: center;
-            gap: 4px;
-            background: #0f172a;
+            gap: 5px;
+            background: #0d131f;
             border: 1px solid #1e293b;
-            padding: 4px;
+            padding: 5px 8px;
             border-radius: 8px;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
             z-index: 40;
@@ -386,18 +457,40 @@
             background: #1e293b;
         }
 
+        .canvas-tool-btn.active {
+            background: #1e293b;
+            color: #3b82f6;
+            border: 1px solid #3b82f6;
+        }
+
         .canvas-toolbar-divider {
             width: 1px;
             height: 18px;
             background: #1e293b;
-            margin: 0 2px;
+            margin: 0 3px;
         }
 
         .canvas-zoom-text {
             font-size: 11px;
             font-family: 'JetBrains Mono', monospace;
             color: #94a3b8;
-            padding: 0 6px;
+            padding: 0 4px;
+        }
+
+        .canvas-select {
+            background: #090e17;
+            border: 1px solid #1e293b;
+            color: #cbd5e1;
+            font-size: 11.5px;
+            font-family: 'Inter', sans-serif;
+            border-radius: 6px;
+            padding: 4px 6px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .canvas-select:focus {
+            border-color: #3b82f6;
         }
 
         /* Right Side Data Inspector Panel */
@@ -534,7 +627,7 @@
                 </div>
                 <div class="wf-brand-titles">
                     <span class="wf-title">SHIRO WORKFLOW</span>
-                    <span class="wf-pill-tag">Flowchart</span>
+                    <span class="wf-pill-tag">n8n Canvas</span>
                 </div>
             </div>
 
@@ -563,14 +656,15 @@
 
         <!-- Main Interactive Workspace -->
         <div class="wf-main">
-            <!-- Draggable & Pannable Canvas Viewport -->
-            <div class="wf-canvas-viewport" id="canvas-viewport">
+            <!-- Draggable & Pannable Canvas Viewport with n8n Dot Grid -->
+            <div class="wf-canvas-viewport" id="canvas-viewport" tabindex="0">
                 <div class="wf-canvas-surface" id="canvas-surface">
+                    <div id="selection-marquee" class="selection-marquee" style="display: none;"></div>
                     <svg id="connections-svg" class="connections-layer"></svg>
                     <div id="nodes-layer" class="nodes-layer"></div>
                 </div>
 
-                <!-- Floating Canvas Controls -->
+                <!-- Floating Canvas Controls (n8n Style) -->
                 <div class="canvas-toolbar">
                     <button type="button" class="canvas-tool-btn" onclick="zoomIn()" title="Perbesar (Zoom In)">
                         <i class="ph ph-plus"></i>
@@ -585,6 +679,31 @@
                     </button>
                     <button type="button" class="canvas-tool-btn" onclick="autoLayoutNodes()" title="Tata Ulang Posisi Flowchart Otomatis">
                         <i class="ph ph-magic-wand"></i>
+                    </button>
+                    <div class="canvas-toolbar-divider"></div>
+                    <!-- Multi-Select & Box Selection Controls -->
+                    <button type="button" class="canvas-tool-btn" id="btn-select-all" onclick="selectAllNodes()" title="Pilih Semua Box (Ctrl+A)">
+                        <i class="ph ph-squares-four"></i>
+                    </button>
+                    <button type="button" class="canvas-tool-btn" id="btn-toggle-marquee" onclick="toggleMarqueeMode()" title="Mode Box Select (Tarik area kotak untuk pilih banyak)">
+                        <i class="ph ph-bounding-box"></i>
+                    </button>
+                    <span class="canvas-zoom-text" id="selection-status-badge">1 box</span>
+                    <div class="canvas-toolbar-divider"></div>
+                    <!-- Line Routing / Retance Garis Controls -->
+                    <select id="wire-style-select" class="canvas-select" onchange="setWireStyle(this.value)" title="Ubah Rentang / Model Garis (Retance Garis)">
+                        <option value="curved">Kurva Bezier</option>
+                        <option value="step">Garis Siku (Step)</option>
+                        <option value="straight">Garis Lurus</option>
+                    </select>
+                    <button type="button" class="canvas-tool-btn" onclick="resetDefaultConnections()" title="Kembalikan Garis Alur Default">
+                        <i class="ph ph-arrow-counter-clockwise"></i>
+                    </button>
+                    <button type="button" class="canvas-tool-btn" id="btn-grid-toggle" onclick="cycleGridStyle()" title="Ganti Mode Grid (Titik / Garis / Polos)">
+                        <i class="ph ph-grid-nine"></i>
+                    </button>
+                    <button type="button" class="canvas-tool-btn" id="btn-delete-wire" onclick="deleteSelectedWire()" title="Hapus Garis Terpilih (Del)" style="display: none; color: #ef4444;">
+                        <i class="ph ph-trash"></i>
                     </button>
                 </div>
             </div>
@@ -616,30 +735,31 @@
         // Default Flowchart Node Positions (Grid: 2 rows of 4 nodes, clean left-to-right flow)
         const DEFAULT_LAYOUT = {
             "node_input":   { x: 60,  y: 80 },
-            "node_emotion": { x: 310, y: 80 },
-            "node_memory":  { x: 560, y: 80 },
-            "node_prompt":  { x: 810, y: 80 },
-            "node_llm":     { x: 60,  y: 260 },
-            "node_filter":  { x: 310, y: 260 },
-            "node_state":   { x: 560, y: 260 },
-            "node_output":  { x: 810, y: 260 }
+            "node_emotion": { x: 330, y: 80 },
+            "node_memory":  { x: 600, y: 80 },
+            "node_prompt":  { x: 870, y: 80 },
+            "node_llm":     { x: 60,  y: 280 },
+            "node_filter":  { x: 330, y: 280 },
+            "node_state":   { x: 600, y: 280 },
+            "node_output":  { x: 870, y: 280 }
         };
 
-        // Execution Pipeline Sequences (Directed Edges)
-        const FLOW_EDGES = [
-            { from: "node_input",   to: "node_emotion" },
-            { from: "node_emotion", to: "node_memory" },
-            { from: "node_memory",  to: "node_prompt" },
-            { from: "node_prompt",  to: "node_llm" },
-            { from: "node_llm",     to: "node_filter" },
-            { from: "node_filter",  to: "node_state" },
-            { from: "node_state",   to: "node_output" }
+        // Execution Pipeline Sequences (Default Directed Edges)
+        const DEFAULT_EDGES = [
+            { from: "node_input",   to: "node_emotion", curvature: 0 },
+            { from: "node_emotion", to: "node_memory",  curvature: 0 },
+            { from: "node_memory",  to: "node_prompt",  curvature: 0 },
+            { from: "node_prompt",  to: "node_llm",     curvature: 0 },
+            { from: "node_llm",     to: "node_filter",  curvature: 0 },
+            { from: "node_filter",  to: "node_state",   curvature: 0 },
+            { from: "node_state",   to: "node_output",  curvature: 0 }
         ];
 
         // State Variables
         let nodePositions = loadSavedPositions();
+        let FLOW_EDGES = loadSavedEdges();
         let currentTrace = null;
-        let selectedNodeId = "node_input";
+        let selectedNodeIds = new Set(["node_input"]);
         let activeTab = "output";
         let simTimers = [];
 
@@ -650,19 +770,44 @@
         const MIN_ZOOM = 0.45;
         const MAX_ZOOM = 2.0;
 
-        // Dragging State
+        // Wire Routing / Retance Style
+        let wireStyle = localStorage.getItem('shiro_wire_style') || 'curved';
+        let selectedEdgeIndex = -1;
+        let isDraggingHandle = false;
+        let draggedEdgeIndex = -1;
+        let dragHandleStartY = 0;
+        let dragHandleStartCurvature = 0;
+
+        // Interactive Port Wire Connecting
+        let isConnectingWire = false;
+        let wireConnectSourceNodeId = null;
+        let wireDraftMousePos = { x: 0, y: 0 };
+
+        // Grid Styles (0: Dots, 1: Lines, 2: None)
+        let gridStyleIndex = 0;
+        const gridClasses = ['', 'grid-lines', 'grid-none'];
+
+        // Marquee Multi-Select State
+        let isMarqueeMode = false;
+        let isMarqueeActive = false;
+        let marqueeClientStartX = 0;
+        let marqueeClientStartY = 0;
+        let marqueeCanvasStartX = 0;
+        let marqueeCanvasStartY = 0;
+
+        // Canvas Panning State
         let isPanningCanvas = false;
         let startPanMouseX = 0;
         let startPanMouseY = 0;
         let startPanX = 0;
         let startPanY = 0;
 
+        // Node Dragging State (Multi-Node movement)
         let isDraggingNode = false;
-        let draggedNodeId = null;
+        let dragAnchorNodeId = null;
         let dragStartMouseX = 0;
         let dragStartMouseY = 0;
-        let dragNodeStartX = 0;
-        let dragNodeStartY = 0;
+        let multiDragStartPos = {};
         let hasNodeMoved = false;
 
         // Elements
@@ -671,11 +816,16 @@
         const svgEl = document.getElementById('connections-svg');
         const nodesLayerEl = document.getElementById('nodes-layer');
         const zoomTextEl = document.getElementById('zoom-level-text');
+        const marqueeEl = document.getElementById('selection-marquee');
+        const selectionBadgeEl = document.getElementById('selection-status-badge');
+        const wireStyleSelectEl = document.getElementById('wire-style-select');
+        const btnDeleteWireEl = document.getElementById('btn-delete-wire');
+        const btnMarqueeEl = document.getElementById('btn-toggle-marquee');
 
         // Load / Save positions
         function loadSavedPositions() {
             try {
-                const saved = localStorage.getItem('shiro_flowchart_layout_v2');
+                const saved = localStorage.getItem('shiro_flowchart_layout_v3');
                 if (saved) return { ...DEFAULT_LAYOUT, ...JSON.parse(saved) };
             } catch (e) {}
             return { ...DEFAULT_LAYOUT };
@@ -683,8 +833,56 @@
 
         function savePositions() {
             try {
-                localStorage.setItem('shiro_flowchart_layout_v2', JSON.stringify(nodePositions));
+                localStorage.setItem('shiro_flowchart_layout_v3', JSON.stringify(nodePositions));
             } catch (e) {}
+        }
+
+        // Load / Save Edges
+        function loadSavedEdges() {
+            try {
+                const saved = localStorage.getItem('shiro_flowchart_edges_v3');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+                }
+            } catch (e) {}
+            return JSON.parse(JSON.stringify(DEFAULT_EDGES));
+        }
+
+        function saveEdges() {
+            try {
+                localStorage.setItem('shiro_flowchart_edges_v3', JSON.stringify(FLOW_EDGES));
+            } catch (e) {}
+        }
+
+        function resetDefaultConnections() {
+            FLOW_EDGES = JSON.parse(JSON.stringify(DEFAULT_EDGES));
+            selectedEdgeIndex = -1;
+            saveEdges();
+            updateConnectionLines();
+        }
+
+        function deleteSelectedWire() {
+            if (selectedEdgeIndex >= 0 && selectedEdgeIndex < FLOW_EDGES.length) {
+                FLOW_EDGES.splice(selectedEdgeIndex, 1);
+                selectedEdgeIndex = -1;
+                saveEdges();
+                updateConnectionLines();
+            }
+        }
+
+        function setWireStyle(val) {
+            wireStyle = val;
+            localStorage.setItem('shiro_wire_style', val);
+            updateConnectionLines();
+        }
+
+        function cycleGridStyle() {
+            gridStyleIndex = (gridStyleIndex + 1) % 3;
+            viewportEl.classList.remove('grid-lines', 'grid-none');
+            if (gridClasses[gridStyleIndex]) {
+                viewportEl.classList.add(gridClasses[gridStyleIndex]);
+            }
         }
 
         function autoLayoutNodes() {
@@ -725,99 +923,323 @@
         function applyViewportTransform() {
             surfaceEl.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
             viewportEl.style.backgroundPosition = `${panX}px ${panY}px`;
+            viewportEl.style.backgroundSize = `${24 * zoom}px ${24 * zoom}px`;
             zoomTextEl.textContent = `${Math.round(zoom * 100)}%`;
         }
 
-        // Initialize Pan & Zoom Handlers
+        // Multi-Select Helpers
+        function selectAllNodes() {
+            const allIds = Object.keys(DEFAULT_LAYOUT);
+            selectedNodeIds = new Set(allIds);
+            updateSelectionVisuals();
+            updateInspector();
+        }
+
+        function toggleMarqueeMode() {
+            isMarqueeMode = !isMarqueeMode;
+            btnMarqueeEl.classList.toggle('active', isMarqueeMode);
+            viewportEl.classList.toggle('marquee-mode', isMarqueeMode);
+        }
+
+        function updateSelectionVisuals() {
+            document.querySelectorAll('.wf-node').forEach(el => {
+                el.classList.toggle('selected', selectedNodeIds.has(el.id));
+            });
+            const count = selectedNodeIds.size;
+            selectionBadgeEl.textContent = count === 1 ? `1 box` : `${count} box`;
+            if (btnDeleteWireEl) {
+                btnDeleteWireEl.style.display = selectedEdgeIndex >= 0 ? 'inline-flex' : 'none';
+            }
+        }
+
+        // Convert client coordinates to canvas surface coordinates
+        function clientToCanvasCoords(clientX, clientY) {
+            const rect = viewportEl.getBoundingClientRect();
+            const relX = clientX - rect.left;
+            const relY = clientY - rect.top;
+            return {
+                x: (relX - panX) / zoom,
+                y: (relY - panY) / zoom
+            };
+        }
+
+        // Viewport Pointer Events (Pan, Box Selection, Wire Drafting)
         viewportEl.addEventListener('pointerdown', (e) => {
-            if (e.target === viewportEl || e.target === surfaceEl || e.target === svgEl) {
-                isPanningCanvas = true;
-                viewportEl.classList.add('panning');
-                startPanMouseX = e.clientX;
-                startPanMouseY = e.clientY;
-                startPanX = panX;
-                startPanY = panY;
+            const isCanvasBackground = (e.target === viewportEl || e.target === surfaceEl || e.target === svgEl);
+
+            if (isCanvasBackground) {
+                // If user clicks empty canvas without Shift, clear selected edge
+                if (selectedEdgeIndex !== -1) {
+                    selectedEdgeIndex = -1;
+                    updateConnectionLines();
+                }
+
+                // If in Marquee mode, or holding Shift, or standard Left Click -> Marquee Box Selection!
+                if (isMarqueeMode || e.shiftKey || e.button === 0) {
+                    isMarqueeActive = true;
+                    viewportEl.classList.add('marquee-active');
+                    const canvasCoords = clientToCanvasCoords(e.clientX, e.clientY);
+                    marqueeClientStartX = e.clientX;
+                    marqueeClientStartY = e.clientY;
+                    marqueeCanvasStartX = canvasCoords.x;
+                    marqueeCanvasStartY = canvasCoords.y;
+
+                    marqueeEl.style.left = `${marqueeCanvasStartX}px`;
+                    marqueeEl.style.top = `${marqueeCanvasStartY}px`;
+                    marqueeEl.style.width = '0px';
+                    marqueeEl.style.height = '0px';
+                    marqueeEl.style.display = 'block';
+
+                    if (!e.shiftKey && !e.ctrlKey) {
+                        selectedNodeIds.clear();
+                    }
+                    updateSelectionVisuals();
+                } else {
+                    // Right click or other buttons pan canvas
+                    isPanningCanvas = true;
+                    viewportEl.classList.add('panning');
+                    startPanMouseX = e.clientX;
+                    startPanMouseY = e.clientY;
+                    startPanX = panX;
+                    startPanY = panY;
+                }
             }
         });
 
         window.addEventListener('pointermove', (e) => {
+            if (isConnectingWire) {
+                // Dragging draft wire from a port
+                const canvasCoords = clientToCanvasCoords(e.clientX, e.clientY);
+                wireDraftMousePos = canvasCoords;
+                renderDraftWire();
+                return;
+            }
+
+            if (isDraggingHandle && draggedEdgeIndex >= 0) {
+                // Adjusting line curvature / retance
+                const dy = (e.clientY - dragHandleStartY) / zoom;
+                if (FLOW_EDGES[draggedEdgeIndex]) {
+                    FLOW_EDGES[draggedEdgeIndex].curvature = Math.round(dragHandleStartCurvature + dy);
+                    updateConnectionLines();
+                }
+                return;
+            }
+
+            if (isMarqueeActive) {
+                // Updating selection box
+                const canvasCoords = clientToCanvasCoords(e.clientX, e.clientY);
+                const minX = Math.min(marqueeCanvasStartX, canvasCoords.x);
+                const minY = Math.min(marqueeCanvasStartY, canvasCoords.y);
+                const width = Math.abs(canvasCoords.x - marqueeCanvasStartX);
+                const height = Math.abs(canvasCoords.y - marqueeCanvasStartY);
+
+                marqueeEl.style.left = `${minX}px`;
+                marqueeEl.style.top = `${minY}px`;
+                marqueeEl.style.width = `${width}px`;
+                marqueeEl.style.height = `${height}px`;
+
+                // Calculate intersections with nodes
+                Object.keys(nodePositions).forEach(nodeId => {
+                    const pos = nodePositions[nodeId];
+                    const nodeW = 210;
+                    const nodeH = 85;
+                    const intersects = (pos.x + nodeW >= minX && pos.x <= minX + width &&
+                                        pos.y + nodeH >= minY && pos.y <= minY + height);
+                    if (intersects) {
+                        selectedNodeIds.add(nodeId);
+                    }
+                });
+                updateSelectionVisuals();
+                return;
+            }
+
             if (isPanningCanvas) {
                 panX = startPanX + (e.clientX - startPanMouseX);
                 panY = startPanY + (e.clientY - startPanMouseY);
                 applyViewportTransform();
-            } else if (isDraggingNode && draggedNodeId) {
+            } else if (isDraggingNode && dragAnchorNodeId) {
+                // Move ALL selected boxes together synchronously
                 const dx = (e.clientX - dragStartMouseX) / zoom;
                 const dy = (e.clientY - dragStartMouseY) / zoom;
-                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
                     hasNodeMoved = true;
                 }
-                const newX = Math.max(20, Math.round(dragNodeStartX + dx));
-                const newY = Math.max(20, Math.round(dragNodeStartY + dy));
-                nodePositions[draggedNodeId] = { x: newX, y: newY };
 
-                const nodeEl = document.getElementById(draggedNodeId);
-                if (nodeEl) {
-                    nodeEl.style.left = `${newX}px`;
-                    nodeEl.style.top = `${newY}px`;
-                }
+                selectedNodeIds.forEach(id => {
+                    const initial = multiDragStartPos[id] || nodePositions[id] || { x: 0, y: 0 };
+                    const newX = Math.max(10, Math.round(initial.x + dx));
+                    const newY = Math.max(10, Math.round(initial.y + dy));
+                    nodePositions[id] = { x: newX, y: newY };
+
+                    const nodeEl = document.getElementById(id);
+                    if (nodeEl) {
+                        nodeEl.style.left = `${newX}px`;
+                        nodeEl.style.top = `${newY}px`;
+                    }
+                });
                 updateConnectionLines();
             }
         });
 
-        window.addEventListener('pointerup', () => {
+        window.addEventListener('pointerup', (e) => {
+            if (isConnectingWire) {
+                isConnectingWire = false;
+                wireConnectSourceNodeId = null;
+                document.querySelectorAll('.wf-port').forEach(p => p.classList.remove('valid-target'));
+                removeDraftWire();
+            }
+
+            if (isDraggingHandle) {
+                isDraggingHandle = false;
+                draggedEdgeIndex = -1;
+                saveEdges();
+            }
+
+            if (isMarqueeActive) {
+                isMarqueeActive = false;
+                viewportEl.classList.remove('marquee-active');
+                marqueeEl.style.display = 'none';
+                if (selectedNodeIds.size === 0) {
+                    selectedNodeIds.add("node_input");
+                }
+                updateSelectionVisuals();
+                updateInspector();
+            }
+
             if (isPanningCanvas) {
                 isPanningCanvas = false;
                 viewportEl.classList.remove('panning');
             }
+
             if (isDraggingNode) {
-                const nodeEl = document.getElementById(draggedNodeId);
-                if (nodeEl) nodeEl.classList.remove('dragging');
+                document.querySelectorAll('.wf-node.dragging').forEach(el => el.classList.remove('dragging'));
                 isDraggingNode = false;
-                draggedNodeId = null;
+                dragAnchorNodeId = null;
                 savePositions();
             }
         });
 
         viewportEl.addEventListener('wheel', (e) => {
             e.preventDefault();
-            const delta = e.deltaY < 0 ? 1.1 : 0.9;
+            const delta = e.deltaY < 0 ? 1.12 : 0.89;
             setZoom(zoom * delta, e.clientX, e.clientY);
         }, { passive: false });
 
-        // Node Dragging PointerDown Setup
+        // Node PointerDown (Multi-Node selection & Drag setup)
         function attachNodeDragListeners(nodeEl, nodeId) {
             nodeEl.addEventListener('pointerdown', (e) => {
                 e.stopPropagation();
-                isDraggingNode = true;
-                draggedNodeId = nodeId;
                 hasNodeMoved = false;
+
+                // Shift or Ctrl click toggles individual node in selection
+                if (e.shiftKey || e.ctrlKey) {
+                    if (selectedNodeIds.has(nodeId)) {
+                        if (selectedNodeIds.size > 1) selectedNodeIds.delete(nodeId);
+                    } else {
+                        selectedNodeIds.add(nodeId);
+                    }
+                } else {
+                    // Regular click: if node wasn't in selection, it becomes the only selected node
+                    if (!selectedNodeIds.has(nodeId)) {
+                        selectedNodeIds = new Set([nodeId]);
+                    }
+                }
+                updateSelectionVisuals();
+
+                // Prepare multi-node drag
+                isDraggingNode = true;
+                dragAnchorNodeId = nodeId;
                 dragStartMouseX = e.clientX;
                 dragStartMouseY = e.clientY;
-                dragNodeStartX = nodePositions[nodeId]?.x || 0;
-                dragNodeStartY = nodePositions[nodeId]?.y || 0;
-                nodeEl.classList.add('dragging');
+
+                multiDragStartPos = {};
+                selectedNodeIds.forEach(id => {
+                    multiDragStartPos[id] = { ...(nodePositions[id] || { x: 0, y: 0 }) };
+                    const el = document.getElementById(id);
+                    if (el) el.classList.add('dragging');
+                });
             });
 
             nodeEl.addEventListener('click', (e) => {
                 if (!hasNodeMoved) {
-                    selectNode(nodeId);
+                    if (!e.shiftKey && !e.ctrlKey) {
+                        selectedNodeIds = new Set([nodeId]);
+                        updateSelectionVisuals();
+                    }
+                    updateInspector();
                 }
             });
         }
 
-        // Generate Smooth Cubic Bezier Curves between Ports
-        function getSmoothBezier(x1, y1, x2, y2) {
-            const dx = x2 - x1;
-            const dy = y2 - y1;
+        // Port Wire Linking Setup
+        function attachPortListeners(nodeId) {
+            const nodeEl = document.getElementById(nodeId);
+            if (!nodeEl) return;
 
-            if (dx >= 40) {
-                const offset = Math.max(45, dx * 0.45);
-                return `M ${x1} ${y1} C ${x1 + offset} ${y1}, ${x2 - offset} ${y2}, ${x2} ${y2}`;
-            } else {
-                const curveDrop = 45;
-                const midY = (y1 + y2) / 2;
-                return `M ${x1} ${y1} C ${x1 + curveDrop} ${y1}, ${x1 + curveDrop} ${midY}, ${(x1 + x2) / 2} ${midY} C ${x2 - curveDrop} ${midY}, ${x2 - curveDrop} ${y2}, ${x2} ${y2}`;
+            const outPort = nodeEl.querySelector('.port-out');
+            const inPort = nodeEl.querySelector('.port-in');
+
+            if (outPort) {
+                outPort.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    isConnectingWire = true;
+                    wireConnectSourceNodeId = nodeId;
+                    const canvasCoords = clientToCanvasCoords(e.clientX, e.clientY);
+                    wireDraftMousePos = canvasCoords;
+
+                    // Highlight all other input ports as valid targets
+                    document.querySelectorAll('.wf-node').forEach(item => {
+                        if (item.id !== nodeId) {
+                            const pIn = item.querySelector('.port-in');
+                            if (pIn) pIn.classList.add('valid-target');
+                        }
+                    });
+                });
             }
+
+            if (inPort) {
+                inPort.addEventListener('pointerup', (e) => {
+                    if (isConnectingWire && wireConnectSourceNodeId && wireConnectSourceNodeId !== nodeId) {
+                        e.stopPropagation();
+                        // Add new connection if doesn't already exist
+                        const exists = FLOW_EDGES.some(ed => ed.from === wireConnectSourceNodeId && ed.to === nodeId);
+                        if (!exists) {
+                            FLOW_EDGES.push({
+                                from: wireConnectSourceNodeId,
+                                to: nodeId,
+                                curvature: 0
+                            });
+                            saveEdges();
+                            updateConnectionLines();
+                        }
+                    }
+                });
+            }
+        }
+
+        // Path Calculations for different wire styles ("Retance Garis")
+        function getSmoothBezier(x1, y1, x2, y2, curvature = 0) {
+            const dx = x2 - x1;
+            const offset = Math.max(45, Math.abs(dx) * 0.45);
+            return `M ${x1} ${y1} C ${x1 + offset} ${y1 + curvature}, ${x2 - offset} ${y2 - curvature}, ${x2} ${y2}`;
+        }
+
+        function getStepPath(x1, y1, x2, y2, curvature = 0) {
+            const midX = (x1 + x2) / 2 + curvature;
+            return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`;
+        }
+
+        function getStraightPath(x1, y1, x2, y2) {
+            return `M ${x1} ${y1} L ${x2} ${y2}`;
+        }
+
+        function getEdgePathData(x1, y1, x2, y2, curvature = 0) {
+            if (wireStyle === 'step') {
+                return getStepPath(x1, y1, x2, y2, curvature);
+            } else if (wireStyle === 'straight') {
+                return getStraightPath(x1, y1, x2, y2);
+            }
+            return getSmoothBezier(x1, y1, x2, y2, curvature);
         }
 
         // Render Connection Wires in SVG
@@ -825,16 +1247,17 @@
             if (!svgEl) return;
             let svgContent = '';
 
-            FLOW_EDGES.forEach(edge => {
+            FLOW_EDGES.forEach((edge, idx) => {
                 const fromPos = nodePositions[edge.from] || { x: 0, y: 0 };
                 const toPos = nodePositions[edge.to] || { x: 0, y: 0 };
 
-                const x1 = fromPos.x + 200;
-                const y1 = fromPos.y + 34;
+                const x1 = fromPos.x + 210;
+                const y1 = fromPos.y + 42;
                 const x2 = toPos.x;
-                const y2 = toPos.y + 34;
+                const y2 = toPos.y + 42;
 
-                const pathData = getSmoothBezier(x1, y1, x2, y2);
+                const curve = edge.curvature || 0;
+                const pathData = getEdgePathData(x1, y1, x2, y2, curve);
 
                 const fromNode = currentTrace?.nodes?.find(n => n.id === edge.from);
                 const toNode = currentTrace?.nodes?.find(n => n.id === edge.to);
@@ -842,14 +1265,68 @@
                 const isActive = (fromNode?.status === 'success' || fromNode?.status === 'running') &&
                                  (toNode?.status === 'success' || toNode?.status === 'running');
                 const isRunning = toNode?.status === 'running';
+                const isSelected = selectedEdgeIndex === idx;
+
+                const midX = (x1 + x2) / 2;
+                const midY = (y1 + y2) / 2 + (wireStyle === 'curved' ? curve : 0);
 
                 svgContent += `
-                    <path class="wire-path ${isActive ? 'active' : ''}" d="${pathData}"></path>
-                    ${isRunning ? `<path class="wire-pulse" d="${pathData}"></path>` : ''}
+                    <g class="wire-group" data-edge-idx="${idx}">
+                        <path class="wire-path ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}"
+                              d="${pathData}"
+                              onclick="selectWire(event, ${idx})"></path>
+                        ${isRunning ? `<path class="wire-pulse" d="${pathData}"></path>` : ''}
+                        <circle class="wire-handle" cx="${midX}" cy="${midY}" r="5"
+                                onpointerdown="startDragHandle(event, ${idx})"
+                                title="Tarik untuk ubah lengkungan/retance garis"></circle>
+                    </g>
                 `;
             });
 
             svgEl.innerHTML = svgContent;
+            if (btnDeleteWireEl) {
+                btnDeleteWireEl.style.display = selectedEdgeIndex >= 0 ? 'inline-flex' : 'none';
+            }
+        }
+
+        function selectWire(event, idx) {
+            event.stopPropagation();
+            selectedEdgeIndex = (selectedEdgeIndex === idx) ? -1 : idx;
+            updateConnectionLines();
+        }
+
+        function startDragHandle(event, idx) {
+            event.stopPropagation();
+            isDraggingHandle = true;
+            draggedEdgeIndex = idx;
+            dragHandleStartY = event.clientY;
+            dragHandleStartCurvature = FLOW_EDGES[idx]?.curvature || 0;
+        }
+
+        // Live Drafting Wire during Port Drag
+        function renderDraftWire() {
+            if (!svgEl || !wireConnectSourceNodeId) return;
+            const fromPos = nodePositions[wireConnectSourceNodeId] || { x: 0, y: 0 };
+            const x1 = fromPos.x + 210;
+            const y1 = fromPos.y + 42;
+            const x2 = wireDraftMousePos.x;
+            const y2 = wireDraftMousePos.y;
+
+            const pathData = getEdgePathData(x1, y1, x2, y2, 0);
+
+            let draftEl = document.getElementById('temp-draft-wire');
+            if (!draftEl) {
+                draftEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                draftEl.setAttribute('id', 'temp-draft-wire');
+                draftEl.setAttribute('class', 'wire-draft');
+                svgEl.appendChild(draftEl);
+            }
+            draftEl.setAttribute('d', pathData);
+        }
+
+        function removeDraftWire() {
+            const draftEl = document.getElementById('temp-draft-wire');
+            if (draftEl) draftEl.remove();
         }
 
         function updateNodePositionsInDOM() {
@@ -875,7 +1352,7 @@
             let nodesHtml = '';
             trace.nodes.forEach(node => {
                 const pos = nodePositions[node.id] || DEFAULT_LAYOUT[node.id] || { x: 100, y: 100 };
-                const isSelected = selectedNodeId === node.id;
+                const isSelected = selectedNodeIds.has(node.id);
                 const isRunning = node.status === 'running';
                 const isSuccess = node.status === 'success';
 
@@ -890,12 +1367,12 @@
                 }
 
                 let summaryClean = node.summary || '';
-                if (summaryClean.length > 28) summaryClean = summaryClean.slice(0, 27) + '...';
+                if (summaryClean.length > 26) summaryClean = summaryClean.slice(0, 25) + '...';
 
                 nodesHtml += `
                     <div class="wf-node ${isSelected ? 'selected' : ''} ${node.status || ''}" id="${node.id}" style="left: ${pos.x}px; top: ${pos.y}px;">
-                        <div class="wf-port port-in"></div>
-                        <div class="wf-port port-out"></div>
+                        <div class="wf-port port-in" title="Port Input (Target Koneksi)"></div>
+                        <div class="wf-port port-out" title="Port Output (Tarik ke input node lain)"></div>
                         <div class="wf-node-top">
                             <div class="wf-node-icon" style="background: ${node.color || '#3b82f6'};">
                                 <i class="ph ${node.icon || 'ph-gear'}"></i>
@@ -910,23 +1387,18 @@
 
             nodesLayerEl.innerHTML = nodesHtml;
 
-            // Bind drag & selection events
+            // Bind drag, selection, & port events
             trace.nodes.forEach(node => {
                 const nodeEl = document.getElementById(node.id);
-                if (nodeEl) attachNodeDragListeners(nodeEl, node.id);
+                if (nodeEl) {
+                    attachNodeDragListeners(nodeEl, node.id);
+                    attachPortListeners(node.id);
+                }
             });
 
             updateConnectionLines();
             updateInspector();
-        }
-
-        // Select Node
-        function selectNode(nodeId) {
-            selectedNodeId = nodeId;
-            document.querySelectorAll('.wf-node').forEach(el => {
-                el.classList.toggle('selected', el.id === nodeId);
-            });
-            updateInspector();
+            updateSelectionVisuals();
         }
 
         // Inspector View & Tabs
@@ -939,7 +1411,8 @@
 
         function updateInspector() {
             if (!currentTrace || !currentTrace.nodes) return;
-            const node = currentTrace.nodes.find(n => n.id === selectedNodeId) || currentTrace.nodes[0];
+            const firstSelectedId = Array.from(selectedNodeIds)[0] || "node_input";
+            const node = currentTrace.nodes.find(n => n.id === firstSelectedId) || currentTrace.nodes[0];
             if (!node) return;
 
             document.getElementById('side-node-name').textContent = node.name;
@@ -957,6 +1430,26 @@
                 alert("Data JSON berhasil disalin!");
             });
         }
+
+        // Keyboard Shortcuts (Ctrl+A to select all, Delete to delete selected wire)
+        window.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                selectAllNodes();
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedEdgeIndex >= 0) {
+                    e.preventDefault();
+                    deleteSelectedWire();
+                }
+            } else if (e.key === 'Escape') {
+                if (selectedEdgeIndex >= 0) {
+                    selectedEdgeIndex = -1;
+                    updateConnectionLines();
+                }
+            }
+        });
 
         // Simulation Runner
         function clearSim() {
@@ -1102,6 +1595,7 @@
 
         // Initialize on Load
         window.addEventListener('DOMContentLoaded', () => {
+            if (wireStyleSelectEl) wireStyleSelectEl.value = wireStyle;
             fetchLatestTrace();
             initSSE();
             resetView();

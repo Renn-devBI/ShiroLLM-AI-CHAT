@@ -242,6 +242,7 @@
                 <button class="tab-btn active" data-tab="user" type="button">Profil Pengguna</button>
                 <button class="tab-btn" data-tab="ai" type="button">Profil Shiro</button>
                 <button class="tab-btn" data-tab="model" type="button">Model AI</button>
+                <button class="tab-btn" data-tab="api" type="button">API Key</button>
             </div>
 
             <!-- User Profile Tab -->
@@ -325,6 +326,28 @@
                     </div>
 
                     <button type="button" onclick="switchModel()" class="btn-primary">Terapkan Pergantian Model</button>
+                </div>
+            </div>
+
+            <!-- API Key Tab -->
+            <div id="api-tab" class="tab-content">
+                <div class="model-card">
+                    <div class="form-field">
+                        <label for="active-api-key-input">API Key Aktif (External Bots &amp; Integrasi)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="active-api-key-input" readonly value="Memuat key..." style="flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; background: var(--bg-input);">
+                            <button type="button" class="btn-secondary" onclick="copyApiKey()" title="Salin API Key">
+                                <i class="ph ph-copy"></i>
+                            </button>
+                        </div>
+                        <span class="field-help">Gunakan API Key ini pada header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code> untuk menghubungkan WhatsApp Bot, VTuber, Telegram, atau script Python eksternal.</span>
+                    </div>
+
+                    <div style="margin-top: 15px; display: flex; gap: 10px;">
+                        <button type="button" onclick="regenerateApiKey()" class="btn-primary" id="btn-regen-key">
+                            <i class="ph ph-arrows-clockwise"></i> Generate Key Baru
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

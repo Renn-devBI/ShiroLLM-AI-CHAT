@@ -118,44 +118,91 @@ def broadcast_pipeline_trace(trace):
             if dq in pipeline_subscribers:
                 pipeline_subscribers.remove(dq)
 
-def get_or_create_api_key():
-    """Load or generate a persistent API Key for external bots/apps (WhatsApp, VTuber, etc.)"""
+def get_active_api_key():
+    """Mengambil API Key aktif saat ini"""
     env_key = os.environ.get("SHIRO_API_KEY", "").strip()
     if env_key:
+        return env_key
+    if os.path.exists(API_KEY_FILE):
+        try:
+            with open(API_KEY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                k = data.get("api_key", "").strip()
+                if k:
+                    return k
+        except Exception:
+            pass
+    return get_or_create_api_key(force_new=True)
+
+def get_all_valid_api_keys():
+    """Mengambil himpunan semua API Key yang diizinkan (kunci aktif + riwayat kunci valid)"""
+    keys = set()
+    env_key = os.environ.get("SHIRO_API_KEY", "").strip()
+    if env_key:
+        keys.add(env_key)
+    if os.path.exists(API_KEY_FILE):
+        try:
+            with open(API_KEY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    k = data.get("api_key", "").strip()
+                    if k:
+                        keys.add(k)
+                    for item in data.get("valid_keys", []):
+                        if item and isinstance(item, str):
+                            keys.add(item.strip())
+        except Exception:
+            pass
+    if not keys:
+        keys.add(get_or_create_api_key(force_new=True))
+    return keys
+
+def get_or_create_api_key(force_new=False):
+    """
+    Load atau hasilkan API Key baru.
+    Jika force_new=True, selalu menghasilkan string API Key baru yang berbeda (random token_hex(16)),
+    dan menyimpan key lama ke riwayat valid_keys agar bot/klien sebelumnya tidak langsung error.
+    """
+    env_key = os.environ.get("SHIRO_API_KEY", "").strip()
+    if env_key and not force_new:
         return env_key
     
     drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
     if not drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):
         drive_dir = "/content/drive/MyDrive/Shiro_Memory"
 
-    # Pulihkan dari Google Drive jika ada di Drive tapi belum di lokal
-    if drive_dir and os.path.exists(drive_dir):
-        drive_key = os.path.join(drive_dir, API_KEY_FILE)
-        if not os.path.exists(API_KEY_FILE) and os.path.exists(drive_key):
-            try:
-                shutil.copy2(drive_key, API_KEY_FILE)
-            except Exception:
-                pass
-
+    existing_keys = []
     if os.path.exists(API_KEY_FILE):
         try:
             with open(API_KEY_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                key = data.get("api_key", "").strip()
-                if key:
-                    if drive_dir and os.path.exists(drive_dir):
-                        try:
-                            shutil.copy2(API_KEY_FILE, os.path.join(drive_dir, API_KEY_FILE))
-                        except Exception:
-                            pass
-                    return key
+                if isinstance(data, dict):
+                    old_k = data.get("api_key", "").strip()
+                    if old_k:
+                        existing_keys.append(old_k)
+                    for vk in data.get("valid_keys", []):
+                        if vk and vk not in existing_keys:
+                            existing_keys.append(vk)
         except Exception:
             pass
+
+    if not force_new and existing_keys and not env_key:
+        return existing_keys[0]
+
     import secrets
     new_key = "shiro-sk-" + secrets.token_hex(16)
+    
+    # Gabungkan riwayat key (simpan maksimal 25 key unik)
+    all_valid = [new_key] + [k for k in existing_keys if k != new_key]
+    all_valid = all_valid[:25]
+    
     try:
         with open(API_KEY_FILE, "w", encoding="utf-8") as f:
-            json.dump({"api_key": new_key, "created_at": datetime.now().isoformat()}, f, indent=2)
+            json.dump({
+                "api_key": new_key,
+                "valid_keys": all_valid,
+                "created_at": datetime.now().isoformat()
+            }, f, indent=2)
         if drive_dir and os.path.exists(drive_dir):
             try:
                 shutil.copy2(API_KEY_FILE, os.path.join(drive_dir, API_KEY_FILE))
@@ -171,25 +218,25 @@ def verify_api_key(allow_web_ui=True):
     - Header: Authorization: Bearer <key>
     - Header: X-API-Key: <key>
     - Query Param: ?api_key=<key>
-    Jika allow_web_ui=True, permintaan langsung dari browser Web UI internal diizinkan.
+    Mendukung pengecekan terhadap semua kunci aktif & riwayat kunci yang valid.
     """
-    expected_key = get_or_create_api_key()
+    valid_keys = get_all_valid_api_keys()
     
     # 1. Header Authorization: Bearer <token>
     auth_header = request.headers.get("Authorization", "").strip()
     if auth_header.startswith("Bearer "):
         token = auth_header[7:].strip()
-        if token == expected_key:
+        if token in valid_keys:
             return True
             
     # 2. Header X-API-Key
     x_key = request.headers.get("X-API-Key", "").strip()
-    if x_key and x_key == expected_key:
+    if x_key and x_key in valid_keys:
         return True
         
     # 3. Query Param
     q_key = request.args.get("api_key", "").strip()
-    if q_key and q_key == expected_key:
+    if q_key and q_key in valid_keys:
         return True
         
     # 4. Internal Browser Web UI
@@ -1744,7 +1791,7 @@ def openai_models():
 @app.route('/api/key', methods=['GET'])
 def get_api_key_info():
     """Get active API Key and connection info for external bots/clients"""
-    key = get_or_create_api_key()
+    key = get_active_api_key()
     host_url = request.host_url.rstrip('/')
     return jsonify({
         "api_key": key,
@@ -1754,6 +1801,22 @@ def get_api_key_info():
         "documentation": {
             "auth_header": f"Authorization: Bearer {key}",
             "x_api_key": f"X-API-Key: {key}"
+        }
+    })
+
+@app.route('/api/key/regenerate', methods=['POST'])
+def regenerate_api_key_route():
+    """Hasilkan API Key baru secara dinamis dan simpan ke riwayat valid"""
+    new_key = get_or_create_api_key(force_new=True)
+    host_url = request.host_url.rstrip('/')
+    return jsonify({
+        "success": True,
+        "api_key": new_key,
+        "message": "API Key baru berhasil di-generate!",
+        "openai_base_url": f"{host_url}/v1",
+        "documentation": {
+            "auth_header": f"Authorization: Bearer {new_key}",
+            "x_api_key": f"X-API-Key: {new_key}"
         }
     })
 
@@ -2072,17 +2135,17 @@ if __name__ == '__main__':
     memory = AdvancedMemoryManager(MEMORY_FILE, WORLD_FILE)
     
     try:
-        active_api_key = get_or_create_api_key()
+        active_api_key = get_or_create_api_key(force_new=True)
         print("\n" + "=" * 60)
-        print("🚀 SERVER SHIRO LLMA AKTIF!")
-        print("📍 Web UI Lokal: http://127.0.0.1:7474")
+        print("SERVER SHIRO LLMA AKTIF")
+        print("Web UI: http://127.0.0.1:7474")
         print("=" * 60)
-        print("🔑 API INTEGRATION (WhatsApp Bot / VTuber / Eksternal):")
-        print(f"👉 SHIRO API KEY: {active_api_key}")
-        print("👉 OpenAI Base URL: http://127.0.0.1:7474/v1")
-        print("👉 Chat Endpoint  : http://127.0.0.1:7474/v1/chat/completions")
+        print("API INTEGRATION (WhatsApp Bot / VTuber / Eksternal):")
+        print(f"SHIRO API KEY: {active_api_key}")
+        print("OpenAI Base URL: http://127.0.0.1:7474/v1")
+        print("Chat Endpoint  : http://127.0.0.1:7474/v1/chat/completions")
         print("=" * 60)
-        print("💡 Press Ctrl+C to stop\n")
+        print("Press Ctrl+C to stop\n")
         
         app.run(
             host='127.0.0.1',

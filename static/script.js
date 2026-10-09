@@ -835,8 +835,59 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         // Update active tab content
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         document.getElementById(`${tab}-tab`).classList.add('active');
+
+        if (tab === 'api') {
+            loadApiKey();
+        }
     });
 });
+
+async function loadApiKey() {
+    const input = document.getElementById('active-api-key-input');
+    if (!input) return;
+    try {
+        const res = await fetch('/api/key');
+        if (res.ok) {
+            const data = await res.json();
+            input.value = data.api_key || '';
+        }
+    } catch (e) {
+        console.error('Error loading API key:', e);
+    }
+}
+
+function copyApiKey() {
+    const input = document.getElementById('active-api-key-input');
+    if (!input || !input.value) return;
+    navigator.clipboard.writeText(input.value).then(() => {
+        alert('API Key berhasil disalin!');
+    }).catch(() => {
+        input.select();
+        document.execCommand('copy');
+        alert('API Key berhasil disalin!');
+    });
+}
+
+async function regenerateApiKey() {
+    const btn = document.getElementById('btn-regen-key');
+    const input = document.getElementById('active-api-key-input');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch('/api/key/regenerate', { method: 'POST' });
+        if (res.ok) {
+            const data = await res.json();
+            if (input) input.value = data.api_key;
+            alert('API Key baru berhasil di-generate!');
+        } else {
+            alert('Gagal generate API Key');
+        }
+    } catch (e) {
+        console.error('Error regenerating API key:', e);
+        alert('Error: ' + e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
 
 // Image preview on select
 document.getElementById('user-image').addEventListener('change', (e) => {
