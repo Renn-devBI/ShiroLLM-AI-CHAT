@@ -55,9 +55,6 @@ function parseMessageContent(text) {
     escaped.textContent = text;
     let content = escaped.innerHTML;
     
-    // Replace <3 dengan heart emoji
-    content = content.replace(/<3/g, '❤️');
-    
     // Parse **bold** text
     content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     
@@ -363,7 +360,7 @@ async function sendMessage() {
         } else {
             console.error('Error:', error);
             showTyping(false);
-            addMessage('system', `⚠️ Error: ${error.message || 'Gagal terhubung ke Shiro.'}`);
+            addMessage('system', `Error: ${error.message || 'Gagal terhubung ke Shiro.'}`);
             status.textContent = 'Siap';
         }
     } finally {
@@ -816,7 +813,7 @@ async function saveProfile(type) {
         
         const data = await response.json();
         if (data.success) {
-            alert(`✓ ${type} profile saved!`);
+            alert(`${type} profile saved!`);
             // Reload preview
             loadProfiles();
         }
@@ -1170,8 +1167,8 @@ async function switchModel() {
         const data = await response.json();
         
         if (data.success) {
-            const visionTag = data.has_vision ? ' (Multimodal Vision Aktif 👁️)' : '';
-            alert(`✓ Model berhasil dialihkan ke ${modelName}${visionTag}`);
+            const visionTag = data.has_vision ? ' (Vision Aktif)' : '';
+            alert(`Model berhasil dialihkan ke ${modelName}${visionTag}`);
             status.textContent = 'Model berhasil dialihkan!';
             
             // Reload models to update UI
@@ -1253,9 +1250,9 @@ function startPipelineAnimation(userInputText) {
         if (!activePipelineTrace || !activePipelineTrace.nodes) return;
         activePipelineTrace.nodes[1].status = 'success';
         activePipelineTrace.nodes[1].duration_ms = 10;
-        activePipelineTrace.nodes[1].summary = 'Emosi terklasifikasi';
+        activePipelineTrace.nodes[1].summary = 'Tone terklasifikasi';
         activePipelineTrace.nodes[2].status = 'running';
-        activePipelineTrace.nodes[2].summary = 'Mengambil fakta RDF & memori...';
+        activePipelineTrace.nodes[2].summary = 'Mengambil memori...';
         renderModalPipeline(activePipelineTrace);
     }, 280));
 
@@ -1264,9 +1261,9 @@ function startPipelineAnimation(userInputText) {
         if (!activePipelineTrace || !activePipelineTrace.nodes) return;
         activePipelineTrace.nodes[2].status = 'success';
         activePipelineTrace.nodes[2].duration_ms = 28;
-        activePipelineTrace.nodes[2].summary = 'Memori & RDF dimuat';
+        activePipelineTrace.nodes[2].summary = 'Memori dimuat';
         activePipelineTrace.nodes[3].status = 'running';
-        activePipelineTrace.nodes[3].summary = 'Menyusun system prompt...';
+        activePipelineTrace.nodes[3].summary = 'Menyusun prompt...';
         renderModalPipeline(activePipelineTrace);
     }, 480));
 
@@ -1275,9 +1272,9 @@ function startPipelineAnimation(userInputText) {
         if (!activePipelineTrace || !activePipelineTrace.nodes) return;
         activePipelineTrace.nodes[3].status = 'success';
         activePipelineTrace.nodes[3].duration_ms = 18;
-        activePipelineTrace.nodes[3].summary = 'Prompt tersintesis';
+        activePipelineTrace.nodes[3].summary = 'Prompt siap';
         activePipelineTrace.nodes[4].status = 'running';
-        activePipelineTrace.nodes[4].summary = 'Sedang inferensi neural di GPU...';
+        activePipelineTrace.nodes[4].summary = 'Inferensi model...';
         renderModalPipeline(activePipelineTrace);
     }, 700));
 }
@@ -1330,12 +1327,12 @@ function renderModalPipeline(trace) {
 
         let badgeHtml = '';
         if (isRunning) {
-            badgeHtml = `<span class="flow-node-badge running"><i class="ph ph-spinner ph-spin"></i> Proses...</span>`;
+            badgeHtml = `<span class="flow-node-badge running"><i class="ph ph-spinner ph-spin"></i> Proses</span>`;
         } else if (isSuccess) {
             const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
-            badgeHtml = `<span class="flow-node-badge success">✓ ${dur}</span>`;
+            badgeHtml = `<span class="flow-node-badge success"><i class="ph ph-check"></i> ${dur}</span>`;
         } else {
-            badgeHtml = `<span class="flow-node-badge idle"><i class="ph ph-clock"></i> Tunggu</span>`;
+            badgeHtml = `<span class="flow-node-badge idle">Idle</span>`;
         }
 
         return `
@@ -1355,9 +1352,7 @@ function renderModalPipeline(trace) {
     const renderArrow = (active) => {
         return `
             <div class="flow-arrow-track ${active ? 'active' : ''}">
-                <div class="flow-arrow-line">
-                    ${active ? '<div class="flow-pulse-beam"></div>' : ''}
-                </div>
+                <div class="flow-arrow-line"></div>
             </div>
         `;
     };
@@ -1368,7 +1363,7 @@ function renderModalPipeline(trace) {
 
     let html = `
         <div class="flow-stage-bar">
-            <span class="flow-stage-label"><i class="ph ph-sliders"></i> Tahap 1: Ekstraksi &amp; Konteks</span>
+            <span class="flow-stage-label"><i class="ph ph-sliders"></i> Tahap 1: Ekstraksi Data</span>
             <span class="flow-stage-info">${Math.round(stage1Ms)}ms</span>
         </div>
         <div class="flow-stage-row">
@@ -1386,13 +1381,13 @@ function renderModalPipeline(trace) {
         </div>
         <div class="flow-bridge-row">
             <div class="flow-bridge-track ${stage1Done ? 'active' : ''}">
-                <div class="bridge-pulse-dot ${stage1Done ? 'pulsing' : ''}"></div>
+                <div class="bridge-pulse-dot"></div>
                 <i class="ph ph-arrow-down-right"></i>
                 <span>Tahap 2</span>
             </div>
         </div>
         <div class="flow-stage-bar">
-            <span class="flow-stage-label"><i class="ph ph-cpu"></i> Tahap 2: Inferensi &amp; Sanitasi</span>
+            <span class="flow-stage-label"><i class="ph ph-cpu"></i> Tahap 2: Inferensi Model</span>
             <span class="flow-stage-info">${Math.round(stage2Ms)}ms</span>
         </div>
         <div class="flow-stage-row">

@@ -685,11 +685,11 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         t_input_dur = (time.perf_counter() - t0) * 1000
         summary_node1 = f"{raw_chars} Karakter" + (" + Visual Kamera/Foto" if has_image else "")
         if has_doc:
-            summary_node1 += f" • 📄 Dokumen ({doc_name[:20]})"
+            summary_node1 += f" • Dokumen ({doc_name[:20]})"
         if typo_corrections:
-            summary_node1 += f" • ✍️ Typo Tolerant ({len(typo_corrections)} kata)"
+            summary_node1 += f" • Koreksi Typo ({len(typo_corrections)})"
         if web_data:
-            summary_node1 += f" • 🌐 Web ({web_data['title'][:25]})"
+            summary_node1 += f" • Web ({web_data['title'][:25]})"
 
         nodes.append({
             "id": "node_input",
@@ -795,7 +795,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         has_cross_session = bool(cross_session_addon)
         summary_node3 = f"{len(relevant_facts)} Fakta RDF • {len(exemplars)} Exemplars"
         if has_cross_session:
-            summary_node3 += " • 🧠 Cross-Session Memory"
+            summary_node3 += " • Cross-Session Memory"
 
         t_mem_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
@@ -1130,7 +1130,7 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         t_state_dur = (time.perf_counter() - t0) * 1000
         state_summary = f"Mood: {current_mood}"
         if web_data:
-            state_summary += " • 🧠 Web Data Learned"
+            state_summary += " • Web Data Learned"
 
         nodes.append({
             "id": "node_state",

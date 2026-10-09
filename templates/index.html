@@ -24,18 +24,18 @@
             
             <div class="nav-actions">
                 <div class="session-control-group">
-                    <button id="new-chat-btn" class="btn-icon btn-new-chat" title="Mulai Obrolan Baru (New Chat)" type="button">
+                    <button id="new-chat-btn" class="btn-icon btn-new-chat" title="Chat Baru" type="button">
                         <i class="ph ph-plus"></i>
                         <span class="btn-new-chat-text">Chat Baru</span>
                     </button>
-                    <select id="session-select" class="session-dropdown" title="Pilih Percakapan / Sesi">
+                    <select id="session-select" class="session-dropdown" title="Pilih Percakapan">
                         <option value="default">Sesi Utama</option>
                     </select>
-                    <button id="delete-chat-btn" class="btn-icon btn-delete-chat" title="Hapus Percakapan Chat Ini (Data Training Tetap Tersimpan Aman)" type="button">
+                    <button id="delete-chat-btn" class="btn-icon btn-delete-chat" title="Hapus Sesi Chat" type="button">
                         <i class="ph ph-trash"></i>
                     </button>
                 </div>
-                <button id="pipeline-btn" class="btn-icon btn-pipeline-toggle" title="Alur Kerja AI / Neural Workflow (Mode n8n)" type="button">
+                <button id="pipeline-btn" class="btn-icon btn-pipeline-toggle" title="Pipeline Workflow" type="button">
                     <i class="ph ph-tree-structure"></i>
                     <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
                 </button>
@@ -181,8 +181,8 @@
                         <i class="ph ph-tree-structure"></i>
                     </div>
                     <div>
-                        <h2>Alur Eksekusi (Workflow Inspector)</h2>
-                        <span class="pipeline-modal-sub">Inspeksi alur pemrosesan &amp; latensi tiap node pipeline</span>
+                        <h2>Alur Eksekusi</h2>
+                        <span class="pipeline-modal-sub">Pemantauan alur pemrosesan dan latensi node</span>
                     </div>
                 </div>
                 <div class="pipeline-modal-actions">
@@ -208,8 +208,8 @@
                 <div class="inspector-bar">
                     <div class="inspector-meta">
                         <span class="inspector-badge">INSPEKTOR</span>
-                        <h4 id="modal-node-title">Pilih Node di Atas</h4>
-                        <span id="modal-node-sub" class="inspector-meta-sub">Pilih salah satu node untuk memeriksa payload input/output JSON.</span>
+                        <h4 id="modal-node-title">Pilih Node</h4>
+                        <span id="modal-node-sub" class="inspector-meta-sub">Payload input dan output JSON</span>
                     </div>
                     <div class="inspector-actions">
                         <div class="tab-group-sm">
@@ -222,7 +222,7 @@
                     </div>
                 </div>
                 <div class="inspector-pre-wrapper">
-                    <pre><code id="modal-json-display">// Kirim pesan chat untuk melihat neuron alur AI aktif...</code></pre>
+                    <pre><code id="modal-json-display">// Menunggu aktivitas alur pipeline...</code></pre>
                 </div>
             </div>
         </div>
@@ -321,7 +321,7 @@
                     </div>
 
                     <div class="model-hint-box">
-                        <span class="model-hint-text">💡 <strong>Tambah Model Manual:</strong> Cukup salin file <code>.gguf</code> ke dalam folder <code>model/</code> di komputer Anda, lalu buka menu ini untuk memilihnya.</span>
+                        <span class="model-hint-text"><i class="ph ph-info"></i> <strong>Tambah Model Manual:</strong> Salin file <code>.gguf</code> ke dalam folder <code>model/</code>, lalu buka menu ini untuk memilihnya.</span>
                     </div>
 
                     <button type="button" onclick="switchModel()" class="btn-primary">Terapkan Pergantian Model</button>

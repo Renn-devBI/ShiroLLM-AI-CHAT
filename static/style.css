@@ -1132,29 +1132,22 @@ body {
 /* --- Neural Workflow (n8n-style) Styles --- */
 .btn-pipeline-toggle {
     position: relative;
-    color: #38bdf8;
+    color: var(--text-secondary);
 }
 
 .btn-pipeline-toggle:hover {
-    color: #60a5fa;
-    background-color: rgba(56, 189, 248, 0.1);
+    color: var(--text-primary);
+    background-color: var(--bg-elevated);
 }
 
 .pipeline-nav-dot {
     position: absolute;
     top: 6px;
     right: 6px;
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: var(--radius-full);
-    background-color: #38bdf8;
-    box-shadow: 0 0 8px #38bdf8;
-    animation: nav-pulse 1.2s infinite ease-in-out;
-}
-
-@keyframes nav-pulse {
-    0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.4); opacity: 0.5; }
+    background-color: var(--primary);
 }
 
 .pipeline-dialog {
@@ -1174,16 +1167,16 @@ body {
 }
 
 .pipeline-icon-circle {
-    width: 38px;
-    height: 38px;
+    width: 36px;
+    height: 36px;
     border-radius: var(--radius-sm);
-    background: linear-gradient(135deg, #2563eb, #06b6d4);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
-    color: #ffffff;
-    box-shadow: 0 0 12px rgba(37, 99, 235, 0.3);
+    font-size: 18px;
+    color: var(--primary);
 }
 
 .pipeline-header-title h2 {
@@ -1227,9 +1220,7 @@ body {
 /* --- Flowchart 2-Stage Diagram Styles --- */
 .flowchart-viewport {
     padding: 14px 18px;
-    background-color: #090d16;
-    background-image: radial-gradient(circle, #1e293b 1px, transparent 1px);
-    background-size: 20px 20px;
+    background-color: var(--bg-base);
     border-bottom: 1px solid var(--border-subtle);
     max-height: 52vh;
     overflow-y: auto;
@@ -1251,10 +1242,10 @@ body {
 }
 
 .flow-stage-label {
-    font-size: 0.68rem;
-    font-weight: 700;
-    color: #38bdf8;
-    letter-spacing: 0.6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.3px;
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -1282,33 +1273,22 @@ body {
     border-radius: var(--radius-md);
     padding: 8px 10px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
     user-select: none;
     position: relative;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .flow-node-card:hover {
-    border-color: var(--primary);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.2);
+    border-color: var(--border-hover);
 }
 
 .flow-node-card.selected {
-    border-color: #38bdf8;
-    background-color: #141f33;
-    box-shadow: 0 0 0 1px #38bdf8, 0 4px 16px rgba(56, 189, 248, 0.25);
+    border-color: var(--primary);
+    background-color: var(--bg-elevated);
 }
 
 .flow-node-card.running {
     border-color: #f59e0b;
-    box-shadow: 0 0 16px rgba(245, 158, 11, 0.4);
-    animation: flow-card-pulse 1.3s infinite ease-in-out;
-}
-
-@keyframes flow-card-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
-    50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
 }
 
 .flow-node-top {
@@ -1376,14 +1356,14 @@ body {
     -webkit-box-orient: vertical;
 }
 
-/* Arrow Track & Pulse Beam */
+/* Arrow Track */
 .flow-arrow-track {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-width: 32px;
-    max-width: 48px;
+    min-width: 28px;
+    max-width: 40px;
     flex-shrink: 0;
     padding: 0 2px;
     position: relative;
@@ -1394,28 +1374,11 @@ body {
     width: 100%;
     height: 2px;
     background-color: var(--border-default);
-    overflow: hidden;
     border-radius: 2px;
 }
 
 .flow-arrow-track.active .flow-arrow-line {
-    background-color: #2563eb;
-    box-shadow: 0 0 6px rgba(37, 99, 235, 0.4);
-}
-
-.flow-pulse-beam {
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, #38bdf8, #ffffff, transparent);
-    animation: flow-beam-slide 1.2s infinite ease-in-out;
-}
-
-@keyframes flow-beam-slide {
-    0% { left: -100%; }
-    100% { left: 100%; }
+    background-color: var(--primary);
 }
 
 .flow-run-chip {
@@ -1436,9 +1399,9 @@ body {
 }
 
 .flow-arrow-track.active .flow-run-chip {
-    color: #38bdf8;
-    border-color: rgba(56, 189, 248, 0.3);
-    background-color: rgba(14, 165, 233, 0.08);
+    color: #60a5fa;
+    border-color: rgba(59, 130, 246, 0.3);
+    background-color: rgba(37, 99, 235, 0.08);
 }
 
 /* Bridge Connector (linking Row 1 to Row 2) */
@@ -1453,32 +1416,26 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background-color: #0f172a;
+    background-color: var(--bg-surface);
     border: 1px dashed var(--border-default);
     border-radius: var(--radius-sm);
     padding: 3px 10px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.65rem;
     color: var(--text-muted);
-    transition: all 0.2s ease;
 }
 
 .flow-bridge-track.active {
-    border-color: #38bdf8;
-    color: #38bdf8;
-    background-color: rgba(56, 189, 248, 0.08);
-    box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+    border-color: var(--border-default);
+    color: var(--text-secondary);
+    background-color: var(--bg-elevated);
 }
 
 .bridge-pulse-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background-color: #38bdf8;
-}
-
-.bridge-pulse-dot.pulsing {
-    animation: nav-pulse 1s infinite ease-in-out;
+    background-color: var(--primary);
 }
 
 /* Inspector Bottom Panel */

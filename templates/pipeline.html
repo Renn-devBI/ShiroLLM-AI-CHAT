@@ -55,14 +55,14 @@
         .wf-brand-icon {
             width: 32px;
             height: 32px;
-            border-radius: 8px;
-            background: linear-gradient(135deg, #2563eb, #38bdf8);
+            border-radius: 6px;
+            background: #1e293b;
+            border: 1px solid #334155;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 18px;
-            color: white;
-            box-shadow: 0 0 12px rgba(37, 99, 235, 0.35);
+            font-size: 16px;
+            color: #3b82f6;
         }
 
         .wf-brand-titles {
@@ -79,15 +79,14 @@
         }
 
         .wf-pill-tag {
-            font-size: 10px;
-            font-weight: 600;
-            padding: 2px 7px;
+            font-size: 11px;
+            font-weight: 500;
+            padding: 2px 8px;
             border-radius: 4px;
-            background: rgba(56, 189, 248, 0.12);
-            color: #38bdf8;
-            border: 1px solid rgba(56, 189, 248, 0.25);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            background: #1e293b;
+            color: #94a3b8;
+            border: 1px solid #334155;
+            letter-spacing: 0.3px;
         }
 
         /* Test Query Input Bar */
@@ -97,15 +96,14 @@
             gap: 6px;
             background: #090e17;
             border: 1px solid #1e293b;
-            border-radius: 8px;
+            border-radius: 6px;
             padding: 3px 5px 3px 10px;
             width: 380px;
             transition: border-color 0.15s;
         }
 
         .wf-test-bar:focus-within {
-            border-color: #38bdf8;
-            box-shadow: 0 0 0 1px #38bdf8;
+            border-color: #3b82f6;
         }
 
         .wf-test-input {
@@ -151,7 +149,6 @@
             height: 7px;
             border-radius: 50%;
             background: #10b981;
-            box-shadow: 0 0 8px #10b981;
         }
 
         /* Workspace Main Layout */
@@ -168,9 +165,7 @@
             flex: 1;
             position: relative;
             overflow: hidden;
-            background-color: #080c14;
-            background-image: radial-gradient(circle, #1e293b 1px, transparent 1px);
-            background-size: 24px 24px;
+            background-color: #0b0f19;
             cursor: grab;
             user-select: none;
         }
@@ -203,30 +198,23 @@
 
         .wire-path {
             fill: none;
-            stroke: #1e293b;
-            stroke-width: 2.2px;
+            stroke: #334155;
+            stroke-width: 2px;
             stroke-linecap: round;
-            transition: stroke 0.2s, stroke-width 0.2s;
+            transition: stroke 0.2s;
         }
 
         .wire-path.active {
-            stroke: #38bdf8;
-            stroke-width: 2.5px;
-            filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.6));
+            stroke: #3b82f6;
+            stroke-width: 2px;
         }
 
         .wire-pulse {
             fill: none;
-            stroke: #ffffff;
-            stroke-width: 3px;
+            stroke: #60a5fa;
+            stroke-width: 2px;
             stroke-linecap: round;
-            stroke-dasharray: 8 24;
-            animation: flowDash 1.2s linear infinite;
-        }
-
-        @keyframes flowDash {
-            from { stroke-dashoffset: 64; }
-            to { stroke-dashoffset: 0; }
+            stroke-dasharray: 6 6;
         }
 
         /* Nodes Layer */
@@ -245,40 +233,30 @@
             width: 200px;
             background: #0d131f;
             border: 1px solid #1e293b;
-            border-radius: 10px;
+            border-radius: 8px;
             padding: 10px 12px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
             cursor: pointer;
-            transition: border-color 0.15s, box-shadow 0.15s;
+            transition: border-color 0.15s, background-color 0.15s;
             user-select: none;
         }
 
         .wf-node:hover {
-            border-color: #3b82f6;
-            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.2);
+            border-color: #475569;
         }
 
         .wf-node.selected {
-            border-color: #38bdf8;
+            border-color: #3b82f6;
             background: #111a2c;
-            box-shadow: 0 0 0 1px #38bdf8, 0 8px 24px rgba(56, 189, 248, 0.25);
         }
 
         .wf-node.running {
             border-color: #f59e0b;
-            box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
-            animation: nodePulse 1.5s infinite ease-in-out;
-        }
-
-        @keyframes nodePulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
-            50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
         }
 
         .wf-node.dragging {
             opacity: 0.95;
             cursor: grabbing !important;
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5) !important;
+            border-color: #3b82f6 !important;
             z-index: 100 !important;
         }
 
@@ -286,28 +264,27 @@
         .wf-port {
             position: absolute;
             top: 50%;
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             background: #0f172a;
-            border: 2px solid #64748b;
+            border: 1.5px solid #64748b;
             transform: translateY(-50%);
             transition: all 0.15s;
         }
 
         .wf-port.port-in {
-            left: -6px;
+            left: -5px;
         }
 
         .wf-port.port-out {
-            right: -6px;
+            right: -5px;
         }
 
         .wf-node:hover .wf-port,
         .wf-node.selected .wf-port {
-            border-color: #38bdf8;
-            background: #38bdf8;
-            box-shadow: 0 0 8px #38bdf8;
+            border-color: #3b82f6;
+            background: #3b82f6;
         }
 
         /* Node Inner Content */
@@ -442,9 +419,9 @@
 
         .insp-tag {
             font-size: 10px;
-            font-weight: 700;
-            color: #38bdf8;
-            letter-spacing: 0.6px;
+            font-weight: 600;
+            color: #94a3b8;
+            letter-spacing: 0.5px;
             text-transform: uppercase;
         }
 
@@ -557,13 +534,13 @@
                 </div>
                 <div class="wf-brand-titles">
                     <span class="wf-title">SHIRO WORKFLOW</span>
-                    <span class="wf-pill-tag">Flowchart Canvas</span>
+                    <span class="wf-pill-tag">Flowchart</span>
                 </div>
             </div>
 
             <!-- Quick Execution Bar -->
             <form id="test-run-form" class="wf-test-bar" onsubmit="runTestQuery(event)">
-                <input type="text" id="test-input" class="wf-test-input" placeholder="Ketik pesan untuk simulasi alur..." autocomplete="off">
+                <input type="text" id="test-input" class="wf-test-input" placeholder="Ketik pesan simulasi..." autocomplete="off">
                 <button type="submit" id="test-submit-btn" class="btn-primary btn-sm">
                     <i class="ph ph-play"></i> Jalankan
                 </button>
@@ -578,7 +555,7 @@
                     <i class="ph ph-timer"></i>
                     <span id="total-time-badge">0 ms</span>
                 </div>
-                <a href="/" class="btn-secondary btn-sm" title="Kembali ke antarmuka obrolan">
+                <a href="/" class="btn-secondary btn-sm" title="Kembali ke chat">
                     <i class="ph ph-chat-circle-dots"></i> Kembali ke Chat
                 </a>
             </div>
@@ -615,9 +592,9 @@
             <!-- Right Inspector Panel -->
             <aside class="wf-inspector">
                 <div class="insp-header">
-                    <span class="insp-tag">NODE TELEMETRY</span>
+                    <span class="insp-tag">TELEMETRI NODE</span>
                     <h3 id="side-node-name" class="insp-node-name">Pilih Node</h3>
-                    <p id="side-node-meta" class="insp-node-meta">Klik node pada flowchart untuk melihat rincian payload data.</p>
+                    <p id="side-node-meta" class="insp-node-meta">Pilih node pada alur untuk melihat payload data.</p>
                 </div>
                 <div class="insp-nav">
                     <div class="insp-tabs">
@@ -629,7 +606,7 @@
                     </button>
                 </div>
                 <div class="insp-body">
-                    <pre class="insp-json-view"><code id="side-code-view">// Menunggu eksekusi alur...</code></pre>
+                    <pre class="insp-json-view"><code id="side-code-view">// Menunggu data...</code></pre>
                 </div>
             </aside>
         </div>
@@ -907,9 +884,9 @@
                     badgeText = `<i class="ph ph-spinner ph-spin"></i> Proses`;
                 } else if (isSuccess) {
                     const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
-                    badgeText = `✓ ${dur}`;
+                    badgeText = `<i class="ph ph-check"></i> ${dur}`;
                 } else {
-                    badgeText = `○ Idle`;
+                    badgeText = `Idle`;
                 }
 
                 let summaryClean = node.summary || '';
@@ -992,14 +969,14 @@
             currentTrace = {
                 total_duration_ms: 0,
                 nodes: [
-                    { id: "node_input", name: "Input Ingestion", type: "trigger", icon: "ph-chat-circle-dots", color: "#3b82f6", status: "running", duration_ms: 0, summary: "Menerima input query...", data_in: { message: inputText }, data_out: {} },
-                    { id: "node_emotion", name: "Emotion Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#ec4899", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_memory", name: "Cognitive Memory", type: "database", icon: "ph-brain", color: "#8b5cf6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_prompt", name: "Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#06b6d4", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_llm", name: "Neural Inference", type: "ai_model", icon: "ph-cpu", color: "#f59e0b", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_filter", name: "Safety Filter", type: "filter", icon: "ph-shield-check", color: "#10b981", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_state", name: "State & Persistence", type: "persistence", icon: "ph-database", color: "#6366f1", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-                    { id: "node_output", name: "Response Stream", type: "output", icon: "ph-paper-plane-right", color: "#3b82f6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} }
+                    { id: "node_input", name: "Input Ingestion", type: "trigger", icon: "ph-chat-circle-dots", color: "#3b82f6", status: "running", duration_ms: 0, summary: "Input diterima", data_in: { message: inputText }, data_out: {} },
+                    { id: "node_emotion", name: "Emotion Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#ec4899", status: "idle", duration_ms: 0, summary: "Menunggu", data_in: {}, data_out: {} },
+                    { id: "node_memory", name: "Cognitive Memory", type: "database", icon: "ph-brain", color: "#8b5cf6", status: "idle", duration_ms: 0, summary: "Menunggu", data_in: {}, data_out: {} },
+                    { id: "node_prompt", name: "Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#06b6d4", status: "idle", duration_ms: 0, summary: "Menunggu", data_in: {}, data_out: {} },
+                    { id: "node_llm", name: "Neural Inference", type: "ai_model", icon: "ph-cpu", color: "#f59e0b", status: "idle", duration_ms: 0, summary: "Menunggu", data_in: {}, data_out: {} },
+                    { id: "node_filter", name: "Safety Filter", type: "filter", icon: "ph-shield-check", color: "#10b981", status: "idle", duration_ms: 0, summary: "Menunggu", data_in: {}, data_out: {} },
+                    { id: "node_state", name: "State & Persistence", type: "persistence", icon: "ph-database", color: "#6366f1", status: "idle", duration_ms: 0, summary: "Menunggu", data_in: {}, data_out: {} },
+                    { id: "node_output", name: "Response Stream", type: "output", icon: "ph-paper-plane-right", color: "#3b82f6", status: "idle", duration_ms: 0, summary: "Menunggu", data_in: {}, data_out: {} }
                 ]
             };
             renderWorkflow(currentTrace);
@@ -1010,7 +987,7 @@
                 currentTrace.nodes[0].duration_ms = 12;
                 currentTrace.nodes[0].summary = `${(inputText || '').length} Karakter`;
                 currentTrace.nodes[1].status = 'running';
-                currentTrace.nodes[1].summary = 'Analisis emosi & tone...';
+                currentTrace.nodes[1].summary = 'Analisis emosi...';
                 renderWorkflow(currentTrace);
             }, 120));
 
@@ -1020,7 +997,7 @@
                 currentTrace.nodes[1].duration_ms = 10;
                 currentTrace.nodes[1].summary = 'Tone terklasifikasi';
                 currentTrace.nodes[2].status = 'running';
-                currentTrace.nodes[2].summary = 'Mengambil fakta RDF...';
+                currentTrace.nodes[2].summary = 'Mengambil memori...';
                 renderWorkflow(currentTrace);
             }, 260));
 
@@ -1028,9 +1005,9 @@
                 if (!currentTrace) return;
                 currentTrace.nodes[2].status = 'success';
                 currentTrace.nodes[2].duration_ms = 24;
-                currentTrace.nodes[2].summary = 'Fakta & memori dimuat';
+                currentTrace.nodes[2].summary = 'Memori dimuat';
                 currentTrace.nodes[3].status = 'running';
-                currentTrace.nodes[3].summary = 'Menyusun system prompt...';
+                currentTrace.nodes[3].summary = 'Menyusun prompt...';
                 renderWorkflow(currentTrace);
             }, 440));
 
@@ -1040,7 +1017,7 @@
                 currentTrace.nodes[3].duration_ms = 16;
                 currentTrace.nodes[3].summary = 'Prompt siap';
                 currentTrace.nodes[4].status = 'running';
-                currentTrace.nodes[4].summary = 'Inferensi LLM GGUF...';
+                currentTrace.nodes[4].summary = 'Inferensi model...';
                 renderWorkflow(currentTrace);
             }, 640));
         }
