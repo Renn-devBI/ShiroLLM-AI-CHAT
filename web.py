@@ -270,12 +270,25 @@ def is_running_in_colab():
     return os.path.exists('/content') or 'COLAB_GPU' in os.environ or 'COLAB_RELEASE_TAG' in os.environ
 
 def get_available_gguf_models():
-    """Scan folder model/ secara dinamis untuk file .gguf (termasuk yang dimasukkan secara manual)"""
+    """Scan folder model/ & Google Drive secara dinamis untuk file .gguf (termasuk yang dimasukkan secara manual)"""
     models = []
-    if os.path.exists(MODEL_DIR):
-        for f in sorted(os.listdir(MODEL_DIR)):
-            if f.endswith('.gguf') and not f.startswith('.'):
-                models.append(f"{MODEL_DIR}/{f}".replace("\\", "/"))
+    search_dirs = [MODEL_DIR]
+    
+    drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
+    if not drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):
+        drive_dir = "/content/drive/MyDrive/Shiro_Memory"
+    if drive_dir and os.path.exists(drive_dir):
+        drive_model = os.path.join(drive_dir, "model")
+        if os.path.exists(drive_model):
+            search_dirs.append(drive_model)
+
+    for d in search_dirs:
+        if os.path.exists(d):
+            for f in sorted(os.listdir(d)):
+                if f.endswith('.gguf') and not f.startswith('.'):
+                    p = os.path.join(d, f).replace("\\", "/")
+                    if p not in models:
+                        models.append(p)
     return models
 
 def init_vision_handler(model_path):
@@ -335,16 +348,17 @@ def init_vision_handler(model_path):
 
     return None
 
-def find_active_lora_path():
+def find_active_lora_path(version=None):
     """
     Mendeteksi file bobot LoRA adapter (.gguf atau .bin) hasil fine-tuning jika tersedia:
     - Di environment variable SHIRO_LORA_PATH
     - Di folder lora/
     - Di folder model/lora/
     - Di Google Drive /content/drive/MyDrive/Shiro_Memory/lora/
+    Jika version disertakan (contoh: 1, 2), mencari spesifik versi tersebut.
     """
     custom_lora = os.environ.get("SHIRO_LORA_PATH", "").strip()
-    if custom_lora and os.path.exists(custom_lora):
+    if not version and custom_lora and os.path.exists(custom_lora):
         return custom_lora
 
     drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
@@ -361,17 +375,23 @@ def find_active_lora_path():
             found_loras.extend(glob.glob(os.path.join(d, "*.gguf")) + glob.glob(os.path.join(d, "*.bin")))
             found_loras.extend(glob.glob(os.path.join(d, "*", "*.gguf")) + glob.glob(os.path.join(d, "*", "*.bin")))
 
-    if found_loras:
-        # Urutkan berdasarkan nomor versi tertinggi (misal V2 lebih prioritas dibanding V1)
-        def _get_ver_key(p):
-            m = re.search(r'V(\d+)', os.path.basename(p), re.IGNORECASE)
-            if not m:
-                m = re.search(r'V(\d+)', os.path.dirname(p), re.IGNORECASE)
-            return int(m.group(1)) if m else 0
+    if not found_loras:
+        return None
 
-        found_loras = sorted(list(set(found_loras)), key=_get_ver_key, reverse=True)
-        return found_loras[0]
-    return None
+    def _get_ver_key(p):
+        m = re.search(r'V(\d+)', os.path.basename(p), re.IGNORECASE)
+        if not m:
+            m = re.search(r'V(\d+)', os.path.dirname(p), re.IGNORECASE)
+        return int(m.group(1)) if m else 0
+
+    if version is not None:
+        for p in found_loras:
+            if _get_ver_key(p) == int(version):
+                return p
+
+    # Urutkan berdasarkan nomor versi tertinggi (misal V2 lebih prioritas dibanding V1)
+    found_loras = sorted(list(set(found_loras)), key=_get_ver_key, reverse=True)
+    return found_loras[0] if found_loras else None
 
 # Model configuration
 def load_model_config():
@@ -1909,17 +1929,60 @@ def openai_chat_completions_v3():
 @app.route('/v3/models', methods=['GET'])
 @app.route('/v3/v1/models', methods=['GET'])
 def openai_models():
-    """List available models for OpenAI SDK client compatibility"""
+    """List available models for OpenAI SDK client compatibility with dynamic auto-detection"""
     config = load_model_config()
-    current = config.get("current_model", "model/Qwen3-32B-Q4_K_M.gguf")
-    current_name = os.path.basename(current).replace(".gguf", "")
+    current = config.get("current_model", "")
+    current_name = os.path.basename(current).replace(".gguf", "") if current else ""
     
-    models = [
-        {"id": "Qwen3-32B", "object": "model", "created": 1728300000, "owned_by": "shiro"},
-        {"id": "Qwen2.5-7B", "object": "model", "created": 1728300000, "owned_by": "shiro"},
-        {"id": current_name, "object": "model", "created": 1728300000, "owned_by": "shiro"}
-    ]
-    return jsonify({"object": "list", "data": models})
+    # 1. Models dari scanned files di model/ & Google Drive
+    raw_models = config.get("available_models", [])
+    
+    # 2. Versi trained LoRA / model dari shiro.training.versioning
+    try:
+        from shiro.training.versioning import get_existing_trained_versions
+        trained_versions = get_existing_trained_versions()
+    except Exception:
+        trained_versions = []
+
+    model_ids = []
+    # Prioritaskan model yang sedang aktif
+    if current_name and current_name not in model_ids:
+        model_ids.append(current_name)
+
+    # Tambahkan file .gguf yang terdeteksi
+    for m_path in raw_models:
+        m_name = os.path.basename(m_path).replace(".gguf", "")
+        if m_name and m_name not in model_ids:
+            model_ids.append(m_name)
+
+    # Tambahkan model trained (ShiroAI-LLM-V1, ShiroAI-LLM-V2, dst)
+    for v in trained_versions:
+        t_name = f"ShiroAI-LLM-V{v}"
+        if t_name not in model_ids:
+            model_ids.append(t_name)
+
+    # Fallback minimal jika disk belum ada file .gguf
+    if not model_ids:
+        model_ids = ["Qwen2.5-VL-7B", "Qwen3-32B", "ShiroAI-LLM-V1"]
+
+    data = []
+    now_ts = int(time.time())
+    for mid in model_ids:
+        data.append({
+            "id": mid,
+            "name": mid,
+            "object": "model",
+            "created": now_ts,
+            "owned_by": "shiro",
+            "is_current": (mid == current_name)
+        })
+
+    active_model = current_name or (model_ids[0] if model_ids else "Qwen2.5-VL-7B")
+    return jsonify({
+        "object": "list",
+        "data": data,
+        "current_model": active_model
+    })
 
 @app.route('/api/key', methods=['GET'])
 def get_api_key_info():
@@ -2110,21 +2173,53 @@ def get_models():
     })
 
 @app.route('/api/models/switch', methods=['POST'])
+@app.route('/v1/models/switch', methods=['POST'])
+@app.route('/v2/models/switch', methods=['POST'])
+@app.route('/v3/models/switch', methods=['POST'])
 def switch_model():
     try:
         global llm
         data = request.json or {}
         model_path = data.get('model')
         
-        # Validasi model path
-        if not model_path or not os.path.exists(model_path):
-            return jsonify({"error": f"Model '{model_path}' tidak ditemukan di disk"}), 400
-        
-        # Cek apakah model ada dalam list yang tersedia
+        if not model_path:
+            return jsonify({"error": "Parameter 'model' harus disertakan"}), 400
+
         config = load_model_config()
-        if model_path not in config.get("available_models", []):
-            return jsonify({"error": f"Model tidak dalam daftar tersedia"}), 400
-        
+        available = config.get("available_models", [])
+
+        target_path = None
+        target_lora_ver = None
+
+        if model_path:
+            # 1. Cek langsung path
+            if os.path.exists(model_path):
+                target_path = model_path
+            # 2. Cek di MODEL_DIR
+            elif os.path.exists(os.path.join(MODEL_DIR, f"{model_path}.gguf")):
+                target_path = os.path.join(MODEL_DIR, f"{model_path}.gguf").replace("\\", "/")
+            elif os.path.exists(os.path.join(MODEL_DIR, model_path)):
+                target_path = os.path.join(MODEL_DIR, model_path).replace("\\", "/")
+            else:
+                # 3. Match against available_models by basename
+                for cand in available:
+                    bname = os.path.basename(cand)
+                    bname_no_ext = os.path.splitext(bname)[0]
+                    if model_path.lower() in (bname.lower(), bname_no_ext.lower()):
+                        target_path = cand
+                        break
+
+            # 4. Jika model adalah model trained LoRA ShiroAI-LLM-V*
+            if not target_path:
+                m_ver = re.search(r'V(\d+)', model_path, re.IGNORECASE)
+                if m_ver:
+                    target_lora_ver = int(m_ver.group(1))
+                    target_path = config.get("current_model") or (available[0] if available else None)
+
+        if not target_path or not os.path.exists(target_path):
+            return jsonify({"error": f"Model '{model_path}' tidak ditemukan di disk atau daftar model"}), 400
+
+        model_path = target_path
         model_name = os.path.basename(model_path)
         file_size_gb = os.path.getsize(model_path) / (1024 * 1024 * 1024)
         print(f"\n⚙️  Switching model ke: {model_name} ({file_size_gb:.2f} GB)")
@@ -2162,7 +2257,7 @@ def switch_model():
             else:
                 llama_kwargs["chat_format"] = detect_chat_format(model_path)
             
-            active_lora = find_active_lora_path()
+            active_lora = find_active_lora_path(version=target_lora_ver)
             if active_lora:
                 llama_kwargs["lora_path"] = active_lora
                 print(f"🎯 LoRA Adapter Training Terdeteksi & Dimuat: {os.path.basename(active_lora)}")

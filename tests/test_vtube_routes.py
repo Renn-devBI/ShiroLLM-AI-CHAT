@@ -126,5 +126,31 @@ class TestVTuberAndMultiVersionRoutes(unittest.TestCase):
         self.assertIn("s[::-1]", reply_v3)
         self.assertEqual(data_v3.get("api_version"), "v3")
 
+    def test_dynamic_models_detection(self):
+        """Memastikan endpoint /v1/models dan /v2/models mengembalikan current_model dan list model terdeteksi"""
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        resp = self.client.get('/v2/models', headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIn("current_model", data)
+        self.assertIn("data", data)
+        models = data["data"]
+        self.assertGreater(len(models), 0)
+        # Pastikan setiap model memiliki key 'id' dan 'name'
+        for m in models:
+            self.assertIn("id", m)
+            self.assertIn("name", m)
+
+    def test_models_switch_routes(self):
+        """Memastikan route /v1/models/switch dan /v2/models/switch merespon dengan benar"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        # Model tidak ada di disk
+        resp = self.client.post('/v2/models/switch', headers=headers, json={"model": "NonExistentModel-99B"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("error", resp.get_json())
+
 if __name__ == '__main__':
     unittest.main()
