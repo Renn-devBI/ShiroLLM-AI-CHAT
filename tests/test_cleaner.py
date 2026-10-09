@@ -29,5 +29,14 @@ class TestCleaner(unittest.TestCase):
         invalid_text = "<|im_start|>system\nYou are an AI assistant.<|im_end|>"
         self.assertFalse(validate_response(invalid_text))
 
+    def test_preserve_code_block_indentation(self):
+        text = "*tersenyum* Ini kodenya Kak:\n```python\ndef test():\n    x = 1\n    return x\n```\nSelesai!"
+        cleaned = clean_response(text)
+        self.assertIn("```python\ndef test():\n    x = 1\n    return x\n```", cleaned)
+
+    def test_validate_code_response(self):
+        code_resp = "*tersenyum manis* Tentu Kakak! Ini Shiro buatin programnya:\n```python\nimport random\nangka = random.randint(1, 10)\nprint('Halo')\n```\nSemoga membantu ya Kak!"
+        self.assertTrue(validate_response(code_resp, "buatin program dong"))
+
 if __name__ == "__main__":
     unittest.main()

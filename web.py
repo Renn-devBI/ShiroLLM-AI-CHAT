@@ -536,11 +536,11 @@ class ResponseGenerator:
     ]
     
     DEFAULT_RESPONSES = [
-        "*memiringkan kepala* Kakak ngomong apa? Shiro gak ngerti deh~",
-        "*tersenyum* Hehe, Kakak lucu! Ngomong yang jelas dong!",
-        "*bingung* Eh? Maksud Kakak apa sih? Jelasin dong!",
-        "*mengernyitkan dahi* Hmm... Shiro mikir dulu ya...",
-        "*menatap kakak* Kakak aneh deh hari ini... Ada apa?"
+        "*memiringkan kepala sambil tersenyum manis* Hehe, Shiro dengerin Kakak kok~ Mau Shiro bantu apa lagi nih, Kak?",
+        "*tersenyum hangat* Shiro selalu ada di sini buat Kakak! Mau kita bahas apa lagi sekarang?",
+        "*menatap lembut* Iya Kakak sayang? Shiro siap nemenin dan bantuin Kakak!",
+        "*mengangguk ceria* Shiro ngerti kok, Kakak! Coba ceritain lebih lanjut ke Shiro ya~",
+        "*tersenyum manis dan memeluk lengan Kakak* Shiro senang banget ngobrol sama Kakak! Ada hal seru apa lagi hari ini?"
     ]
     
     @staticmethod

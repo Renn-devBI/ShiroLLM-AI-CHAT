@@ -9,15 +9,15 @@ import re
 from typing import Set
 
 FORBIDDEN_TOKENS = [
-    '<|im_end|>', '<|im_start|>', '###', '```',
-    'Note:', '**Note**:', '---', '[reasoning', '[explanation',
+    '<|im_end|>', '<|im_start|>',
+    '[reasoning', '[explanation',
     '(This is', '(As Shiro', '(I am', 'assistant:', 'user:',
     '<think>', '</think>'
 ]
 
 META_PATTERNS = [
+    r'###\s*(Instruction|Response|System|Human|Assistant):?',
     r'\*\*Note\*\*:',
-    r'\bNote:',
     r'\(This is',
     r'\[reasoning:',
     r'\[explanation:',
@@ -63,7 +63,7 @@ ID_STOPWORDS: Set[str] = {
     'tapi', 'gak', 'nggak', 'banget', 'suka', 'kok', 'ada', 'apa', 'sudah',
     'udah', 'bisa', 'sama', 'buat', 'aja', 'nih', 'tau', 'kangen', 'rindu',
     'sayang', 'senang', 'peluk', 'manis', 'tersenyum', 'mengangguk', 'menatap',
-    'main', 'bareng', 'nanti'
+    'main', 'bareng', 'nanti', 'bikin', 'tolong', 'coba', 'program', 'coding'
 }
 
 def validate_response(response: str, user_input: str = "") -> bool:
@@ -74,17 +74,26 @@ def validate_response(response: str, user_input: str = "") -> bool:
     if any(token in response for token in FORBIDDEN_TOKENS):
         return False
     
-    if any(re.search(pattern, response, re.IGNORECASE) for pattern in META_PATTERNS):
+    # Hapus blok kode atau kutipan kode saat validasi pola meta dan bahasa
+    text_no_code = re.sub(r'```[\s\S]*?```', '', response)
+    text_no_code = re.sub(r'`[^`\n]+`', '', text_no_code).strip()
+
+    # Periksa META_PATTERNS pada teks di luar blok kode
+    check_meta_text = text_no_code if text_no_code else response
+    if any(re.search(pattern, check_meta_text, re.IGNORECASE) for pattern in META_PATTERNS):
         return False
 
-    words = re.findall(r'\b[a-zA-Z]{2,}\b', response.lower())
-    if len(words) >= 5:
-        en_count = sum(1 for w in words if w in EN_STOPWORDS)
-        id_count = sum(1 for w in words if w in ID_STOPWORDS)
-        if en_count >= 3 and en_count > id_count:
-            return False
+    # Deteksi bahasa asing (English) hanya pada teks percakapan (bukan di dalam sintaks kode)
+    if text_no_code:
+        words = re.findall(r'\b[a-zA-Z]{2,}\b', text_no_code.lower())
+        if len(words) >= 5:
+            en_count = sum(1 for w in words if w in EN_STOPWORDS)
+            id_count = sum(1 for w in words if w in ID_STOPWORDS)
+            if en_count >= 4 and en_count > (id_count * 1.5):
+                return False
     
-    if len(response) > 800:
+    # Batas panjang diperluas (8000 karakter) agar dapat memuat kode, ringkasan dokumen, dan cerita panjang
+    if len(response) > 8000:
         return False
     
     if len(response.strip()) < 5:
@@ -96,7 +105,7 @@ def validate_response(response: str, user_input: str = "") -> bool:
     return True
 
 def clean_response(response: str) -> str:
-    """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru"""
+    """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru & indentasi kode"""
     if not response:
         return ""
 
@@ -164,23 +173,35 @@ def clean_response(response: str) -> str:
     response = re.sub(r'\bkami\b', 'kita', response, flags=re.IGNORECASE)
     response = re.sub(r'\bmereka semua\b', '', response, flags=re.IGNORECASE)
     response = re.sub(r'\blingkaran emosional mereka\b', 'pelukan Shiro', response, flags=re.IGNORECASE)
+
+    # 11. Lindungi blok kode agar indentasi dan karakter kode tidak rusak
+    code_blocks = []
+    def _mask_code(m):
+        code_blocks.append(m.group(0))
+        return f"__CODE_SNIPPET_BLOCK_{len(code_blocks)-1}__"
+
+    response = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _mask_code, response)
     
-    # 11. Hapus tanda baca berlebih
+    # 12. Hapus tanda baca berlebih pada teks percakapan
     response = re.sub(r'\.{3,}', '...', response)
     response = re.sub(r'!{2,}', '!', response)
     response = re.sub(r'\?{2,}', '?', response)
     
-    # 12. Hapus whitespace horizontal berlebih namun pertahankan pemisahan baris / paragraf (Shift+Enter)
+    # 13. Hapus whitespace horizontal berlebih pada teks percakapan
     response = response.replace('\r\n', '\n').replace('\r', '\n')
     response = re.sub(r'[ \t]+', ' ', response)
     response = re.sub(r' +([.,!?])', r'\1', response)
     response = re.sub(r'\n{3,}', '\n\n', response)
     response = '\n'.join([line.strip() for line in response.split('\n')])
     
-    # 13. Hapus HTML/XML remnants
+    # 14. Hapus HTML/XML remnants di luar blok kode
     response = re.sub(r'</?[^>]+>', '', response)
     
-    # 14. Clean up <3 emoji
+    # 15. Pulihkan blok kode utuh dengan indentasi aslinya
+    for i, block in enumerate(code_blocks):
+        response = response.replace(f"__CODE_SNIPPET_BLOCK_{i}__", block)
+
+    # 16. Clean up <3 emoji
     response = response.replace('<3>', '❤️')
     
     return response.strip()
