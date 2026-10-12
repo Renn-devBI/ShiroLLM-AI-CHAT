@@ -10,7 +10,7 @@ import re
 import json
 import glob
 from typing import Optional, List, Dict, Any, Tuple
-from shiro.config import MODEL_DIR, MODEL_CONFIG_FILE, CONTEXT_SIZE
+from shiro.config import MODEL_DIR, MODEL_CONFIG_FILE, CONTEXT_SIZE, DEFAULT_MAX_TOKENS
 
 # Deteksi GPU CUDA
 def get_gpu_layers() -> int:
@@ -28,6 +28,44 @@ def get_gpu_layers() -> int:
     except Exception:
         pass
     return 0
+
+def get_optimal_model_tokens(model_path: str) -> Tuple[int, int]:
+    """
+    Menentukan batas context window (n_ctx) dan max output tokens secara dinamis
+    menyesuaikan ukuran dan arsitektur model yang terdeteksi:
+    - Model Besar (27B - 32B+ / A100): n_ctx 16384 s/d 32768, output hingga 8192 token
+    - Model Sedang (7B - 14B / VL): n_ctx 8192 s/d 16384, output hingga 4096 token
+    - Model Ringan (3B - 4B / T4): n_ctx 4096 s/d 8192, output hingga 2048 token
+    """
+    if not model_path:
+        return (CONTEXT_SIZE, DEFAULT_MAX_TOKENS)
+
+    name = os.path.basename(model_path).lower()
+    gpu_layers = get_gpu_layers()
+    is_gpu = gpu_layers != 0
+
+    # 1. Model Besar: 27B, 32B, 70B, dll.
+    if any(k in name for k in ["27b", "32b", "70b", "34b"]):
+        n_ctx = 32768 if (is_gpu and is_running_in_colab()) else 16384
+        max_output = 8192
+        return (n_ctx, max_output)
+
+    # 2. Model Sedang: 7B, 8B, 14B, VL
+    elif any(k in name for k in ["7b", "8b", "9b", "12b", "13b", "14b", "vl"]):
+        n_ctx = 16384 if is_gpu else 8192
+        max_output = 4096
+        return (n_ctx, max_output)
+
+    # 3. Model Ringan: 3B, 3.2B, 4B, Phi-3 mini
+    elif any(k in name for k in ["3b", "3.2b", "4b", "phi-3", "mini"]):
+        n_ctx = 8192 if is_gpu else 4096
+        max_output = 2048
+        return (n_ctx, max_output)
+
+    # Default fallback
+    n_ctx = 8192 if is_gpu else 4096
+    max_output = 2048
+    return (n_ctx, max_output)
 
 def get_active_model_ctx(llm_instance) -> int:
     """Mengambil batas context token aktif dari model instance"""
@@ -265,9 +303,13 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
     gpu_layers = get_gpu_layers()
     vision_handler = init_vision_handler(model_path)
     
+    optimal_ctx, optimal_out = get_optimal_model_tokens(model_path)
+    env_ctx = os.environ.get("SHIRO_CONTEXT_SIZE")
+    chosen_ctx = int(env_ctx) if env_ctx else optimal_ctx
+
     llama_kwargs = {
         "model_path": model_path,
-        "n_ctx": CONTEXT_SIZE,
+        "n_ctx": chosen_ctx,
         "n_threads": 4,
         "n_gpu_layers": gpu_layers,
         "verbose": False,

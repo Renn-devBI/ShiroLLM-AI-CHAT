@@ -305,11 +305,10 @@ def get_shiro_reply(
                     clean_context.append({"role": r, "content": str(c)})
 
         # Dynamic Token Budget Guard:
-        # Menjaga seluruh percakapan masuk secara utuh.
-        # Hanya jika total token riwayat mendekati batas context window model aktif,
-        # pangkas dari pesan paling awal agar tidak terjadi context overflow.
+        # Menjaga seluruh percakapan masuk secara utuh menyesuaikan kapasitas model aktif.
+        # Semakin besar model dan context window-nya, semakin banyak riwayat obrolan yang ditampung.
         active_ctx = get_active_model_ctx(llm)
-        reserved_budget = 2500  # Cadangan untuk system prompt, image/doc, dan jawaban output
+        reserved_budget = min(4096, max(1500, active_ctx // 4))  # Cadangan untuk system prompt & output
         max_history_tokens = max(1000, active_ctx - reserved_budget)
         while len(clean_context) > 2 and calculate_messages_tokens(clean_context, llm) > max_history_tokens:
             clean_context.pop(0)
@@ -448,15 +447,20 @@ def get_shiro_reply(
         # -------------------------------------------------------------
         # NODE 5: Neural Inference Engine
         # -------------------------------------------------------------
-        # Penentuan batas token output yang leluasa agar dialog tidak terpotong di tengah kalimat
+        # Penentuan batas token output maksimal dinamis menyesuaikan model yang terdeteksi
+        from shiro.models import get_optimal_model_tokens
+        active_model_path = getattr(llm, 'model_path', '') if hasattr(llm, 'model_path') else ''
+        _, model_max_out = get_optimal_model_tokens(active_model_path or active_model_name)
+
         if max_tokens:
             desired_max = int(max_tokens)
         elif api_version == "v2":
             desired_max = 350
         elif is_reasoning_enabled or tools:
-            desired_max = 3072
+            desired_max = max(model_max_out, 4096)
         else:
-            desired_max = 2048
+            # Model besar (27B/32B) -> 8192, Model sedang (7B/VL) -> 4096, Model ringan -> 2048
+            desired_max = model_max_out
 
         prompt_tokens_est = calculate_messages_tokens(msgs, llm)
         remaining_space = max(512, active_ctx - prompt_tokens_est - 64)
