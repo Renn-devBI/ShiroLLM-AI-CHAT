@@ -115,7 +115,6 @@ def get_shiro_reply(
 
         # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math via Cloudflare 1.1.1.1 & Mozilla)
         agent_action_data = None
-        agent_step_badge = None
         web_data = None
         web_prompt_addon = ""
 
@@ -184,7 +183,6 @@ def get_shiro_reply(
                         "execution_time_sec": t_tool_dur,
                         "status": "success" if obs_summary else "failed"
                     }
-                    agent_step_badge = f"> 🌐 **[AI Agent Web Tool]** *{tool_desc} ({t_tool_dur}s)*"
 
                     web_prompt_addon = (
                         f"\n\n### [HASIL OBSERVASI WEB REAL-TIME / AI AGENT EXECUTION]:\n"
@@ -645,8 +643,6 @@ def get_shiro_reply(
         # -------------------------------------------------------------
         t_total_dur = (time.perf_counter() - t_start_total) * 1000
         delivery_reply = cleaned_reply
-        if agent_step_badge and api_version == "v1" and not cleaned_reply.startswith("> 🌐"):
-            delivery_reply = f"{agent_step_badge}\n\n{cleaned_reply}"
 
         nodes.append({
             "id": "node_output",
