@@ -71,7 +71,7 @@ class TestShiroAIAgent(unittest.TestCase):
         
         # Mock LLM generation function
         def mock_llm_fn(query, agent_context=""):
-            self.assertIn("HASIL OBSERVASI WEB REAL-TIME", agent_context)
+            self.assertIn("Fakta Web Nyata Real-time", agent_context)
             self.assertIn("Tokyo", agent_context)
             return "Kakak, Shiro udah cek! Di Tokyo cuacanya cerah dan nggak hujan kok~"
 

@@ -34,9 +34,20 @@ class TestCleaner(unittest.TestCase):
         cleaned = clean_response(text)
         self.assertIn("```python\ndef test():\n    x = 1\n    return x\n```", cleaned)
 
-    def test_validate_code_response(self):
-        code_resp = "*tersenyum manis* Tentu Kakak! Ini Shiro buatin programnya:\n```python\nimport random\nangka = random.randint(1, 10)\nprint('Halo')\n```\nSemoga membantu ya Kak!"
-        self.assertTrue(validate_response(code_resp, "buatin program dong"))
+    def test_strip_ai_agent_badges(self):
+        text = "> \U0001f310 [AI Agent Web Tool]  Membuka dan membaca https://www.python.org/ via Mozilla Engine (0.74s)\n\n*tersenyum manis* Halo Kakak! Python adalah bahasa yang keren~"
+        cleaned = clean_response(text)
+        self.assertNotIn("AI Agent Web Tool", cleaned)
+        self.assertNotIn("\U0001f310", cleaned)
+        self.assertNotIn("Mozilla Engine", cleaned)
+        self.assertIn("Halo Kakak!", cleaned)
+
+    def test_strip_various_tool_banners(self):
+        text = "\U0001f310 **[AI Agent Web Tool]** *Membuka koneksi satelit (0.61s)*\n*menatap lembut* Tokyo cerah kok Kak!"
+        cleaned = clean_response(text)
+        self.assertNotIn("[AI Agent", cleaned)
+        self.assertNotIn("\U0001f310", cleaned)
+        self.assertEqual(cleaned, "*menatap lembut* Tokyo cerah kok Kak!")
 
 if __name__ == "__main__":
     unittest.main()

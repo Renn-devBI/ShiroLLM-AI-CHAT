@@ -18,6 +18,7 @@ from shiro.agent.tools import (
     calculate_math,
     get_current_time_info
 )
+from shiro.llm.cleaner import clean_response
 
 class ShiroAgentExecutor:
     """
@@ -116,17 +117,17 @@ class ShiroAgentExecutor:
 
         # Step 2: Format Konteks Observasi Nyata ke dalam Prompt Model Percakapan
         agent_context = (
-            f"\n\n### [HASIL OBSERVASI WEB REAL-TIME / AI AGENT EXECUTION]:\n"
-            f"Alat Digunakan: {tool_name} (Cloudflare 1.1.1.1 DoH + Mozilla Engine)\n"
-            f"Data Observasi Faktual:\n{observation_text}\n\n"
-            f"[Instruksi Penting]:\n"
-            f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta hasil observasi di atas.\n"
-            f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH didapatkan di atas.\n"
-            f"3. Sampaikan hasilnya langsung secara lengkap, jelas, dan ramah dengan kepribadian Shiro (adik perempuan manis/sayang).\n"
+            f"\n\n[Informasi / Fakta Web Nyata Real-time]:\n"
+            f"{observation_text}\n\n"
+            f"[Instruksi Karakter]:\n"
+            f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta di atas.\n"
+            f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH ada di atas.\n"
+            f"3. DILARANG KERAS menyertakan header teknis, badge, nama tool/alat, browser Mozilla, Cloudflare, atau awalan '> 🌐'. Sampaikan murni dengan suara dan kepribadian Shiro (adik perempuan manis/sayang).\n"
         )
 
         # Step 3: Sintesis Percakapan Shiro
         final_reply = llm_generate_fn(raw_text, agent_context=agent_context)
+        final_reply = clean_response(final_reply)
 
         agent_step_text = f"🌐 **[AI Agent Web Tool]** *{tool_desc} ({t_elapsed}s)*"
 

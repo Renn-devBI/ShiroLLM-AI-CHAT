@@ -186,13 +186,12 @@ def get_shiro_reply(
                     }
 
                     web_prompt_addon = (
-                        f"\n\n### [HASIL OBSERVASI WEB REAL-TIME / AI AGENT EXECUTION]:\n"
-                        f"Alat Digunakan: {tool_name} (Cloudflare 1.1.1.1 DoH + Mozilla Engine)\n"
-                        f"Data Observasi Faktual:\n{obs_summary}\n\n"
-                        f"[Instruksi Penting]:\n"
-                        f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta hasil observasi di atas.\n"
-                        f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH didapatkan di atas.\n"
-                        f"3. Sampaikan hasilnya langsung secara lengkap, jelas, dan ramah dengan kepribadian Shiro (adik perempuan manis/sayang).\n"
+                        f"\n\n[Informasi / Fakta Web Nyata Real-time]:\n"
+                        f"{obs_summary}\n\n"
+                        f"[Instruksi Karakter]:\n"
+                        f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta di atas.\n"
+                        f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH ada di atas.\n"
+                        f"3. DILARANG KERAS menyertakan header teknis, badge, nama tool/alat, browser Mozilla, Cloudflare, atau awalan '> 🌐'. Sampaikan murni dengan gaya bicara manis dan hangat khas Shiro.\n"
                     )
             except Exception as e_agent:
                 print(f"[Inference Agent Warning]: {e_agent}")
