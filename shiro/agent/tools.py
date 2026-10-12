@@ -7,6 +7,10 @@ All requests are routed using Cloudflare 1.1.1.1 and authentic Mozilla headers.
 """
 
 import re
+import os
+import time
+import subprocess
+import shutil
 import math
 import json
 import urllib.parse
@@ -397,9 +401,174 @@ def get_current_time_info() -> Dict[str, Any]:
         "summary": summary
     }
 
+def find_available_browser() -> Optional[str]:
+    """Mencari executable browser yang tersedia di sistem untuk headless screenshot"""
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+        shutil.which("chrome"),
+        shutil.which("google-chrome"),
+        shutil.which("msedge"),
+        shutil.which("chromium"),
+        shutil.which("brave"),
+    ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+def take_web_screenshot(url: str, output_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Mengambil tangkapan layar (screenshot) website secara headless via browser
+    dan menyimpannya ke folder data/uploads/screenshots/ untuk ditampilkan ke pengguna.
+    """
+    if not url:
+        return {"success": False, "error": "URL kosong", "summary": "Gagal mengambil screenshot: URL tidak diberikan."}
+
+    clean_url = url.strip()
+    if not clean_url.startswith("http://") and not clean_url.startswith("https://"):
+        clean_url = "https://" + clean_url
+
+    upload_dir = os.path.abspath(os.path.join("data", "uploads", "screenshots"))
+    os.makedirs(upload_dir, exist_ok=True)
+
+    timestamp = int(time.time() * 1000)
+    filename = output_name or f"screenshot_{timestamp}.png"
+    if not filename.lower().endswith(".png"):
+        filename += ".png"
+    abs_out_path = os.path.join(upload_dir, filename)
+
+    browser_bin = find_available_browser()
+    if not browser_bin:
+        return {
+            "success": False,
+            "error": "Browser headless tidak ditemukan di PC",
+            "summary": f"Shiro tidak menemukan browser (Chrome/Edge/Brave) di PC untuk mengambil screenshot {clean_url}."
+        }
+
+    cmd = [
+        browser_bin,
+        "--headless",
+        "--disable-gpu",
+        f"--screenshot={abs_out_path}",
+        "--window-size=1280,800",
+        "--hide-scrollbars",
+        clean_url
+    ]
+
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        if os.path.exists(abs_out_path) and os.path.getsize(abs_out_path) > 0:
+            rel_url = f"/images/screenshots/{filename}"
+            summary = f"Tangkapan layar untuk situs {clean_url} berhasil diambil dan disimpan sebagai foto visual ({os.path.getsize(abs_out_path)} bytes)."
+            return {
+                "success": True,
+                "url": clean_url,
+                "image_url": rel_url,
+                "file_path": abs_out_path,
+                "filename": filename,
+                "file_size": os.path.getsize(abs_out_path),
+                "summary": summary
+            }
+        else:
+            err_msg = res.stderr.strip() or res.stdout.strip() or "File screenshot kosong atau tidak terbuat"
+            return {
+                "success": False,
+                "url": clean_url,
+                "error": err_msg,
+                "summary": f"Gagal membuat screenshot dari {clean_url}: {err_msg}"
+            }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "url": clean_url,
+            "error": "Waktu eksekusi habis (timeout 25s)",
+            "summary": f"Pengambilan screenshot {clean_url} memakan waktu terlalu lama (timeout)."
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "url": clean_url,
+            "error": str(e),
+            "summary": f"Terjadi kendala saat mengambil screenshot: {str(e)}"
+        }
+
+def execute_powershell_command(command: str) -> Dict[str, Any]:
+    """
+    Mengeksekusi perintah PowerShell langsung di PC lokal pengguna secara aman dan terkendali.
+    Mengembalikan stdout, stderr, status kode, dan ringkasan eksekusi untuk model percakapan.
+    """
+    if not command:
+        return {"success": False, "error": "Perintah kosong", "summary": "Tidak ada perintah PowerShell yang diberikan."}
+
+    clean_cmd = command.strip()
+    clean_cmd = re.sub(r'^(?:powershell(?:\.exe)?|ps\s*:?|jalankan\s+powershell\s*:?)\s*', '', clean_cmd, flags=re.IGNORECASE).strip()
+
+    # Periksa keamanan dasar
+    dangerous_patterns = [r'\bformat\s+[a-z]:', r'\bdiskpart\b', r'\bdel\s+/[sfq]\s+c:\\windows\b']
+    for dp in dangerous_patterns:
+        if re.search(dp, clean_cmd, re.IGNORECASE):
+            return {
+                "success": False,
+                "command": clean_cmd,
+                "error": "Perintah berisiko tinggi diblokir demi keamanan sistem PC",
+                "summary": f"Perintah '{clean_cmd}' diblokir karena berpotensi membahayakan sistem PC Kakak."
+            }
+
+    cmd_args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", clean_cmd]
+    try:
+        res = subprocess.run(cmd_args, capture_output=True, text=True, timeout=30)
+        stdout = res.stdout.strip()
+        stderr = res.stderr.strip()
+        is_success = res.returncode == 0
+
+        if len(stdout) > 3000:
+            stdout_display = stdout[:3000] + f"\n... [Output dipotong, total {len(stdout)} karakter]"
+        else:
+            stdout_display = stdout
+
+        if is_success:
+            summary = (
+                f"Perintah PowerShell `{clean_cmd}` berhasil dieksekusi di PC Kakak (Exit Code: 0).\n"
+                f"Hasil Terminal Output:\n{stdout_display if stdout_display else '(Perintah berhasil dijalankan tanpa teks output)'}"
+            )
+        else:
+            summary = (
+                f"Perintah PowerShell `{clean_cmd}` selesai dengan kode status error {res.returncode}.\n"
+                f"Pesan Error / Output:\n{stderr or stdout_display}"
+            )
+
+        return {
+            "success": is_success,
+            "command": clean_cmd,
+            "returncode": res.returncode,
+            "stdout": stdout_display,
+            "stderr": stderr,
+            "summary": summary
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "command": clean_cmd,
+            "error": "Timeout 30 detik terlampaui",
+            "summary": f"Perintah `{clean_cmd}` berjalan melebihi batas waktu (timeout 30 detik)."
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "command": clean_cmd,
+            "error": str(e),
+            "summary": f"Gagal mengeksekusi perintah `{clean_cmd}` di PC: {str(e)}"
+        }
+
 def detect_agent_intent(text: str) -> Dict[str, Any]:
     """
     Menganalisis pesan pengguna dan mendeteksi apakah membutuhkan eksekusi tool AI Agent:
+    - screenshot: Mengambil tangkapan layar website via browser headless
+    - powershell: Menjalankan perintah PowerShell di PC lokal
     - weather: Pengecekan cuaca, suhu, hujan di lokasi tertentu
     - search: Pencarian informasi Google/Web terkini
     - browse: Membuka URL web secara langsung
@@ -412,9 +581,64 @@ def detect_agent_intent(text: str) -> Dict[str, Any]:
 
     text_lower = text.lower().strip()
 
-    # 1. Deteksi URL langsung
+    # Ekstrak semua URL yang ada dalam teks
     url_pattern = r'https?://[^\s<>"\')]+'
     urls = re.findall(url_pattern, text)
+
+    # 1. Deteksi Screenshot Web
+    screenshot_triggers = [
+        "screenshot", "tangkapan layar", "ss web", "ss situs", "ambil gambar web",
+        "foto web", "screenshoot", "screen capture", "tangkapan web"
+    ]
+    if any(st in text_lower for st in screenshot_triggers):
+        if urls:
+            return {
+                "intent": "screenshot",
+                "params": {"url": urls[0].rstrip(".,;:!?)'\"")}
+            }
+        m_domain = re.search(r'(?:web|situs|halaman|url)\s+([a-zA-Z0-9.\-_]+\.[a-z]{2,})', text_lower)
+        if m_domain:
+            return {
+                "intent": "screenshot",
+                "params": {"url": m_domain.group(1)}
+            }
+        for word in text.split():
+            clean_word = word.strip(".,;:!?()\"'")
+            if "." in clean_word and len(clean_word.split(".")[-1]) in [2, 3, 4] and not clean_word.endswith("."):
+                return {
+                    "intent": "screenshot",
+                    "params": {"url": clean_word}
+                }
+
+    # 2. Deteksi Pengendalian PC / PowerShell Terminal
+    ps_triggers = [
+        "powershell", "jalankan di pc", "perintah powershell", "run command",
+        "terminal pc", "eksekusi perintah", "buka aplikasi", "buka notepad",
+        "cek proses pc", "cek spesifikasi pc", "cmd pc", "jalankan perintah"
+    ]
+    if any(pt in text_lower for pt in ps_triggers):
+        cmd_extracted = ""
+        m_cmd = re.search(r'(?:powershell|perintah|terminal|cmd)\s*[:=]\s*(.+)$', text, flags=re.IGNORECASE)
+        if m_cmd:
+            cmd_extracted = m_cmd.group(1).strip()
+        elif "buka notepad" in text_lower:
+            cmd_extracted = "Start-Process notepad"
+        elif "cek spesifikasi pc" in text_lower or "spesifikasi pc" in text_lower:
+            cmd_extracted = "Get-CimInstance Win32_OperatingSystem | Select-Object Caption, OSArchitecture, TotalVisibleMemorySize, FreePhysicalMemory"
+        elif "cek proses" in text_lower:
+            cmd_extracted = "Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 -Property Name, CPU, WorkingSet"
+        else:
+            for pt in ps_triggers:
+                if pt in text_lower:
+                    cmd_extracted = re.sub(rf".*?{re.escape(pt)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
+                    break
+        if cmd_extracted:
+            return {
+                "intent": "powershell",
+                "params": {"command": cmd_extracted}
+            }
+
+    # 3. Deteksi URL langsung untuk dibaca kontennya (browse)
     if urls:
         target_url = urls[0].rstrip(".,;:!?)'\"")
         return {

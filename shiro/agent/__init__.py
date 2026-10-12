@@ -17,7 +17,10 @@ from shiro.agent.tools import (
     search_google_web,
     open_and_read_webpage,
     calculate_math,
-    get_current_time_info
+    get_current_time_info,
+    take_web_screenshot,
+    execute_powershell_command,
+    find_available_browser
 )
 from shiro.agent.engine import (
     ShiroAgentExecutor,
@@ -35,6 +38,9 @@ __all__ = [
     "open_and_read_webpage",
     "calculate_math",
     "get_current_time_info",
+    "take_web_screenshot",
+    "execute_powershell_command",
+    "find_available_browser",
     "ShiroAgentExecutor",
     "agent_executor"
 ]

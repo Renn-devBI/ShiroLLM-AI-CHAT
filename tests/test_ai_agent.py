@@ -83,5 +83,32 @@ class TestShiroAIAgent(unittest.TestCase):
         self.assertEqual(action["tool"], "weather_sat_check")
         self.assertIn("AI Agent Web Tool", badge)
 
+    def test_detect_agent_intent_screenshot(self):
+        """Deteksi intent tangkapan layar / screenshot web"""
+        query = "Shiro tolong screenshot website https://github.com dong"
+        intent = detect_agent_intent(query)
+        self.assertEqual(intent["intent"], "screenshot")
+        self.assertIn("github.com", intent["params"]["url"])
+
+    def test_detect_agent_intent_powershell(self):
+        """Deteksi intent eksekusi terminal powershell di PC"""
+        query = "jalankan powershell: Get-Process | select -first 3"
+        intent = detect_agent_intent(query)
+        self.assertEqual(intent["intent"], "powershell")
+        self.assertIn("Get-Process", intent["params"]["command"])
+
+    def test_execute_powershell_tool(self):
+        """Uji eksekusi perintah PowerShell PC"""
+        from shiro.agent.tools import execute_powershell_command
+        res = execute_powershell_command("Write-Output 'Shiro Agent Ready'")
+        self.assertTrue(res["success"])
+        self.assertIn("Shiro Agent Ready", res["stdout"])
+
+    def test_take_web_screenshot_empty(self):
+        """Uji validasi URL kosong pada tool screenshot"""
+        from shiro.agent.tools import take_web_screenshot
+        res = take_web_screenshot("")
+        self.assertFalse(res["success"])
+
 if __name__ == "__main__":
     unittest.main()

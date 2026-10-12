@@ -127,7 +127,9 @@ def get_shiro_reply(
                     search_google_web,
                     open_and_read_webpage,
                     calculate_math,
-                    get_current_time_info
+                    get_current_time_info,
+                    take_web_screenshot,
+                    execute_powershell_command
                 )
                 agent_intent_res = detect_agent_intent(raw_user_typed)
                 agent_intent = agent_intent_res.get("intent", "none")
@@ -161,6 +163,20 @@ def get_shiro_reply(
                         b_res = open_and_read_webpage(target_url)
                         obs_summary = f"Judul Halaman: {b_res.get('title')}\nIsi Teks:\n{b_res.get('content')}"
                         structured_obs = b_res
+                    elif agent_intent == "screenshot":
+                        tool_name = "web_screenshot"
+                        target_url = agent_params.get("url", "")
+                        tool_desc = f"Mengambil tangkapan layar website: {target_url}"
+                        ss_res = take_web_screenshot(target_url)
+                        obs_summary = ss_res.get("summary", "")
+                        structured_obs = ss_res
+                    elif agent_intent == "powershell":
+                        tool_name = "powershell_terminal"
+                        ps_cmd = agent_params.get("command", "")
+                        tool_desc = f"Mengeksekusi perintah PowerShell di PC: `{ps_cmd}`"
+                        ps_res = execute_powershell_command(ps_cmd)
+                        obs_summary = ps_res.get("summary", "")
+                        structured_obs = ps_res
                     elif agent_intent == "math":
                         tool_name = "safe_calculator"
                         expr = agent_params.get("expression", "")
@@ -176,13 +192,18 @@ def get_shiro_reply(
                         structured_obs = t_res
 
                     t_tool_dur = round(time.perf_counter() - t_tool_start, 2)
+                    is_tool_success = bool(obs_summary)
+                    if isinstance(structured_obs, dict) and "success" in structured_obs:
+                        is_tool_success = structured_obs["success"]
+
                     agent_action_data = {
                         "tool": tool_name,
                         "description": tool_desc,
                         "observation": obs_summary,
                         "details": structured_obs,
+                        "image_url": structured_obs.get("image_url") if isinstance(structured_obs, dict) else None,
                         "execution_time_sec": t_tool_dur,
-                        "status": "success" if obs_summary else "failed"
+                        "status": "success" if is_tool_success else "failed"
                     }
 
                     web_prompt_addon = (

@@ -180,7 +180,12 @@ def chat():
                 return_trace=True
             )
             
-            memory.add_message("assistant", reply)
+            # Deteksi jika agent action menghasilkan output gambar (misal web screenshot)
+            assistant_img_url = None
+            if trace and isinstance(trace.get("agent_action"), dict):
+                assistant_img_url = trace["agent_action"].get("image_url")
+
+            memory.add_message("assistant", reply, image_path=assistant_img_url)
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
             
@@ -194,6 +199,7 @@ def chat():
             
             return jsonify({
                 "reply": reply,
+                "assistant_image_url": assistant_img_url,
                 "count": memory.system_metadata["total_turns"],
                 "emotion": user_emotion,
                 "mood": memory.agent_persona.get("current_mood", "Neutral"),

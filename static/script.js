@@ -47,21 +47,98 @@ function getCurrentTime() {
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// Parse message formatting
+// Inisialisasi Mermaid.js jika tersedia di browser
+if (typeof mermaid !== 'undefined') {
+    try {
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            securityLevel: 'loose',
+            themeVariables: {
+                darkMode: true,
+                background: '#181825',
+                primaryColor: '#89b4fa',
+                primaryTextColor: '#cdd6f4',
+                primaryBorderColor: '#b4befe',
+                lineColor: '#a6adc8',
+                secondaryColor: '#f5c2e7',
+                tertiaryColor: '#313244'
+            }
+        });
+    } catch (e) {
+        console.warn('[Mermaid Init Warning]:', e);
+    }
+}
+
+let mermaidCounter = 0;
+
+// Parse message formatting: Markdown, Syntax Highlighting, Mermaid, Sanitization
 function parseMessageContent(text) {
     if (!text) return '';
-    // Escape HTML first
-    let escaped = document.createElement('div');
-    escaped.textContent = text;
-    let content = escaped.innerHTML;
-    
-    // Parse **bold** text
-    content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    
-    // Parse *italic/action* text
-    content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    
-    // Parse Markdown links [text](url) lebih dulu
+
+    const codeBlocks = [];
+
+    // 1. Ekstrak Fenced Code Blocks: ```lang ... ```
+    let content = text.replace(/```([a-zA-Z0-9_\-\.]*)\s*\n?([\s\S]*?)```/g, function(match, lang, code) {
+        const cleanLang = (lang || '').trim().toLowerCase();
+        const rawCode = (code || '').trim();
+        const placeholder = `___SHIRO_BLOCK_${codeBlocks.length}___`;
+
+        const escapedCode = rawCode
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        if (cleanLang === 'mermaid') {
+            const mId = `mermaid_${Date.now()}_${++mermaidCounter}`;
+            codeBlocks.push(`
+                <div class="mermaid-container" id="${mId}">
+                    <div class="mermaid-toolbar">
+                        <span class="mermaid-badge"><i class="ph ph-tree-structure"></i> Diagram Mermaid</span>
+                        <button type="button" class="btn-toggle-mermaid-code" onclick="toggleMermaidCode(this)">
+                            <i class="ph ph-code"></i> Tampilkan Kode
+                        </button>
+                    </div>
+                    <div class="mermaid-diagram-render" id="render_${mId}">
+                        <pre class="mermaid-raw-source" style="display:none;">${escapedCode}</pre>
+                    </div>
+                    <pre class="mermaid-raw-code hidden"><code>${escapedCode}</code></pre>
+                </div>
+            `);
+        } else {
+            const displayLang = cleanLang ? cleanLang.toUpperCase() : 'CODE';
+            const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
+            codeBlocks.push(`
+                <div class="code-block-wrapper">
+                    <div class="code-block-header">
+                        <span class="code-lang-label">${displayLang}</span>
+                        <button type="button" class="btn-copy-code" onclick="copyCodeSnippet(this)" title="Salin Kode">
+                            <i class="ph ph-copy"></i> <span>Salin</span>
+                        </button>
+                    </div>
+                    <pre><code class="${langClass}">${escapedCode}</code></pre>
+                </div>
+            `);
+        }
+        return placeholder;
+    });
+
+    // 2. Escape teks non-kode untuk sanitasi awal
+    let div = document.createElement('div');
+    div.textContent = content;
+    content = div.innerHTML;
+
+    // 3. Parse Markdown Images: ![alt](url) -> Clickable lightbox preview
+    content = content.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s<>"'\)]+|\/[^\s<>"'\)]+)\)/g, function(match, alt, rawUrl) {
+        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
+        let safeAlt = (alt || 'Gambar').replace(/"/g, '&quot;');
+        let jsUrl = cleanUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `<div class="chat-inline-img-wrap" onclick="openImageLightbox('${jsUrl}', '${safeAlt}')" title="Klik untuk melihat pratinjau penuh"><img src="${cleanUrl}" alt="${safeAlt}" class="chat-img-attachment" loading="lazy"></div>`;
+    });
+
+    // 4. Parse Markdown links [text](url)
     const mdLinks = [];
     content = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\s<>"']+)\)/g, function(match, label, rawUrl) {
         let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
@@ -70,7 +147,7 @@ function parseMessageContent(text) {
         return placeholder;
     });
 
-    // Parse plain URL menjadi link yang bisa diklik dan digarisbawahi
+    // 5. Parse plain URL menjadi link yang bisa diklik
     const urlRegex = /(https?:\/\/[^\s<>"']+)/g;
     content = content.replace(urlRegex, function(match) {
         let cleanUrl = match.replace(/[.,;!?)]+$/, '');
@@ -83,17 +160,148 @@ function parseMessageContent(text) {
         content = content.replace(`___SHIRO_MD_LINK_${idx}___`, linkHtml);
     });
 
-    // Konversi baris baru (Shift+Enter / newline) menjadi <br> agar rapi dan tidak menyatu
+    // 6. Parse inline code: `code`
+    content = content.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+    // 7. Parse formatting teks
+    content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    content = content.replace(/~~(.+?)~~/g, '<del>$1</del>');
+    content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // 8. Parse baris baru menjadi <br>
     content = content.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
-    
+
+    // 9. Pulihkan blok kode & diagram mermaid
+    codeBlocks.forEach((blockHtml, idx) => {
+        content = content.replace(`___SHIRO_BLOCK_${idx}___`, blockHtml);
+    });
+
+    // 10. Markdown Sanitization via DOMPurify jika tersedia
+    if (typeof DOMPurify !== 'undefined') {
+        try {
+            content = DOMPurify.sanitize(content, {
+                ADD_TAGS: ['svg', 'path', 'marker', 'g', 'rect', 'circle', 'line', 'polygon', 'text', 'tspan', 'style', 'defs'],
+                ADD_ATTR: ['target', 'rel', 'onclick', 'data-*', 'class', 'id', 'd', 'fill', 'stroke', 'viewBox', 'width', 'height', 'style', 'title']
+            });
+        } catch (pErr) {
+            console.warn('[DOMPurify Warning]:', pErr);
+        }
+    }
+
     return content;
 }
 
 // Global visual attachment state
 let attachedImage = null; // { dataUrl: string, name: string }
 
-// Add message ke chat dengan Avatar, Dokumen & Visual Attachment
-function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null) {
+// Helper Actions: Copy Code, Copy Message, Toggle Mermaid, Toggle Status Card, Edit Prompt, Regenerate
+function copyCodeSnippet(btn) {
+    const wrapper = btn.closest('.code-block-wrapper');
+    if (!wrapper) return;
+    const codeEl = wrapper.querySelector('code');
+    if (!codeEl) return;
+    const text = codeEl.innerText || codeEl.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const span = btn.querySelector('span');
+        const icon = btn.querySelector('i');
+        const oldText = span ? span.textContent : '';
+        if (span) span.textContent = 'Tersalin!';
+        if (icon) icon.className = 'ph ph-check';
+        setTimeout(() => {
+            if (span) span.textContent = oldText || 'Salin';
+            if (icon) icon.className = 'ph ph-copy';
+        }, 2000);
+    });
+}
+
+function copyMessageText(btn) {
+    const bubble = btn.closest('.message').querySelector('.bubble');
+    if (!bubble) return;
+    const orig = bubble.getAttribute('data-original-text') || bubble.innerText;
+    navigator.clipboard.writeText(orig).then(() => {
+        const oldHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="ph ph-check"></i> Tersalin!';
+        setTimeout(() => { btn.innerHTML = oldHTML; }, 1800);
+    });
+}
+
+function toggleMermaidCode(btn) {
+    const container = btn.closest('.mermaid-container');
+    if (!container) return;
+    const rawCode = container.querySelector('.mermaid-raw-code');
+    if (!rawCode) return;
+    rawCode.classList.toggle('hidden');
+    const isHidden = rawCode.classList.contains('hidden');
+    btn.innerHTML = isHidden ? '<i class="ph ph-code"></i> Tampilkan Kode' : '<i class="ph ph-eye-slash"></i> Sembunyikan Kode';
+}
+
+function toggleStatusCard(header) {
+    const card = header.closest('.agent-status-card');
+    if (!card) return;
+    const body = card.querySelector('.status-card-body');
+    const caret = card.querySelector('.status-card-caret');
+    if (body) {
+        body.classList.toggle('hidden');
+        if (caret) {
+            caret.className = body.classList.contains('hidden') ? 'ph ph-caret-down status-card-caret' : 'ph ph-caret-up status-card-caret';
+        }
+    }
+}
+
+function editUserPrompt(btn) {
+    const bubble = btn.closest('.message').querySelector('.bubble');
+    if (!bubble) return;
+    const orig = bubble.getAttribute('data-original-text') || bubble.innerText;
+    userInput.value = orig;
+    adjustInputHeight();
+    userInput.focus();
+    const inputCard = document.querySelector('.input-card');
+    if (inputCard) {
+        inputCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+function regenerateLastResponse() {
+    if (isGenerating) return;
+    const userMessages = document.querySelectorAll('.message.user .bubble');
+    if (userMessages.length === 0) return;
+    const lastUserBubble = userMessages[userMessages.length - 1];
+    const lastPrompt = lastUserBubble.getAttribute('data-original-text') || lastUserBubble.innerText;
+    if (lastPrompt) {
+        userInput.value = lastPrompt;
+        sendMessage();
+    }
+}
+
+let lastFailedPayload = null;
+function retryLastFailedMessage() {
+    if (lastFailedPayload && lastFailedPayload.message) {
+        userInput.value = lastFailedPayload.message;
+        sendMessage();
+    }
+}
+
+function addErrorMessage(errorMsg, failedPayload = null) {
+    lastFailedPayload = failedPayload;
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message system';
+    messageDiv.innerHTML = `
+        <div class="error-retry-card">
+            <div class="error-retry-card-msg">
+                <i class="ph ph-warning-circle" style="font-size:1.2rem;"></i>
+                <span>${errorMsg}</span>
+            </div>
+            <button type="button" class="btn-retry-action" onclick="retryLastFailedMessage()">
+                <i class="ph ph-arrows-clockwise"></i> Coba Lagi
+            </button>
+        </div>
+    `;
+    chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+// Add message ke chat dengan Avatar, Dokumen, Status Card, & Visual Attachment
+function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null, agentActionData = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
     
@@ -185,7 +393,90 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         `;
     }
 
-    // Render HTML Message (struktur terpisah antara lampiran dan teks agar rapi)
+    // Status Card untuk eksekusi Tool Agent
+    let statusCardHTML = '';
+    if (role === 'assistant' && agentActionData && agentActionData.tool) {
+        const tool = agentActionData.tool;
+        const isSuccess = agentActionData.status === 'success';
+        const dur = agentActionData.execution_time_sec ? `${agentActionData.execution_time_sec}s` : '';
+        let toolIcon = 'ph-gear-six';
+        let toolTitle = 'Eksekusi Tool';
+        
+        if (tool === 'weather_sat_check') {
+            toolIcon = 'ph-cloud-sun';
+            toolTitle = 'Satelit Cuaca';
+        } else if (tool === 'google_web_search') {
+            toolIcon = 'ph-magnifying-glass';
+            toolTitle = 'Google Search';
+        } else if (tool === 'web_browser_reader') {
+            toolIcon = 'ph-globe';
+            toolTitle = 'Web Browser Reader';
+        } else if (tool === 'web_screenshot') {
+            toolIcon = 'ph-camera';
+            toolTitle = 'Tangkapan Layar Web';
+        } else if (tool === 'powershell_terminal') {
+            toolIcon = 'ph-terminal';
+            toolTitle = 'PowerShell Terminal PC';
+        } else if (tool === 'safe_calculator') {
+            toolIcon = 'ph-calculator';
+            toolTitle = 'Kalkulator Presisi';
+        } else if (tool === 'realtime_clock') {
+            toolIcon = 'ph-clock';
+            toolTitle = 'Jam Dunia';
+        }
+        
+        const obsText = agentActionData.observation || JSON.stringify(agentActionData.details || {}, null, 2);
+        const escapedObs = (obsText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const descText = (agentActionData.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        
+        statusCardHTML = `
+            <div class="agent-status-card ${isSuccess ? 'status-success' : 'status-error'}">
+                <div class="status-card-header" onclick="toggleStatusCard(this)" title="Klik untuk melihat detail eksekusi">
+                    <div class="status-card-title-group">
+                        <span class="status-card-icon"><i class="ph ${toolIcon}"></i></span>
+                        <span class="status-card-title">${toolTitle}: ${descText}</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="status-card-badge ${isSuccess ? 'status-badge-success' : 'status-badge-error'}">
+                            <i class="ph ${isSuccess ? 'ph-check-circle' : 'ph-x-circle'}"></i> ${isSuccess ? 'Sukses' : 'Gagal'} ${dur ? '(' + dur + ')' : ''}
+                        </span>
+                        <i class="ph ph-caret-down status-card-caret" style="color:var(--text-tertiary);font-size:0.8rem;"></i>
+                    </div>
+                </div>
+                <div class="status-card-body hidden">
+                    <pre class="status-code-pre"><code>${escapedObs}</code></pre>
+                </div>
+            </div>
+        `;
+    }
+
+    // Message Actions Bar (Edit & Regenerate & Copy)
+    let actionsBarHTML = '';
+    if (role === 'user') {
+        actionsBarHTML = `
+            <div class="msg-actions-bar">
+                <button type="button" class="btn-msg-action" onclick="editUserPrompt(this)" title="Edit prompt ini">
+                    <i class="ph ph-pencil-simple"></i> Edit
+                </button>
+                <button type="button" class="btn-msg-action" onclick="copyMessageText(this)" title="Salin pesan">
+                    <i class="ph ph-copy"></i> Salin
+                </button>
+            </div>
+        `;
+    } else if (role === 'assistant') {
+        actionsBarHTML = `
+            <div class="msg-actions-bar">
+                <button type="button" class="btn-msg-action" onclick="regenerateLastResponse()" title="Buat ulang respons">
+                    <i class="ph ph-arrows-clockwise"></i> Regenerate
+                </button>
+                <button type="button" class="btn-msg-action" onclick="copyMessageText(this)" title="Salin jawaban">
+                    <i class="ph ph-copy"></i> Salin
+                </button>
+            </div>
+        `;
+    }
+
+    // Render HTML Message
     let innerBubbleHTML = '';
     if (attachmentHTML) {
         innerBubbleHTML += `<div class="msg-attachment-wrap">${attachmentHTML}</div>`;
@@ -196,12 +487,46 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
 
     messageDiv.innerHTML = `
         ${role === 'assistant' ? avatarHTML : ''}
-        <div class="bubble" data-original-text="${escapedContent}">${innerBubbleHTML}</div>
+        <div class="bubble-container">
+            ${statusCardHTML}
+            <div class="bubble" data-original-text="${escapedContent}">${innerBubbleHTML}</div>
+            ${actionsBarHTML}
+        </div>
         ${role === 'user' ? avatarHTML : ''}
     `;
     
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
+
+    // Post-processing: Syntax Highlighting via highlight.js
+    if (typeof hljs !== 'undefined') {
+        messageDiv.querySelectorAll('pre code[class*="language-"]').forEach(block => {
+            try {
+                hljs.highlightElement(block);
+            } catch (e) {
+                console.warn('[Highlight Warning]:', e);
+            }
+        });
+    }
+
+    // Post-processing: Mermaid Diagrams rendering
+    if (typeof mermaid !== 'undefined') {
+        messageDiv.querySelectorAll('.mermaid-container').forEach(async (container) => {
+            const rawSource = container.querySelector('.mermaid-raw-source');
+            const renderTarget = container.querySelector('.mermaid-diagram-render');
+            if (rawSource && renderTarget) {
+                const code = rawSource.textContent.trim();
+                const renderId = `diag_${Date.now()}_${Math.floor(Math.random()*10000)}`;
+                try {
+                    const { svg } = await mermaid.render(renderId, code);
+                    renderTarget.innerHTML = svg;
+                } catch (mErr) {
+                    console.warn('[Mermaid Render Error]:', mErr);
+                    renderTarget.innerHTML = `<div style="color:#f38ba8;font-size:0.75rem;padding:8px;"><i class="ph ph-warning"></i> Format diagram mermaid tidak valid. Klik 'Tampilkan Kode' di atas untuk melihat sintaks mentah.</div>`;
+                }
+            }
+        });
+    }
 }
 
 // Update memory count
@@ -338,7 +663,8 @@ async function sendMessage() {
         const data = await response.json();
         
         showTyping(false);
-        addMessage('assistant', data.reply);
+        const assistantImg = data.assistant_image_url || null;
+        addMessage('assistant', data.reply, assistantImg, null, null, null, null, data.agent_action);
         clearPipelineSimulation();
         
         if (data.pipeline_trace) {
@@ -360,7 +686,7 @@ async function sendMessage() {
         } else {
             console.error('Error:', error);
             showTyping(false);
-            addMessage('system', `Error: ${error.message || 'Gagal terhubung ke Shiro.'}`);
+            addErrorMessage(error.message || 'Gagal terhubung ke Shiro.', { message: displayMsg });
             status.textContent = 'Siap';
         }
     } finally {
