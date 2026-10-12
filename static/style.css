@@ -2351,3 +2351,24 @@ body {
         display: none;
     }
 }
+/* ShiroAI UI refinement: layout-only overrides; keep original Markdown/code styles intact. */
+.chat-viewport { padding: 28px 24px; }
+.messages-list { width: min(100%, 900px); gap: 24px; }
+.message { gap: 12px; }
+.bubble-container { max-width: min(84%, 780px); }
+.message.assistant .bubble { max-width: 100%; background: transparent; border-color: transparent; padding: 3px 0; border-radius: 0; }
+.message.user .bubble { max-width: 100%; padding: 11px 15px; }
+.message.assistant .bubble-container { min-width: 0; }
+.message .bubble { overflow-wrap: anywhere; }
+.message.assistant .bubble p:first-child, .message.user .bubble p:first-child { margin-top: 0; }
+.message .bubble p:last-child { margin-bottom: 0; }
+.message .bubble pre { max-width: 100%; overflow-x: auto; }
+.message .bubble table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.message .bubble img { max-width: 100%; height: auto; }
+#typing-indicator { max-width: 900px; }
+@media (max-width: 700px) {
+  .chat-viewport { padding: 18px 12px; }
+  .messages-list { gap: 20px; }
+  .bubble-container { max-width: calc(100% - 42px); }
+  .message.assistant .bubble { padding: 2px 0; }
+}
