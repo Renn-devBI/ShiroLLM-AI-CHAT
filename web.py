@@ -73,13 +73,49 @@ def not_found(e):
 def server_error(e):
     return jsonify({"error": "Internal server error"}), 500
 
-# Backward compatibility attributes for external scripts
+# Backward compatibility attributes for external scripts & tests
+from shiro.config import API_KEY_FILE
+from shiro.memory.manager import AdvancedMemoryManager
+from shiro.routes.chat import _format_message_for_api
+
 memory = state.init_memory()
 llm = state.llm
 latest_pipeline_trace = global_pipeline_manager.get_latest_trace()
 
 def broadcast_pipeline_trace(trace):
     global_pipeline_manager.broadcast(trace)
+
+# Module wrapper to synchronize runtime reassignments like web.API_KEY_FILE = ..., web.memory = ..., web.llm = ...
+class _WebModuleWrapper(sys.modules[__name__].__class__):
+    @property
+    def API_KEY_FILE(self):
+        import shiro.config as sc
+        return getattr(sc, "API_KEY_FILE", "api_key.json")
+
+    @API_KEY_FILE.setter
+    def API_KEY_FILE(self, value):
+        import shiro.config as sc
+        import shiro.auth as sa
+        sc.API_KEY_FILE = value
+        sa.API_KEY_FILE = value
+
+    @property
+    def memory(self):
+        return state.init_memory()
+
+    @memory.setter
+    def memory(self, value):
+        state.memory = value
+
+    @property
+    def llm(self):
+        return state.llm
+
+    @llm.setter
+    def llm(self, value):
+        state.llm = value
+
+sys.modules[__name__].__class__ = _WebModuleWrapper
 
 if __name__ == '__main__':
     from werkzeug.serving import WSGIRequestHandler

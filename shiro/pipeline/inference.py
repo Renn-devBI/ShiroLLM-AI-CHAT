@@ -113,43 +113,90 @@ def get_shiro_reply(
                     f"Jawab pertanyaan Kakak sesuai fakta visual tersebut dengan persona Shiro.]\n"
                 )
 
-        # Online web reading & real-time browsing
+        # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math via Cloudflare 1.1.1.1 & Mozilla)
+        agent_action_data = None
+        agent_step_badge = None
         web_data = None
         web_prompt_addon = ""
-        if web_reader and raw_user_typed:
+
+        if raw_user_typed:
             try:
-                web_intent = web_reader.detect_web_intent(raw_user_typed)
-                if web_intent.get("type") == "url" and web_intent.get("urls"):
-                    target_url = web_intent["urls"][0]
-                    fetch_res = web_reader.fetch_url(target_url)
-                    if fetch_res.get("success"):
-                        web_data = {
-                            "source": target_url,
-                            "title": fetch_res.get("title", "Halaman Web"),
-                            "content": fetch_res.get("content", "")
-                        }
-                        web_prompt_addon = (
-                            f"\n\n### INFORMASI DARI SITUS WEB ({target_url}):\n"
-                            f"Judul: {web_data['title']}\n"
-                            f"Konten:\n{web_data['content']}\n"
-                        )
-                elif web_intent.get("type") == "search" and web_intent.get("query"):
-                    search_q = web_intent["query"]
-                    s_res = web_reader.search_wikipedia_online(search_q)
-                    if s_res.get("success") and s_res.get("results"):
-                        snippets = "\n".join([f"- {r['title']}: {r['snippet']}" for r in s_res["results"]])
-                        web_data = {
-                            "source": f"Pencarian: {search_q}",
-                            "title": f"Hasil: {search_q}",
-                            "content": snippets
-                        }
-                        web_prompt_addon = (
-                            f"\n\n### INFORMASI PENCARIAN ONLINE:\n"
-                            f"Topik: {search_q}\n"
-                            f"Ringkasan:\n{snippets}\n"
-                        )
-            except Exception as e_web:
-                print(f"[Inference] Warning online web reader: {e_web}")
+                from shiro.agent.tools import (
+                    detect_agent_intent,
+                    check_weather,
+                    search_google_web,
+                    open_and_read_webpage,
+                    calculate_math,
+                    get_current_time_info
+                )
+                agent_intent_res = detect_agent_intent(raw_user_typed)
+                agent_intent = agent_intent_res.get("intent", "none")
+                agent_params = agent_intent_res.get("params", {})
+
+                if agent_intent != "none":
+                    t_tool_start = time.perf_counter()
+                    tool_name = ""
+                    tool_desc = ""
+                    obs_summary = ""
+                    structured_obs = None
+
+                    if agent_intent == "weather":
+                        tool_name = "weather_sat_check"
+                        locs = agent_params.get("locations", ["Jakarta", "Tokyo"])
+                        tool_desc = f"Membuka koneksi satelit cuaca via Cloudflare 1.1.1.1 untuk lokasi: {', '.join(locs)}"
+                        w_res = check_weather(locs)
+                        obs_summary = w_res.get("summary", "")
+                        structured_obs = w_res.get("data")
+                    elif agent_intent == "search":
+                        tool_name = "google_web_search"
+                        q = agent_params.get("query", raw_user_typed)
+                        tool_desc = f"Membuka browser Mozilla & mencari di Google/Web via Cloudflare 1.1.1.1: '{q}'"
+                        s_res = search_google_web(q)
+                        obs_summary = s_res.get("summary", "")
+                        structured_obs = s_res.get("results")
+                    elif agent_intent == "browse":
+                        tool_name = "web_browser_reader"
+                        target_url = agent_params.get("url", "")
+                        tool_desc = f"Membuka dan membaca halaman web via Mozilla Headers: {target_url}"
+                        b_res = open_and_read_webpage(target_url)
+                        obs_summary = f"Judul Halaman: {b_res.get('title')}\nIsi Teks:\n{b_res.get('content')}"
+                        structured_obs = b_res
+                    elif agent_intent == "math":
+                        tool_name = "safe_calculator"
+                        expr = agent_params.get("expression", "")
+                        tool_desc = f"Mengeksekusi perhitungan presisi: `{expr}`"
+                        m_res = calculate_math(expr)
+                        obs_summary = m_res.get("summary", "")
+                        structured_obs = m_res.get("result")
+                    elif agent_intent == "time":
+                        tool_name = "realtime_clock"
+                        tool_desc = "Memeriksa jam dan kalender dunia saat ini"
+                        t_res = get_current_time_info()
+                        obs_summary = t_res.get("summary", "")
+                        structured_obs = t_res
+
+                    t_tool_dur = round(time.perf_counter() - t_tool_start, 2)
+                    agent_action_data = {
+                        "tool": tool_name,
+                        "description": tool_desc,
+                        "observation": obs_summary,
+                        "details": structured_obs,
+                        "execution_time_sec": t_tool_dur,
+                        "status": "success" if obs_summary else "failed"
+                    }
+                    agent_step_badge = f"> 🌐 **[AI Agent Web Tool]** *{tool_desc} ({t_tool_dur}s)*"
+
+                    web_prompt_addon = (
+                        f"\n\n### [HASIL OBSERVASI WEB REAL-TIME / AI AGENT EXECUTION]:\n"
+                        f"Alat Digunakan: {tool_name} (Cloudflare 1.1.1.1 DoH + Mozilla Engine)\n"
+                        f"Data Observasi Faktual:\n{obs_summary}\n\n"
+                        f"[Instruksi Penting]:\n"
+                        f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta hasil observasi di atas.\n"
+                        f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH didapatkan di atas.\n"
+                        f"3. Sampaikan hasilnya langsung secara lengkap, jelas, dan ramah dengan kepribadian Shiro (adik perempuan manis/sayang).\n"
+                    )
+            except Exception as e_agent:
+                print(f"[Inference Agent Warning]: {e_agent}")
 
         t_input_dur = (time.perf_counter() - t0) * 1000
         summary_node1 = f"{len(raw_user_typed)} Karakter"
@@ -157,6 +204,8 @@ def get_shiro_reply(
             summary_node1 += f" • {len(all_images)} Frame Visual"
         if has_doc:
             summary_node1 += f" • Dokumen ({doc_name})"
+        if agent_action_data:
+            summary_node1 += f" • Agent Tool ({agent_action_data['tool']})"
 
         nodes.append({
             "id": "node_input",
@@ -178,6 +227,20 @@ def get_shiro_reply(
                 "is_video_sequence": is_video_stream
             }
         })
+
+        if agent_action_data:
+            nodes.append({
+                "id": "node_agent_tool",
+                "name": "AI Agent Tool Execution",
+                "type": "tool",
+                "icon": "ph-globe-simple",
+                "color": "#10b981",
+                "status": agent_action_data.get("status", "success"),
+                "duration_ms": agent_action_data.get("execution_time_sec", 0) * 1000,
+                "summary": f"{agent_action_data.get('tool')}: {agent_action_data.get('description')}",
+                "data_in": {"user_query": raw_user_typed},
+                "data_out": agent_action_data
+            })
 
         # -------------------------------------------------------------
         # NODE 2: Emotion & Tone Classifier
@@ -309,10 +372,10 @@ def get_shiro_reply(
 
         # Susun System Prompt berdasarkan persona Shiro (v1, v2, atau v3)
         if api_version == "v2":
-            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + visual_bridge_context
+            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon
         elif api_version == "v3":
             base_p = custom_system_prompt or ""
-            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + visual_bridge_context
+            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon
         else:
             system_prompt = build_system_prompt(
                 conversation_summary=conversation_summary,
@@ -533,6 +596,33 @@ def get_shiro_reply(
             except Exception as e_web_save:
                 print(f"[Inference] Warning integrating web knowledge: {e_web_save}")
 
+        if memory and agent_action_data and agent_action_data.get("observation"):
+            try:
+                from shiro.web.reader import integrate_web_knowledge
+                integrate_web_knowledge(
+                    memory,
+                    user_input=raw_user_typed,
+                    assistant_reply=cleaned_reply,
+                    web_title=agent_action_data.get("tool", "AI Agent"),
+                    url_or_query=agent_action_data.get("description", ""),
+                    web_content=agent_action_data.get("observation", "")
+                )
+            except Exception as e_web_save:
+                print(f"[Inference] Warning integrating web knowledge: {e_web_save}")
+        elif memory and web_data:
+            try:
+                from shiro.web.reader import integrate_web_knowledge
+                integrate_web_knowledge(
+                    memory,
+                    user_input=raw_user_typed,
+                    assistant_reply=cleaned_reply,
+                    web_title=web_data["title"],
+                    url_or_query=web_data["source"],
+                    web_content=web_data["content"]
+                )
+            except Exception as e_web_save:
+                print(f"[Inference] Warning integrating web knowledge: {e_web_save}")
+
         t_state_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
             "id": "node_state",
@@ -554,6 +644,10 @@ def get_shiro_reply(
         # NODE 8: Response Delivery Stream
         # -------------------------------------------------------------
         t_total_dur = (time.perf_counter() - t_start_total) * 1000
+        delivery_reply = cleaned_reply
+        if agent_step_badge and api_version == "v1" and not cleaned_reply.startswith("> 🌐"):
+            delivery_reply = f"{agent_step_badge}\n\n{cleaned_reply}"
+
         nodes.append({
             "id": "node_output",
             "name": "Response Delivery Stream",
@@ -563,9 +657,9 @@ def get_shiro_reply(
             "status": "success",
             "duration_ms": 0.5,
             "summary": f"{round(t_total_dur)}ms Latency",
-            "data_in": {"chars_count": len(cleaned_reply)},
+            "data_in": {"chars_count": len(delivery_reply)},
             "data_out": {
-                "final_reply": cleaned_reply,
+                "final_reply": delivery_reply,
                 "total_duration_ms": round(t_total_dur, 2)
             }
         })
@@ -576,21 +670,23 @@ def get_shiro_reply(
             "status": "completed",
             "total_duration_ms": round(t_total_dur, 2),
             "user_input": raw_user_typed,
-            "reply": cleaned_reply,
+            "reply": delivery_reply,
+            "agent_action": agent_action_data,
             "nodes": nodes
         }
         global_pipeline_manager.broadcast(trace)
 
         if return_details:
-            return cleaned_reply, {
+            return delivery_reply, {
                 "reasoning_content": reasoning_content,
                 "tool_calls": parsed_tool_calls,
                 "finish_reason": "tool_calls" if parsed_tool_calls else "stop",
-                "trace": trace
+                "trace": trace,
+                "agent_action": agent_action_data
             }
         if return_trace:
-            return cleaned_reply, trace
-        return cleaned_reply
+            return delivery_reply, trace
+        return delivery_reply
 
     except Exception as e:
         print(f"[Inference Error]: {e}")

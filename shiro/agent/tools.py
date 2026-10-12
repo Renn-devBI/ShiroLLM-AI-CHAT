@@ -1,0 +1,500 @@
+# -*- coding: utf-8 -*-
+"""
+Shiro AI Agent Tools
+Autonomous tool collection for web searching, weather observation,
+webpage browsing, mathematical computation, and real-time world state inquiry.
+All requests are routed using Cloudflare 1.1.1.1 and authentic Mozilla headers.
+"""
+
+import re
+import math
+import json
+import urllib.parse
+from datetime import datetime, timezone, timedelta
+from typing import Dict, Any, List, Optional, Tuple
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
+
+from shiro.agent.network import (
+    MOZILLA_HEADERS,
+    get_agent_session,
+    fetch_html_content,
+    resolve_dns_cloudflare
+)
+
+# WMO Weather interpretation code table
+WMO_WEATHER_CODES = {
+    0: "Cerah (Clear sky)",
+    1: "Cerah Berawan (Mainly clear)",
+    2: "Sebagian Berawan (Partly cloudy)",
+    3: "Mendung / Berawan Tebal (Overcast)",
+    45: "Berkabut (Fog)",
+    48: "Kabut Rime (Depositing rime fog)",
+    51: "Gerimis Ringan (Light drizzle)",
+    53: "Gerimis Sedang (Moderate drizzle)",
+    55: "Gerimis Lebat (Dense drizzle)",
+    61: "Hujan Ringan (Slight rain)",
+    63: "Hujan Sedang (Moderate rain)",
+    65: "Hujan Lebat (Heavy rain)",
+    71: "Salju Ringan (Slight snow)",
+    73: "Salju Sedang (Moderate snow)",
+    75: "Salju Lebat (Heavy snow)",
+    77: "Butiran Salju (Snow grains)",
+    80: "Hujan Rintik-Rintik (Slight rain showers)",
+    81: "Hujan Deras Lokal (Moderate rain showers)",
+    82: "Hujan Sangat Lebat (Violent rain showers)",
+    85: "Hujan Salju Ringan (Slight snow showers)",
+    86: "Hujan Salju Lebat (Heavy snow showers)",
+    95: "Badai Petir (Thunderstorm)",
+    96: "Badai Petir disertai Es Ringan (Thunderstorm with slight hail)",
+    99: "Badai Petir disertai Es Lebat (Thunderstorm with heavy hail)"
+}
+
+# Known coordinates for fast fallback
+COMMON_COORDINATES = {
+    "tokyo": (35.6895, 139.6917, "Asia/Tokyo", "Tokyo, Jepang"),
+    "jakarta": (-6.2146, 106.8451, "Asia/Jakarta", "Jakarta, Indonesia"),
+    "bandung": (-6.9175, 107.6191, "Asia/Jakarta", "Bandung, Indonesia"),
+    "surabaya": (-7.2575, 112.7521, "Asia/Jakarta", "Surabaya, Indonesia"),
+    "yogyakarta": (-7.7956, 110.3695, "Asia/Jakarta", "Yogyakarta, Indonesia"),
+    "medan": (3.5952, 98.6722, "Asia/Jakarta", "Medan, Indonesia"),
+    "semarang": (-7.0051, 110.4381, "Asia/Jakarta", "Semarang, Indonesia"),
+    "bali": (-8.4095, 115.1889, "Asia/Makassar", "Bali, Indonesia"),
+    "denpasar": (-8.6705, 115.2126, "Asia/Makassar", "Denpasar, Bali, Indonesia"),
+    "kyoto": (35.0116, 135.7681, "Asia/Tokyo", "Kyoto, Jepang"),
+    "osaka": (34.6937, 135.5023, "Asia/Tokyo", "Osaka, Jepang"),
+    "seoul": (37.5665, 126.9780, "Asia/Seoul", "Seoul, Korea Selatan"),
+    "singapore": (1.3521, 103.8198, "Asia/Singapore", "Singapura"),
+    "london": (51.5074, -0.1278, "Europe/London", "London, Inggris"),
+    "new york": (40.7128, -74.0060, "America/New_York", "New York, USA"),
+    "paris": (48.8566, 2.3522, "Europe/Paris", "Paris, Prancis"),
+    "sydney": (-33.8688, 151.2093, "Australia/Sydney", "Sydney, Australia"),
+}
+
+def geocode_city(city_name: str) -> Optional[Dict[str, Any]]:
+    """Mencari koordinat kota via Open-Meteo Geocoding API atau fallback koordinat lokal"""
+    c_clean = city_name.strip().lower()
+    if c_clean in COMMON_COORDINATES:
+        lat, lon, tz, full_name = COMMON_COORDINATES[c_clean]
+        return {
+            "name": full_name,
+            "latitude": lat,
+            "longitude": lon,
+            "timezone": tz
+        }
+
+    # Query geocoding API
+    try:
+        session = get_agent_session()
+        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(city_name)}&count=1&language=id&format=json"
+        resp = session.get(geo_url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("results", [])
+            if results:
+                r = results[0]
+                country = r.get("country", "")
+                name = r.get("name", city_name)
+                full = f"{name}, {country}" if country else name
+                return {
+                    "name": full,
+                    "latitude": r.get("latitude"),
+                    "longitude": r.get("longitude"),
+                    "timezone": r.get("timezone", "auto")
+                }
+    except Exception:
+        pass
+        
+    return None
+
+def check_weather(locations: List[str]) -> Dict[str, Any]:
+    """
+    Mengambil data cuaca real-time (suhu, hujan, kelembaban, kondisi)
+    untuk satu atau banyak kota secara langsung melalui Open-Meteo & Cloudflare 1.1.1.1.
+    """
+    if not locations:
+        locations = ["Jakarta"]
+
+    report_items = []
+    structured_data = []
+
+    session = get_agent_session()
+
+    for loc in locations:
+        loc_str = loc.strip()
+        geo = geocode_city(loc_str)
+        if not geo:
+            report_items.append(f"- **{loc_str}**: Lokasi tidak ditemukan dalam database geocoding.")
+            continue
+
+        lat = geo["latitude"]
+        lon = geo["longitude"]
+        tz = geo["timezone"]
+        full_loc = geo["name"]
+
+        try:
+            weather_url = (
+                f"https://api.open-meteo.com/v1/forecast?"
+                f"latitude={lat}&longitude={lon}&"
+                f"current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code&"
+                f"timezone={tz}"
+            )
+            resp = session.get(weather_url, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                current = data.get("current", {})
+                temp = current.get("temperature_2m", 0.0)
+                feels_like = current.get("apparent_temperature", temp)
+                humidity = current.get("relative_humidity_2m", 0)
+                rain = current.get("rain", 0.0)
+                precip = current.get("precipitation", 0.0)
+                wcode = current.get("weather_code", 0)
+                condition_desc = WMO_WEATHER_CODES.get(wcode, "Normal")
+
+                is_raining = (rain > 0.0 or precip > 0.0 or wcode in [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99])
+                rain_text = f"🌧️ Hujan ({rain or precip} mm)" if is_raining else "☀️ Tidak hujan (0.0 mm)"
+
+                item_summary = (
+                    f"- **{full_loc}**:\n"
+                    f"  • Suhu: **{temp}°C** (Terasa seperti: {feels_like}°C)\n"
+                    f"  • Kondisi: **{condition_desc}**\n"
+                    f"  • Status Hujan: **{rain_text}**\n"
+                    f"  • Kelembaban Udara: **{humidity}%**\n"
+                    f"  • Waktu Lokal: {current.get('time', 'Sekarang')}"
+                )
+                report_items.append(item_summary)
+                structured_data.append({
+                    "location": full_loc,
+                    "temperature": temp,
+                    "feels_like": feels_like,
+                    "condition": condition_desc,
+                    "is_raining": is_raining,
+                    "rain_mm": rain or precip,
+                    "humidity": humidity
+                })
+            else:
+                report_items.append(f"- **{full_loc}**: Gagal mengambil data cuaca (HTTP {resp.status_code}).")
+        except Exception as e:
+            report_items.append(f"- **{full_loc}**: Kendala jaringan saat mengakses satelit cuaca: {e}")
+
+    summary_text = "\n".join(report_items)
+    return {
+        "success": bool(structured_data),
+        "summary": summary_text,
+        "data": structured_data
+    }
+
+def search_google_web(query: str, max_results: int = 5) -> Dict[str, Any]:
+    """
+    Melakukan pencarian web komprehensif menggunakan Bing HTML, Google News RSS,
+    dan Wikipedia melalui header Mozilla dan resolusi Cloudflare 1.1.1.1.
+    """
+    clean_q = query.strip()
+    if not clean_q:
+        return {"success": False, "summary": "Query pencarian kosong", "results": []}
+
+    results = []
+    session = get_agent_session()
+
+    # 1. Bing HTML Search
+    try:
+        bing_url = f"https://www.bing.com/search?q={urllib.parse.quote(clean_q)}"
+        resp = session.get(bing_url, timeout=7)
+        if resp.status_code == 200 and BeautifulSoup:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            algo_items = soup.select("li.b_algo")
+            for item in algo_items[:max_results]:
+                title_elem = item.select_one("h2 a")
+                snippet_elem = item.select_one(".b_caption p, .b_algoSlug, p")
+                if title_elem:
+                    title = title_elem.text.strip()
+                    link = title_elem.get("href", "")
+                    snippet = snippet_elem.text.strip() if snippet_elem else ""
+                    if title and link:
+                        results.append({
+                            "title": title,
+                            "url": link,
+                            "snippet": snippet,
+                            "source": "Bing Search"
+                        })
+    except Exception as e_bing:
+        pass
+
+    # 2. Google News RSS Search jika berita / topik terkini
+    if len(results) < 3:
+        try:
+            news_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(clean_q)}&hl=id&gl=ID&ceid=ID:id"
+            resp_news = session.get(news_url, timeout=6)
+            if resp_news.status_code == 200 and BeautifulSoup:
+                soup_news = BeautifulSoup(resp_news.text, "xml")
+                items = soup_news.find_all("item")
+                for it in items[:(max_results - len(results))]:
+                    t = it.title.text.strip() if it.title else ""
+                    l = it.link.text.strip() if it.link else ""
+                    pub = it.pubDate.text.strip() if it.pubDate else ""
+                    if t and l:
+                        results.append({
+                            "title": t,
+                            "url": l,
+                            "snippet": f"Publikasi: {pub}",
+                            "source": "Google News"
+                        })
+        except Exception:
+            pass
+
+    # 3. Wikipedia API Search sebagai fallback fakta ensiklopedis
+    if not results:
+        try:
+            wiki_url = f"https://id.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(clean_q)}&utf8=1&format=json&srlimit={max_results}"
+            r_wiki = session.get(wiki_url, timeout=6)
+            if r_wiki.status_code == 200:
+                wiki_data = r_wiki.json()
+                for item in wiki_data.get("query", {}).get("search", []):
+                    title = item.get("title", "")
+                    raw_snip = item.get("snippet", "")
+                    clean_snip = re.sub(r'<[^>]+>', '', raw_snip).strip()
+                    page_url = f"https://id.wikipedia.org/wiki/{urllib.parse.quote(title)}"
+                    results.append({
+                        "title": title,
+                        "url": page_url,
+                        "snippet": clean_snip,
+                        "source": "Wikipedia"
+                    })
+        except Exception:
+            pass
+
+    # Format ringkasan hasil
+    if results:
+        lines = [f"Ditemukan {len(results)} informasi dari web untuk: '{clean_q}':"]
+        for i, res in enumerate(results, 1):
+            lines.append(f"{i}. [{res['title']}]({res['url']}) ({res['source']})")
+            if res['snippet']:
+                lines.append(f"   {res['snippet']}")
+        summary_text = "\n".join(lines)
+        return {
+            "success": True,
+            "summary": summary_text,
+            "results": results
+        }
+    else:
+        return {
+            "success": False,
+            "summary": f"Pencarian web untuk '{clean_q}' tidak menghasilkan data relevan.",
+            "results": []
+        }
+
+def open_and_read_webpage(url: str, max_chars: int = 3500) -> Dict[str, Any]:
+    """
+    Membuka halaman web dan mengekstrak teks bersih bebas iklan/skrip HTML
+    menggunakan header Mozilla dan pembersihan DOM BeautifulSoup.
+    """
+    ok, html, err = fetch_html_content(url, timeout=12)
+    if not ok or not html:
+        return {
+            "success": False,
+            "url": url,
+            "title": "Gagal Membuka",
+            "content": f"Tidak dapat memuat halaman ({err or 'Koneksi gagal'})."
+        }
+
+    title = "Halaman Web"
+    content = ""
+
+    if BeautifulSoup:
+        soup = BeautifulSoup(html, "html.parser")
+        if soup.title and soup.title.string:
+            title = soup.title.string.strip()
+
+        # Hilangkan elemen noise
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "svg", "noscript", "form", "button"]):
+            tag.decompose()
+
+        # Pilih elemen artikel utama
+        main_elem = soup.select_one("article, main, [role='main'], #content, .content, .post-content")
+        target = main_elem if main_elem else (soup.body if soup.body else soup)
+        content = " ".join(target.stripped_strings)
+    else:
+        # Fallback regex
+        title_m = re.search(r'<title[^>]*>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+        if title_m:
+            title = re.sub(r'<[^>]+>', '', title_m.group(1)).strip()
+        cleaned = re.sub(r'<(script|style|nav|footer|header)[^>]*>.*?</\1>', '', html, flags=re.IGNORECASE | re.DOTALL)
+        content = " ".join(re.sub(r'<[^>]+>', ' ', cleaned).split())
+
+    content = re.sub(r'\s+', ' ', content).strip()
+    if len(content) > max_chars:
+        content = content[:max_chars] + " ... (konten dipotong untuk batas memori context)"
+
+    return {
+        "success": True,
+        "url": url,
+        "title": title,
+        "content": content
+    }
+
+def calculate_math(expression: str) -> Dict[str, Any]:
+    """Mengevaluasi ekspresi matematika sederhana secara aman"""
+    clean_expr = expression.strip().lower()
+    # Ganti operator umum
+    clean_expr = clean_expr.replace("x", "*").replace(":", "/").replace("^", "**")
+    # Hanya izinkan karakter numerik dan simbol math dasar
+    if not re.match(r'^[0-9+\-*/().\s*^%]+$', clean_expr):
+        return {
+            "success": False,
+            "expression": expression,
+            "result": None,
+            "error": "Ekspresi mengandung karakter tidak aman."
+        }
+
+    try:
+        allowed_names = {"sqrt": math.sqrt, "sin": math.sin, "cos": math.cos, "pi": math.pi}
+        res = eval(clean_expr, {"__builtins__": None}, allowed_names)
+        return {
+            "success": True,
+            "expression": expression,
+            "result": res,
+            "summary": f"Hasil hitungan `{expression}` = **{res}**"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "expression": expression,
+            "result": None,
+            "error": str(e)
+        }
+
+def get_current_time_info() -> Dict[str, Any]:
+    """Mengambil informasi tanggal, hari, dan waktu real-time dalam zona WIB dan JST"""
+    now_utc = datetime.now(timezone.utc)
+    wib_tz = timezone(timedelta(hours=7))
+    jst_tz = timezone(timedelta(hours=9))
+
+    now_wib = now_utc.astimezone(wib_tz)
+    now_jst = now_utc.astimezone(jst_tz)
+
+    days_id = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+    months_id = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+
+    day_name = days_id[now_wib.weekday()]
+    month_name = months_id[now_wib.month - 1]
+
+    wib_str = now_wib.strftime(f"{day_name}, %d {month_name} %Y - Jam %H:%M WIB")
+    jst_str = now_jst.strftime("%H:%M JST (Waktu Jepang)")
+
+    summary = (
+        f"📅 Waktu Sekarang:\n"
+        f"• Indonesia (WIB): **{wib_str}**\n"
+        f"• Jepang (JST)    : **{jst_str}**"
+    )
+
+    return {
+        "success": True,
+        "wib": wib_str,
+        "jst": jst_str,
+        "summary": summary
+    }
+
+def detect_agent_intent(text: str) -> Dict[str, Any]:
+    """
+    Menganalisis pesan pengguna dan mendeteksi apakah membutuhkan eksekusi tool AI Agent:
+    - weather: Pengecekan cuaca, suhu, hujan di lokasi tertentu
+    - search: Pencarian informasi Google/Web terkini
+    - browse: Membuka URL web secara langsung
+    - math: Perhitungan matematika
+    - time: Pengecekan tanggal/jam sekarang
+    - none: Obrolan santai biasa (tanpa tool)
+    """
+    if not text:
+        return {"intent": "none", "params": {}}
+
+    text_lower = text.lower().strip()
+
+    # 1. Deteksi URL langsung
+    url_pattern = r'https?://[^\s<>"\')]+'
+    urls = re.findall(url_pattern, text)
+    if urls:
+        target_url = urls[0].rstrip(".,;:!?)'\"")
+        return {
+            "intent": "browse",
+            "params": {"url": target_url}
+        }
+
+    # 2. Deteksi Cuaca & Hujan
+    weather_triggers = [
+        "cuaca", "hujan", "suhu sekarang", "derajat", "gerimis", "ramalan cuaca",
+        "weather", "apakah hujan", "lagi hujan", "panas kah", "dingin kah"
+    ]
+    if any(wt in text_lower for wt in weather_triggers):
+        # Ekstrak kota yang disebut
+        found_cities = []
+        city_candidates = [
+            "tokyo", "jakarta", "bandung", "surabaya", "yogyakarta", "medan",
+            "semarang", "bali", "denpasar", "kyoto", "osaka", "seoul",
+            "singapore", "singapura", "london", "paris", "new york", "sydney",
+            "malang", "bogor", "depok", "tangerang", "bekasi"
+        ]
+        for c in city_candidates:
+            if re.search(rf"\b{c}\b", text_lower):
+                found_cities.append(c.capitalize() if c != "singapura" else "Singapore")
+
+        # Jika tidak ada kota spesifik terdeteksi namun ada kata "di [Nama Kota]"
+        if not found_cities:
+            m_city = re.search(r'\b(?:di|untuk|daerah|wilayah)\s+([A-Z][a-z]+|[a-zA-Z]+)', text)
+            if m_city:
+                cand = m_city.group(1).strip()
+                if cand.lower() not in ["luar", "sana", "sini", "tempat", "mana", "hari", "sekarang", "indonesia"]:
+                    found_cities.append(cand)
+
+        # Default jika user hanya bilang "apakah hujan?" atau "cek cuaca sekarang"
+        if not found_cities:
+            found_cities = ["Jakarta", "Tokyo"]
+
+        return {
+            "intent": "weather",
+            "params": {"locations": found_cities}
+        }
+
+    # 3. Deteksi Perhitungan Matematika
+    # Contoh: "hitung 15 * 25", "berapa (1540 * 25) + 380", "1500 + 400"
+    math_match = re.search(r'(?:hitung|berapa\s+hasil\s+dari|kalkulasi)?\s*([0-9\s()+\-*/.^x:]{4,}[0-9])', text_lower)
+    if math_match:
+        expr = math_match.group(1).strip()
+        # Pastikan ada operator aritmatika
+        if any(op in expr for op in ["+", "-", "*", "/", "x", ":", "^"]):
+            # Pastikan bukan sekadar tanggal seperti 2024-10-12
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', expr):
+                return {
+                    "intent": "math",
+                    "params": {"expression": expr}
+                }
+
+    # 4. Deteksi Waktu / Jam / Tanggal
+    time_triggers = ["jam berapa", "tanggal berapa", "hari apa sekarang", "waktu sekarang", "sekarang jam", "hari ini tanggal"]
+    if any(tt in text_lower for tt in time_triggers):
+        return {
+            "intent": "time",
+            "params": {}
+        }
+
+    # 5. Deteksi Pencarian Web / Google
+    search_triggers = [
+        "cari di web", "cari di google", "googling", "search", "cari info",
+        "cari informasi", "browsing", "berita tentang", "cek di internet",
+        "cek info", "siapa itu", "apa itu", "kapan rilis", "siapa pemenang",
+        "harga sekarang", "kurs dollar", "harga bitcoin"
+    ]
+    for st in search_triggers:
+        if st in text_lower:
+            # Ekstrak query pencarian
+            q = re.sub(rf".*?{re.escape(st)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
+            if not q or len(q) < 3:
+                q = text.strip()
+            return {
+                "intent": "search",
+                "params": {"query": q}
+            }
+
+    return {"intent": "none", "params": {}}

@@ -10,16 +10,27 @@ import shutil
 import secrets
 from datetime import datetime
 from flask import request
-from shiro.config import API_KEY_FILE
+import shiro.config as config
+API_KEY_FILE = getattr(config, "API_KEY_FILE", "api_key.json")
+
+def _get_api_key_file() -> str:
+    import sys
+    if "web" in sys.modules and hasattr(sys.modules["web"], "API_KEY_FILE"):
+        return sys.modules["web"].API_KEY_FILE
+    import shiro.auth
+    if hasattr(shiro.auth, "API_KEY_FILE") and shiro.auth.API_KEY_FILE != getattr(config, "API_KEY_FILE", "api_key.json"):
+        return shiro.auth.API_KEY_FILE
+    return getattr(config, "API_KEY_FILE", "api_key.json")
 
 def get_active_api_key() -> str:
     """Mengambil API Key aktif saat ini"""
     env_key = os.environ.get("SHIRO_API_KEY", "").strip()
     if env_key:
         return env_key
-    if os.path.exists(API_KEY_FILE):
+    key_file = _get_api_key_file()
+    if os.path.exists(key_file):
         try:
-            with open(API_KEY_FILE, "r", encoding="utf-8") as f:
+            with open(key_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 k = data.get("api_key", "").strip()
                 if k:
@@ -34,9 +45,10 @@ def get_all_valid_api_keys() -> set:
     env_key = os.environ.get("SHIRO_API_KEY", "").strip()
     if env_key:
         keys.add(env_key)
-    if os.path.exists(API_KEY_FILE):
+    key_file = _get_api_key_file()
+    if os.path.exists(key_file):
         try:
-            with open(API_KEY_FILE, "r", encoding="utf-8") as f:
+            with open(key_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     k = data.get("api_key", "").strip()
@@ -66,9 +78,10 @@ def get_or_create_api_key(force_new: bool = False) -> str:
         drive_dir = "/content/drive/MyDrive/Shiro_Memory"
 
     existing_keys = []
-    if os.path.exists(API_KEY_FILE):
+    key_file = _get_api_key_file()
+    if os.path.exists(key_file):
         try:
-            with open(API_KEY_FILE, "r", encoding="utf-8") as f:
+            with open(key_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     old_k = data.get("api_key", "").strip()
@@ -90,7 +103,7 @@ def get_or_create_api_key(force_new: bool = False) -> str:
     all_valid = all_valid[:25]
     
     try:
-        with open(API_KEY_FILE, "w", encoding="utf-8") as f:
+        with open(key_file, "w", encoding="utf-8") as f:
             json.dump({
                 "api_key": new_key,
                 "valid_keys": all_valid,
@@ -98,7 +111,7 @@ def get_or_create_api_key(force_new: bool = False) -> str:
             }, f, indent=2)
         if drive_dir and os.path.exists(drive_dir):
             try:
-                shutil.copy2(API_KEY_FILE, os.path.join(drive_dir, API_KEY_FILE))
+                shutil.copy2(key_file, os.path.join(drive_dir, os.path.basename(key_file)))
             except Exception:
                 pass
     except Exception as e:

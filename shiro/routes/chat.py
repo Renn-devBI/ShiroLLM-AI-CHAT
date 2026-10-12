@@ -200,7 +200,8 @@ def chat():
                 "document_url": doc_url,
                 "document_type": doc_type,
                 "active_session_id": getattr(memory, "active_session_id", "default"),
-                "pipeline_trace": trace
+                "pipeline_trace": trace,
+                "agent_action": trace.get("agent_action")
             })
     
     except Exception as e:
