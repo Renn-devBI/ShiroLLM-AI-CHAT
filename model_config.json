@@ -1,5 +1,5 @@
 {
-  "current_model": "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+  "current_model": "model/Qwen3-4B-Q4_K_M.gguf",
   "local_default_model": "model/Qwen3-4B-Q4_K_M.gguf",
   "available_models": [
     "model/Qwen3-32B-Q4_K_M.gguf",

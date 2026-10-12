@@ -112,6 +112,17 @@ def download_single_model(m_key, info):
     return True
 
 def main():
+    in_colab = os.path.exists("/content") or "COLAB_GPU" in os.environ
+    force_local = "--force-local" in sys.argv or os.environ.get("SHIRO_FORCE_LOCAL_DOWNLOAD") == "1"
+    
+    if not in_colab and not force_local:
+        print("\n" + "=" * 65)
+        print("[PROTEKSI DISK LOKAL AKTIF]")
+        print("Script download_model.py khusus dijalankan di Google Colab cloud GPU.")
+        print("Untuk menjaga kapasitas SSD/HDD komputer Anda, download lokal dinonaktifkan.")
+        print("=" * 65 + "\n")
+        return
+
     arg_choice = None
     if len(sys.argv) > 1:
         arg_choice = sys.argv[1].replace("--", "").lower().strip()
