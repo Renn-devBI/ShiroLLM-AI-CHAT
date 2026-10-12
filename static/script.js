@@ -10,6 +10,7 @@ const status = document.getElementById('status');
 const typingIndicator = document.getElementById('typing-indicator');
 
 // Session & Sidebar Controls
+const appLayout = document.querySelector('.app-layout');
 const newChatBtn = document.getElementById('new-chat-btn');
 const sessionSelect = document.getElementById('session-select');
 const deleteChatBtn = document.getElementById('delete-chat-btn');
@@ -549,12 +550,27 @@ function updateMemoryCount() {
         .catch(err => console.error("Memory fetch error", err));
 }
 
-// Fungsi Toggle Typing Indicator
+// Fungsi Toggle Typing Indicator & Sinkronisasi Avatar Shiro
+function updateTypingIndicatorAvatar() {
+    if (!typingIndicator) return;
+    const avatarEl = typingIndicator.querySelector('.avatar');
+    if (!avatarEl) return;
+    if (aiProfile && aiProfile.image) {
+        avatarEl.innerHTML = `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    } else {
+        avatarEl.textContent = aiProfile?.name?.[0].toUpperCase() || 'S';
+    }
+}
+
 function showTyping(show) {
+    if (!typingIndicator) return;
     if (show) {
+        updateTypingIndicatorAvatar();
         typingIndicator.classList.remove('hidden');
-        // Pindahkan indikator ke paling bawah
-        chatViewport.appendChild(typingIndicator);
+        // Pastikan indikator berada di dalam chatMessages dan di paling bawah pesan
+        if (chatMessages) {
+            chatMessages.appendChild(typingIndicator);
+        }
         scrollToBottom();
     } else {
         typingIndicator.classList.add('hidden');
@@ -759,23 +775,40 @@ async function loadChatHistory() {
         const response = await fetch('/api/history');
         const data = await response.json();
         
-        // Simpan System Message
-        const systemMsg = chatMessages.firstElementChild;
         chatMessages.innerHTML = '';
-        if(systemMsg) chatMessages.appendChild(systemMsg);
         
-        // Render History
-        data.history.forEach(msg => {
-            addMessage(
-                msg.role, 
-                msg.content, 
-                msg.image || null, 
-                msg.document_name || null,
-                msg.document_url || null,
-                msg.document_type || null,
-                msg.document_text || null
-            );
-        });
+        if (data.history && data.history.length > 0) {
+            // Render riwayat obrolan asli
+            data.history.forEach(msg => {
+                addMessage(
+                    msg.role, 
+                    msg.content, 
+                    msg.image || null, 
+                    msg.document_name || null,
+                    msg.document_url || null,
+                    msg.document_type || null,
+                    msg.document_text || null
+                );
+            });
+        } else {
+            // Hanya tampilkan sapaan awal jika riwayat chat benar-benar kosong
+            const avatarHtml = aiProfile && aiProfile.image ? 
+                `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
+                (aiProfile?.name?.[0]?.toUpperCase() || 'S');
+
+            chatMessages.innerHTML = `
+                <div class="message assistant">
+                    <div class="avatar shiro-avatar">${avatarHtml}</div>
+                    <div class="bubble">
+                        Halo Kakak. Ada yang bisa Shiro bantu hari ini?
+                    </div>
+                </div>
+            `;
+        }
+        
+        if (typingIndicator && chatMessages) {
+            chatMessages.appendChild(typingIndicator);
+        }
         
         updateMemoryCount();
     } catch (error) {
@@ -877,14 +910,21 @@ async function createNewSession() {
             clearAttachedDocument();
             clearAttachedImage();
             
+            const avatarHtml = aiProfile && aiProfile.image ? 
+                `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
+                (aiProfile?.name?.[0]?.toUpperCase() || 'S');
+
             chatMessages.innerHTML = `
                 <div class="message assistant">
-                    <div class="avatar shiro-avatar">S</div>
+                    <div class="avatar shiro-avatar">${avatarHtml}</div>
                     <div class="bubble">
                         Halo Kakak! Sesi obrolan baru siap. Mau bahas atau tanyakan apa sekarang?
                     </div>
                 </div>
             `;
+            if (typingIndicator && chatMessages) {
+                chatMessages.appendChild(typingIndicator);
+            }
             await loadSessions();
             updateMemoryCount();
             status.textContent = 'Sesi baru aktif';
@@ -911,14 +951,8 @@ async function switchSession(sessionId) {
             clearAttachedDocument();
             clearAttachedImage();
 
-            chatMessages.innerHTML = `
-                <div class="message assistant">
-                    <div class="avatar shiro-avatar">S</div>
-                    <div class="bubble">
-                        Halo Kakak. Ada yang bisa Shiro bantu?
-                    </div>
-                </div>
-            `;
+            chatMessages.innerHTML = '';
+
             if (data.messages && data.messages.length > 0) {
                 data.messages.forEach(msg => {
                     addMessage(
@@ -931,7 +965,25 @@ async function switchSession(sessionId) {
                         msg.document_text || null
                     );
                 });
+            } else {
+                const avatarHtml = aiProfile && aiProfile.image ? 
+                    `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
+                    (aiProfile?.name?.[0]?.toUpperCase() || 'S');
+
+                chatMessages.innerHTML = `
+                    <div class="message assistant">
+                        <div class="avatar shiro-avatar">${avatarHtml}</div>
+                        <div class="bubble">
+                            Halo Kakak. Ada yang bisa Shiro bantu?
+                        </div>
+                    </div>
+                `;
             }
+
+            if (typingIndicator && chatMessages) {
+                chatMessages.appendChild(typingIndicator);
+            }
+
             await loadSessions();
             updateMemoryCount();
             status.textContent = 'Siap';
@@ -960,14 +1012,8 @@ async function deleteSessionById(sessionId, title) {
             clearAttachedDocument();
             clearAttachedImage();
 
-            chatMessages.innerHTML = `
-                <div class="message assistant">
-                    <div class="avatar shiro-avatar">S</div>
-                    <div class="bubble">
-                        Halo Kakak. Ada yang bisa Shiro bantu hari ini?
-                    </div>
-                </div>
-            `;
+            chatMessages.innerHTML = '';
+
             if (data.messages && data.messages.length > 0) {
                 data.messages.forEach(msg => {
                     addMessage(
@@ -980,7 +1026,25 @@ async function deleteSessionById(sessionId, title) {
                         msg.document_text || null
                     );
                 });
+            } else {
+                const avatarHtml = aiProfile && aiProfile.image ? 
+                    `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
+                    (aiProfile?.name?.[0]?.toUpperCase() || 'S');
+
+                chatMessages.innerHTML = `
+                    <div class="message assistant">
+                        <div class="avatar shiro-avatar">${avatarHtml}</div>
+                        <div class="bubble">
+                            Halo Kakak. Ada yang bisa Shiro bantu hari ini?
+                        </div>
+                    </div>
+                `;
             }
+
+            if (typingIndicator && chatMessages) {
+                chatMessages.appendChild(typingIndicator);
+            }
+
             await loadSessions();
             updateMemoryCount();
             status.textContent = 'Chat dihapus. Data training tetap tersimpan aman!';
@@ -1006,6 +1070,9 @@ function isSidebarCollapsed() {
 function openSidebar() {
     if (!chatSidebar) return;
     chatSidebar.classList.remove('collapsed');
+    if (appLayout) {
+        appLayout.classList.remove('sidebar-collapsed');
+    }
     if (sidebarBackdrop) {
         sidebarBackdrop.classList.remove('hidden');
     }
@@ -1017,6 +1084,9 @@ function openSidebar() {
 function closeSidebar() {
     if (!chatSidebar) return;
     chatSidebar.classList.add('collapsed');
+    if (appLayout) {
+        appLayout.classList.add('sidebar-collapsed');
+    }
     if (sidebarBackdrop) {
         sidebarBackdrop.classList.add('hidden');
     }
@@ -1255,6 +1325,7 @@ async function loadProfiles() {
                 }
             }
         }
+        updateTypingIndicatorAvatar();
     } catch (error) {
         console.error('Error loading profiles:', error);
     }
@@ -1517,6 +1588,108 @@ if (uploadDocBtn && docFileInput) {
 
 if (removeDocBtn) {
     removeDocBtn.addEventListener('click', clearAttachedDocument);
+}
+
+// --- Claude-Style Auto-Convert Pasted Code/Text to Document Attachment & Clipboard Image Paste ---
+function detectPastedSnippetMeta(text) {
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
+    
+    // HTML detection
+    if (lower.startsWith('<!doctype html') || lower.startsWith('<html') || 
+        (lower.includes('<div') && lower.includes('</div>')) || 
+        (lower.includes('<body') && lower.includes('</body>')) ||
+        (lower.includes('<head') && lower.includes('</head>'))) {
+        return { filename: 'snippet.html', ext: 'html' };
+    }
+    // SVG detection
+    if (lower.startsWith('<svg') || (lower.includes('<svg') && lower.includes('</svg>'))) {
+        return { filename: 'image.svg', ext: 'svg' };
+    }
+    // JSON detection
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+            JSON.parse(trimmed);
+            return { filename: 'data.json', ext: 'json' };
+        } catch (_) {}
+    }
+    // Python detection
+    if (/^\s*(import\s+\w+|from\s+\w+\s+import|def\s+\w+\s*\(|class\s+\w+[\s:(]|if\s+__name__\s*==\s*['"]__main__['"])/m.test(trimmed)) {
+        return { filename: 'script.py', ext: 'py' };
+    }
+    // CSS detection
+    if (/^\s*([.#][\w-]+\s*\{|@media|@keyframes|:root\s*\{)/m.test(trimmed) && trimmed.includes('{') && trimmed.includes('}')) {
+        return { filename: 'style.css', ext: 'css' };
+    }
+    // JavaScript / TypeScript detection
+    if (/^\s*(const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|function\s+\w*\s*\(|console\.(log|error|warn)\(|export\s+(default\s+)?(function|class|const))/m.test(trimmed) || /=>\s*\{/.test(trimmed)) {
+        return { filename: 'script.js', ext: 'js' };
+    }
+    // SQL detection
+    if (/^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE|ALTER\s+TABLE)\s+/i.test(trimmed)) {
+        return { filename: 'query.sql', ext: 'sql' };
+    }
+    // Markdown detection
+    if (/^#+\s+.+/m.test(trimmed) || (trimmed.includes('```') && trimmed.includes('\n'))) {
+        return { filename: 'document.md', ext: 'md' };
+    }
+    // Default plain text
+    return { filename: 'pasted-text.txt', ext: 'txt' };
+}
+
+function handleLongPaste(text) {
+    const meta = detectPastedSnippetMeta(text);
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    
+    setAttachedDocument({
+        filename: meta.filename,
+        text: text,
+        file_type: meta.ext,
+        char_count: text.length,
+        url: url
+    });
+
+    status.textContent = `Teks ${text.length.toLocaleString()} karakter otomatis dijadikan lampiran (${meta.filename}).`;
+    setTimeout(() => {
+        if (status.textContent.includes('otomatis dijadikan lampiran')) {
+            status.textContent = 'Siap';
+        }
+    }, 4000);
+}
+
+if (userInput) {
+    userInput.addEventListener('paste', (e) => {
+        // 1. Cek apakah ada file gambar dari clipboard (misal tangkapan layar / Win+Shift+S)
+        const items = (e.clipboardData || window.clipboardData)?.items;
+        if (items) {
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type && items[i].type.indexOf('image') !== -1) {
+                    const blob = items[i].getAsFile();
+                    if (blob) {
+                        e.preventDefault();
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            setAttachedImage(event.target.result, `clipboard_image_${Date.now()}.png`);
+                            status.textContent = 'Gambar dari clipboard berhasil dilampirkan.';
+                        };
+                        reader.readAsDataURL(blob);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 2. Claude-style auto-convert: Jika paste teks panjang (>= 1200 karakter atau >= 25 baris dengan panjang >= 400 karakter)
+        const pastedText = (e.clipboardData || window.clipboardData)?.getData('text');
+        if (pastedText) {
+            const lineCount = pastedText.split('\n').length;
+            if (pastedText.length >= 1200 || (lineCount >= 25 && pastedText.length >= 400)) {
+                e.preventDefault();
+                handleLongPaste(pastedText);
+            }
+        }
+    });
 }
 
 if (uploadImageBtn && imageFileInput) {
@@ -2101,6 +2274,19 @@ async function openDocModal(filename, url, ext = "") {
 
     if (docModalTextDisplay) {
         docModalTextDisplay.textContent = "Sedang membaca isi berkas...";
+    }
+
+    // Jika berkas adalah lampiran yang teksnya tersimpan langsung di memori (misal dari hasil Paste kode Claude-style)
+    if (attachedDocument && attachedDocument.filename === filename && attachedDocument.text) {
+        currentDocModalContent = attachedDocument.text;
+        if (docModalTextDisplay) {
+            docModalTextDisplay.textContent = currentDocModalContent;
+        }
+        if (docModalSub) {
+            docModalSub.textContent = `${ext.toUpperCase()} • ${currentDocModalContent.length.toLocaleString()} karakter • Teks Terlampir`;
+        }
+        docViewerModal.classList.remove('hidden');
+        return;
     }
     
     try {

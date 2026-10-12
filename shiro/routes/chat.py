@@ -124,10 +124,11 @@ def chat():
         if not user_message and not image_base64 and not document_info:
             return jsonify({"error": "Empty message"}), 400
         
-        if len(user_message) > 6000:
+        # Fleksibel mendukung teks panjang / kode pemrograman hingga 120.000 karakter
+        if len(user_message) > 120000:
             return jsonify({
-                "error": "Message too long (Maksimal 6000 karakter)",
-                "reply": "*bingung* Kakak ngomong panjang banget lebih dari 6000 karakter... Shiro pusing! Singkat sedikit ya, Kak!"
+                "error": "Pesan terlalu panjang (Maksimal 120.000 karakter)",
+                "reply": "Pesan Kakak melampaui batas aman konteks (120.000 karakter). Mohon persingkat sedikit atau kirim dalam berkas dokumen ya, Kak!"
             }), 400
         
         saved_img_rel = None

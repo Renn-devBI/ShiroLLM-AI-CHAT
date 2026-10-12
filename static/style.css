@@ -424,6 +424,16 @@ body {
     color: var(--text-muted);
 }
 
+/* Ketika sidebar terbuka (default), sembunyikan tombol duplikat di top navbar agar tidak terdobel */
+.app-layout:not(.sidebar-collapsed) .btn-duplicate-nav {
+    display: none !important;
+}
+
+/* Sembunyikan teks label tombol Chat Baru di navbar agar selalu berupa tombol icon ramping jika tampil */
+.btn-new-chat-top .btn-new-chat-text {
+    display: none !important;
+}
+
 .btn-icon {
     background: transparent;
     border: 1px solid var(--border-subtle);
@@ -646,6 +656,19 @@ body {
 }
 
 /* Typing Indicator */
+#typing-indicator {
+    width: 100%;
+    max-width: 920px;
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    margin: 0;
+}
+
+#typing-indicator.hidden {
+    display: none !important;
+}
+
 .bubble.typing {
     display: flex;
     align-items: center;
