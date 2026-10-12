@@ -82,46 +82,41 @@ if (typeof mermaid !== 'undefined') {
 
 let mermaidCounter = 0;
 
-// Parse message formatting: Markdown, Syntax Highlighting, Mermaid, Sanitization
+// Parse message formatting: full Markdown via marked.js, safe HTML via DOMPurify.
+// Fallback parser remains available if the CDN library is unavailable.
 function parseMessageContent(text) {
     if (!text) return '';
+    const source = String(text);
 
-    const codeBlocks = [];
+    if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+        try {
+            const renderer = new marked.Renderer();
+            renderer.code = function({ text: code, lang }) {
+                const cleanLang = String(lang || '').trim().split(/\s+/)[0].toLowerCase();
+                const escapedCode = String(code || '')
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
 
-    // 1. Ekstrak Fenced Code Blocks: ```lang ... ```
-    let content = text.replace(/```([a-zA-Z0-9_\-\.]*)\s*\n?([\s\S]*?)```/g, function(match, lang, code) {
-        const cleanLang = (lang || '').trim().toLowerCase();
-        const rawCode = (code || '').trim();
-        const placeholder = `___SHIRO_BLOCK_${codeBlocks.length}___`;
+                if (cleanLang === 'mermaid' && typeof mermaid !== 'undefined') {
+                    const mId = `mermaid_${Date.now()}_${++mermaidCounter}`;
+                    return `<div class="mermaid-container" id="${mId}">
+                        <div class="mermaid-toolbar">
+                            <span class="mermaid-badge"><i class="ph ph-tree-structure"></i> Diagram Mermaid</span>
+                            <button type="button" class="btn-toggle-mermaid-code" onclick="toggleMermaidCode(this)">
+                                <i class="ph ph-code"></i> Tampilkan Kode
+                            </button>
+                        </div>
+                        <div class="mermaid-diagram-render" id="render_${mId}">
+                            <pre class="mermaid-raw-source" style="display:none;">${escapedCode}</pre>
+                        </div>
+                        <pre class="mermaid-raw-code hidden"><code>${escapedCode}</code></pre>
+                    </div>`;
+                }
 
-        const escapedCode = rawCode
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-
-        if (cleanLang === 'mermaid') {
-            const mId = `mermaid_${Date.now()}_${++mermaidCounter}`;
-            codeBlocks.push(`
-                <div class="mermaid-container" id="${mId}">
-                    <div class="mermaid-toolbar">
-                        <span class="mermaid-badge"><i class="ph ph-tree-structure"></i> Diagram Mermaid</span>
-                        <button type="button" class="btn-toggle-mermaid-code" onclick="toggleMermaidCode(this)">
-                            <i class="ph ph-code"></i> Tampilkan Kode
-                        </button>
-                    </div>
-                    <div class="mermaid-diagram-render" id="render_${mId}">
-                        <pre class="mermaid-raw-source" style="display:none;">${escapedCode}</pre>
-                    </div>
-                    <pre class="mermaid-raw-code hidden"><code>${escapedCode}</code></pre>
-                </div>
-            `);
-        } else {
-            const displayLang = cleanLang ? cleanLang.toUpperCase() : 'CODE';
-            const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
-            codeBlocks.push(`
-                <div class="code-block-wrapper">
+                const displayLang = cleanLang ? cleanLang.toUpperCase() : 'CODE';
+                const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
+                return `<div class="code-block-wrapper">
                     <div class="code-block-header">
                         <span class="code-lang-label">${displayLang}</span>
                         <button type="button" class="btn-copy-code" onclick="copyCodeSnippet(this)" title="Salin Kode">
@@ -129,76 +124,47 @@ function parseMessageContent(text) {
                         </button>
                     </div>
                     <pre><code class="${langClass}">${escapedCode}</code></pre>
-                </div>
-            `);
-        }
-        return placeholder;
-    });
-
-    // 2. Escape teks non-kode untuk sanitasi awal
-    let div = document.createElement('div');
-    div.textContent = content;
-    content = div.innerHTML;
-
-    // 3. Parse Markdown Images: ![alt](url) -> Clickable lightbox preview
-    content = content.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s<>"'\)]+|\/[^\s<>"'\)]+)\)/g, function(match, alt, rawUrl) {
-        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
-        let safeAlt = (alt || 'Gambar').replace(/"/g, '&quot;');
-        let jsUrl = cleanUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        return `<div class="chat-inline-img-wrap" onclick="openImageLightbox('${jsUrl}', '${safeAlt}')" title="Klik untuk melihat pratinjau penuh"><img src="${cleanUrl}" alt="${safeAlt}" class="chat-img-attachment" loading="lazy"></div>`;
-    });
-
-    // 4. Parse Markdown links [text](url)
-    const mdLinks = [];
-    content = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\s<>"']+)\)/g, function(match, label, rawUrl) {
-        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
-        let placeholder = `___SHIRO_MD_LINK_${mdLinks.length}___`;
-        mdLinks.push(`<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${label}</a>`);
-        return placeholder;
-    });
-
-    // 5. Parse plain URL menjadi link yang bisa diklik
-    const urlRegex = /(https?:\/\/[^\s<>"']+)/g;
-    content = content.replace(urlRegex, function(match) {
-        let cleanUrl = match.replace(/[.,;!?)]+$/, '');
-        let trailing = match.slice(cleanUrl.length);
-        return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${cleanUrl}</a>${trailing}`;
-    });
-
-    // Kembalikan placeholder Markdown links
-    mdLinks.forEach((linkHtml, idx) => {
-        content = content.replace(`___SHIRO_MD_LINK_${idx}___`, linkHtml);
-    });
-
-    // 6. Parse inline code: `code`
-    content = content.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-    // 7. Parse formatting teks
-    content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    content = content.replace(/~~(.+?)~~/g, '<del>$1</del>');
-    content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    // 8. Parse baris baru menjadi <br>
-    content = content.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
-
-    // 9. Pulihkan blok kode & diagram mermaid
-    codeBlocks.forEach((blockHtml, idx) => {
-        content = content.replace(`___SHIRO_BLOCK_${idx}___`, blockHtml);
-    });
-
-    // 10. Markdown Sanitization via DOMPurify jika tersedia
-    if (typeof DOMPurify !== 'undefined') {
-        try {
-            content = DOMPurify.sanitize(content, {
-                ADD_TAGS: ['svg', 'path', 'marker', 'g', 'rect', 'circle', 'line', 'polygon', 'text', 'tspan', 'style', 'defs'],
-                ADD_ATTR: ['target', 'rel', 'onclick', 'data-*', 'class', 'id', 'd', 'fill', 'stroke', 'viewBox', 'width', 'height', 'style', 'title']
-            });
-        } catch (pErr) {
-            console.warn('[DOMPurify Warning]:', pErr);
+                </div>`;
+            };
+            marked.setOptions({ gfm: true, breaks: true, renderer });
+            let html = marked.parse(source);
+            if (typeof DOMPurify !== 'undefined') {
+                html = DOMPurify.sanitize(html, {
+                    ADD_TAGS: ['svg','path','marker','g','rect','circle','line','polygon','text','tspan','style','defs'],
+                    ADD_ATTR: ['target','rel','data-*','class','id','d','fill','stroke','viewBox','width','height','style','title']
+                });
+            }
+            return html;
+        } catch (err) {
+            console.error('[Markdown Render Error]', err);
         }
     }
 
-    return content;
+    // Safe fallback if marked.js failed to load. Supports common inline Markdown and fenced code.
+    const blocks = [];
+    let safe = source.replace(/```([a-zA-Z0-9_.+-]*)[ \t]*\r?\n?([\s\S]*?)(?:```|$)/g, (_, lang, code) => {
+        const esc = String(code || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const cls = lang ? `language-${lang.toLowerCase()}` : 'nohighlight';
+        blocks.push(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang-label">${(lang || 'CODE').toUpperCase()}</span><button type="button" class="btn-copy-code" onclick="copyCodeSnippet(this)"><i class="ph ph-copy"></i> <span>Salin</span></button></div><pre><code class="${cls}">${esc}</code></pre></div>`);
+        return `___SHIRO_BLOCK_${blocks.length-1}___`;
+    });
+    const el = document.createElement('div');
+    el.textContent = safe;
+    safe = el.innerHTML;
+    safe = safe.replace(/^######\s+(.+)$/gm,'<h6>$1</h6>')
+        .replace(/^#####\s+(.+)$/gm,'<h5>$1</h5>')
+        .replace(/^####\s+(.+)$/gm,'<h4>$1</h4>')
+        .replace(/^###\s+(.+)$/gm,'<h3>$1</h3>')
+        .replace(/^##\s+(.+)$/gm,'<h2>$1</h2>')
+        .replace(/^#\s+(.+)$/gm,'<h1>$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+        .replace(/~~(.+?)~~/g,'<del>$1</del>')
+        .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>')
+        .replace(/`([^`\n]+)`/g,'<code>$1</code>')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+        .replace(/\r?\n/g,'<br>');
+    blocks.forEach((b,i)=>{ safe=safe.replace(`___SHIRO_BLOCK_${i}___`,b); });
+    return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(safe) : safe;
 }
 
 // Global visual attachment state
