@@ -117,6 +117,14 @@ def clean_response(response: str) -> str:
     if '<think>' in response.lower():
         response = re.sub(r'<think>.*$', '', response, flags=re.DOTALL | re.IGNORECASE)
 
+    # 1b. Lindungi blok kode agar indentasi dan karakter kode tidak rusak selama pembersihan teks
+    code_blocks = []
+    def _mask_code(m):
+        code_blocks.append(m.group(0))
+        return f"__CODE_SNIPPET_BLOCK_{len(code_blocks)-1}__"
+
+    response = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _mask_code, response)
+
     # 2. Hapus semua special tokens dan markers
     response = re.sub(r'<\|im_.*?\|>', '', response, flags=re.IGNORECASE)
     response = re.sub(r'<\|.*?\|>', '', response)
@@ -165,9 +173,8 @@ def clean_response(response: str) -> str:
     # 8. Hapus parenthetical explanations di akhir
     response = re.sub(r'\s*\(.*?(explanation|context|note|remember).*?\)\s*$', '', response, flags=re.IGNORECASE)
     
-    # 9. Hapus narasi novel orang ketiga di awal kalimat
-    response = re.sub(r'^\*?(Tanpa|Dengan|Sambil|Setelah|Ketika|Melihat|Mendengar|Merasa)\s+[^.,!?*]+,\s*Shiro\s+[^.,!?*]+\*?\s*', '', response, flags=re.IGNORECASE)
-    response = re.sub(r'^\*Shiro\s+(menjawab|berkata|tersenyum|mengangguk|menatap|berlari|memeluk|mengedipkan)[^*]*\*\s*', '', response, flags=re.IGNORECASE)
+    # 9. Normalisasi narasi Shiro di awal kalimat menjadi tindakan langsung *...*
+    response = re.sub(r'^\*Shiro\s+', '*', response, flags=re.IGNORECASE)
     response = re.sub(r'^\*?Kau\s+(masih|melirik|menatap|tersenyum)[^*]*\*?\s*', '', response, flags=re.IGNORECASE)
     
     # 10. Bersihkan halusinasi 'kami semua' & tokoh lain
@@ -183,14 +190,6 @@ def clean_response(response: str) -> str:
     response = re.sub(r'^\s*>?\s*Membuka (?:dan membaca|koneksi|browser)[^\n]*(?:\n|$)', '', response, flags=re.MULTILINE | re.IGNORECASE)
     response = re.sub(r'\(Cloudflare 1\.1\.1\.1[^\)]*\)', '', response, flags=re.IGNORECASE)
     response = re.sub(r'\(Mozilla Engine[^\)]*\)', '', response, flags=re.IGNORECASE)
-
-    # 11. Lindungi blok kode agar indentasi dan karakter kode tidak rusak
-    code_blocks = []
-    def _mask_code(m):
-        code_blocks.append(m.group(0))
-        return f"__CODE_SNIPPET_BLOCK_{len(code_blocks)-1}__"
-
-    response = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _mask_code, response)
     
     # 12. Hapus tanda baca berlebih pada teks percakapan
     response = re.sub(r'\.{3,}', '...', response)

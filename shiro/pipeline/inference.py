@@ -108,10 +108,16 @@ def get_shiro_reply(
             vis_desc = analyze_visual_bridge(all_images, query_text=raw_user_typed)
             if vis_desc:
                 visual_bridge_context = (
-                    f"\n\n### INFORMASI HASIL OBSERVASI VISUAL KAMERA/LAYAR:\n"
+                    f"\n\n### INFORMASI HASIL OBSERVASI VISUAL:\n"
                     f"{vis_desc}\n"
-                    f"[Catatan: Informasi visual di atas adalah apa yang saat ini terlihat. "
+                    f"[Catatan: Informasi visual di atas adalah apa yang saat ini terlihat pada gambar yang dikirim Kakak. "
                     f"Jawab pertanyaan Kakak sesuai fakta visual tersebut dengan persona Shiro.]\n"
+                )
+            else:
+                visual_bridge_context = (
+                    f"\n\n### CATATAN SISTEM VISUAL:\n"
+                    f"[Kakak melampirkan sebuah gambar visual, namun model saat ini berjalan dalam mode teks murni tanpa vision projector lokal dan Gemini Visual Bridge belum aktif. "
+                    f"Beri tahu Kakak secara jujur, ramah, dan manja bahwa Shiro mendeteksi gambar yang Kakak kirim, tapi mata visual Shiro belum aktif sehingga belum bisa melihat gambarnya secara langsung. Minta Kakak menceritakan siapa atau apa di gambar tersebut.]\n"
                 )
 
         # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math via Cloudflare 1.1.1.1 & Mozilla)
@@ -369,10 +375,16 @@ def get_shiro_reply(
 
         doc_prompt_addon = ""
         if has_doc and document_info:
-            doc_snip = document_info.get("text", "")[:4000]
-            doc_prompt_addon = (
-                f"\n\n### DOKUMEN AKTIF ({doc_name}):\n"
-                f"{doc_snip}\n"
+            from shiro.document.reader import build_document_prompt
+            active_ctx = get_active_model_ctx(llm)
+            # Alokasi kuota teks dokumen dinamis menyesuaikan context window model
+            max_doc_chars = max(10000, min(60000, (active_ctx - 2000) * 3))
+            doc_full_text = document_info.get("text", "")
+            if len(doc_full_text) > max_doc_chars:
+                doc_full_text = doc_full_text[:max_doc_chars] + f"\n\n... [Sisa teks dokumen dipotong karena melampaui batas {max_doc_chars} karakter]"
+            doc_prompt_addon = build_document_prompt(
+                {"filename": doc_name, "text": doc_full_text},
+                user_query=raw_user_typed
             )
 
         # Agentic Tools Schema injection
@@ -405,10 +417,10 @@ def get_shiro_reply(
 
         # Susun System Prompt berdasarkan persona Shiro (v1, v2, atau v3)
         if api_version == "v2":
-            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon
+            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon + doc_prompt_addon
         elif api_version == "v3":
             base_p = custom_system_prompt or ""
-            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon
+            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon + doc_prompt_addon
         else:
             system_prompt = build_system_prompt(
                 conversation_summary=conversation_summary,
@@ -420,7 +432,7 @@ def get_shiro_reply(
                 cross_session_addon=cross_session_addon
             ) + tools_addon + reasoning_addon
 
-        # Susun Pesan Giliran Pengguna (MURNI teks yang diketik oleh pengguna)
+        # Susun Pesan Giliran Pengguna (User Turn)
         if has_image and has_vision:
             # Format multimodal vision native
             content_parts = []
@@ -430,13 +442,28 @@ def get_shiro_reply(
                     "type": "image_url",
                     "image_url": {"url": clean_img}
                 })
-            # Teks giliran pengguna murni dari ketikan user (tanpa teks palsu buatan program)
-            user_text = raw_user_typed if raw_user_typed else " "
+            user_text = raw_user_typed if raw_user_typed else "Shiro, coba lihat gambar yang Kakak kirim ini!"
+            if has_doc:
+                user_text = f"[Melampirkan Dokumen: {doc_name}]\n{user_text}"
             content_parts.append({"type": "text", "text": user_text})
             user_turn_msg = {"role": "user", "content": content_parts}
         else:
-            # Teks murni yang diketik user
-            user_text = raw_user_typed if raw_user_typed else " "
+            parts_user = []
+            if has_image:
+                parts_user.append("[Melampirkan Gambar Visual]")
+            if has_doc:
+                parts_user.append(f"[Melampirkan Dokumen: {doc_name}]")
+
+            if raw_user_typed:
+                parts_user.append(raw_user_typed)
+            elif has_doc:
+                parts_user.append(f"Shiro, tolong pelajari dokumen '{doc_name}' yang Kakak lampirkan ya!")
+            elif has_image:
+                parts_user.append("Shiro, coba lihat gambar yang Kakak kirim ini! Bagaimana menurutmu?")
+            else:
+                parts_user.append(" ")
+
+            user_text = "\n".join(parts_user)
             user_turn_msg = {"role": "user", "content": user_text}
 
         msgs = [{"role": "system", "content": system_prompt}]
@@ -487,11 +514,12 @@ def get_shiro_reply(
         max_output_tokens = min(desired_max, remaining_space)
 
         stop_tokens = [
-            "User:", "Kakak:", "Shiro:", "assistant:", "###",
-            "<|im_end|>", "<|im_start|>", "<|eot_id|>", "<|end|>", "<|end_of_text|>"
+            "<|im_end|>", "<|im_start|>", "<|eot_id|>", "<|end|>", "<|end_of_text|>",
+            "\nUser:", "\nKakak:", "\nuser:", "\nAssistant:", "\nassistant:",
+            "\n<|im_start|>user", "\n<|im_start|>assistant"
         ]
         if not is_reasoning_enabled:
-            stop_tokens.extend(["Okay, let me", "The user is"])
+            stop_tokens.extend(["\nOkay, let me", "\nThe user is"])
 
         gen_params = {
             "temperature": 0.72 if has_image else (0.70 if api_version == "v2" else 0.65),
@@ -600,13 +628,22 @@ def get_shiro_reply(
         else:
             cleaned_reply = clean_response(raw_reply)
 
+        # Jika cleaner menghasilkan teks kosong padahal raw_reply memiliki teks substansial
+        if not cleaned_reply and raw_reply:
+            cleaned_reply = raw_reply.strip()
+
         # Jika model menghasilkan teks kosong padahal memanggil tool
         if not cleaned_reply and parsed_tool_calls:
             cleaned_reply = "Shiro sedang memproses perintah dengan tool yang sesuai ya, Kak!" if api_version == "v1" else ""
 
         # Jika model benar-benar menghasilkan output kosong tanpa tool
         if not cleaned_reply:
-            cleaned_reply = "*tersenyum lembut menatap Kakak* Iya Kak? Shiro siap mendengarkan." if api_version == "v1" else "..."
+            if has_image:
+                cleaned_reply = "*tersenyum manis menatap Kakak* Shiro mendeteksi gambar yang Kakak kirim! Boleh ceritakan tentang gambar ini ke Shiro, Kak? 💕" if api_version == "v1" else "..."
+            elif has_doc:
+                cleaned_reply = f"*mengangguk manis* Shiro sudah menerima dokumen '{doc_name}' dari Kakak. Ada bagian tertentu yang ingin Shiro jelaskan atau rangkum, Kak?" if api_version == "v1" else "..."
+            else:
+                cleaned_reply = "*tersenyum manis menatap Kakak* Iya Kak? Shiro siap mendengarkan Kakak tercinta~ 💕" if api_version == "v1" else "..."
 
         t_filter_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
