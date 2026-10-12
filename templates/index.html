@@ -13,46 +13,92 @@
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
 </head>
 <body>
-    <div class="app-container">
-        <!-- Top Navigation Bar -->
-        <header class="navbar">
-            <div class="brand">
-                <div class="status-dot"></div>
-                <div class="brand-text">
-                    <span class="brand-title">SHIRO</span>
-                    <span class="model-pill">Qwen3-32B</span>
+    <div class="app-layout">
+        <!-- Collapsible Left Sidebar (ChatGPT / Claude / Gemini Style) -->
+        <aside class="chat-sidebar" id="chat-sidebar">
+            <div class="sidebar-header">
+                <button id="sidebar-new-chat-btn" class="btn-sidebar-new-chat" title="Mulai Obrolan Baru" type="button">
+                    <i class="ph ph-plus"></i>
+                    <span>Chat Baru</span>
+                </button>
+                <button id="close-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Tutup Menu" type="button">
+                    <i class="ph ph-sidebar-simple"></i>
+                </button>
+            </div>
+
+            <div class="sidebar-section-title">
+                <i class="ph ph-clock-counter-clockwise"></i>
+                <span>Riwayat Obrolan</span>
+            </div>
+
+            <div class="sidebar-session-list" id="sidebar-session-list">
+                <!-- Sesi percakapan di-render secara dinamis -->
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="sidebar-footer-stat" title="Jumlah ingatan aktif Shiro">
+                    <div class="stat-icon"><i class="ph ph-brain"></i></div>
+                    <div class="stat-info">
+                        <span class="stat-label">Ingatan Aktif</span>
+                        <span class="stat-val" id="sidebar-memory-count">0 Fakta</span>
+                    </div>
+                </div>
+                <div class="sidebar-footer-actions">
+                    <button id="sidebar-pipeline-btn" class="btn-sidebar-footer" title="Pipeline Telemetry" type="button">
+                        <i class="ph ph-tree-structure"></i>
+                        <span>Pipeline</span>
+                    </button>
+                    <button id="sidebar-settings-btn" class="btn-sidebar-footer" title="Pengaturan Model" type="button">
+                        <i class="ph ph-gear"></i>
+                        <span>Settings</span>
+                    </button>
                 </div>
             </div>
-            
-            <div class="nav-actions">
-                <div class="session-control-group">
-                    <button id="new-chat-btn" class="btn-icon btn-new-chat" title="Chat Baru" type="button">
+        </aside>
+
+        <!-- Sidebar Mobile Backdrop -->
+        <div class="sidebar-backdrop hidden" id="sidebar-backdrop"></div>
+
+        <!-- Main Content Area (Expands to 100% when sidebar is collapsed) -->
+        <div class="main-content" id="main-content">
+            <!-- Top Navigation Bar -->
+            <header class="navbar">
+                <div class="nav-left">
+                    <button id="open-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Buka/Tutup Riwayat Obrolan" type="button">
+                        <i class="ph ph-sidebar-simple"></i>
+                    </button>
+                    <div class="brand">
+                        <div class="status-dot"></div>
+                        <div class="brand-text">
+                            <span class="brand-title">SHIRO</span>
+                            <span class="model-pill">Qwen3-32B</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="nav-actions">
+                    <button id="new-chat-btn" class="btn-icon btn-new-chat-top" title="Chat Baru" type="button">
                         <i class="ph ph-plus"></i>
                         <span class="btn-new-chat-text">Chat Baru</span>
                     </button>
-                    <select id="session-select" class="session-dropdown" title="Pilih Percakapan">
-                        <option value="default">Sesi Utama</option>
-                    </select>
-                    <button id="delete-chat-btn" class="btn-icon btn-delete-chat" title="Hapus Sesi Chat" type="button">
+                    <button id="pipeline-btn" class="btn-icon btn-pipeline-toggle" title="Pipeline Workflow" type="button">
+                        <i class="ph ph-tree-structure"></i>
+                        <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
+                    </button>
+                    <div class="memory-badge" title="Jumlah ingatan aktif">
+                        <span class="badge-label">Ingatan:</span>
+                        <span id="memory-count">0</span>
+                    </div>
+                    <button id="settings-btn" class="btn-icon" title="Pengaturan" type="button">
+                        <i class="ph ph-gear"></i>
+                    </button>
+                    <button id="reset-btn" class="btn-icon btn-danger-hover" title="Bersihkan Obrolan Sesi Ini" type="button">
                         <i class="ph ph-trash"></i>
                     </button>
+                    <select id="session-select" class="hidden" title="Pilih Percakapan"></select>
+                    <button id="delete-chat-btn" class="hidden" type="button"></button>
                 </div>
-                <button id="pipeline-btn" class="btn-icon btn-pipeline-toggle" title="Pipeline Workflow" type="button">
-                    <i class="ph ph-tree-structure"></i>
-                    <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
-                </button>
-                <div class="memory-badge" title="Jumlah ingatan aktif">
-                    <span class="badge-label">Ingatan:</span>
-                    <span id="memory-count">0</span>
-                </div>
-                <button id="settings-btn" class="btn-icon" title="Pengaturan" type="button">
-                    <i class="ph ph-gear"></i>
-                </button>
-                <button id="reset-btn" class="btn-icon btn-danger-hover" title="Reset Ingatan" type="button">
-                    <i class="ph ph-trash"></i>
-                </button>
-            </div>
-        </header>
+            </header>
 
         <!-- Chat History Viewport -->
         <main class="chat-viewport" id="chat-viewport">
@@ -139,7 +185,8 @@
                 <span id="status">Siap</span>
             </div>
         </footer>
-    </div>
+        </div> <!-- end main-content -->
+    </div> <!-- end app-layout -->
 
     <!-- Real-Time Camera Modal -->
     <div id="camera-modal" class="modal-backdrop hidden">

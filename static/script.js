@@ -9,10 +9,19 @@ const memoryCount = document.getElementById('memory-count');
 const status = document.getElementById('status');
 const typingIndicator = document.getElementById('typing-indicator');
 
-// Session Controls
+// Session & Sidebar Controls
 const newChatBtn = document.getElementById('new-chat-btn');
 const sessionSelect = document.getElementById('session-select');
 const deleteChatBtn = document.getElementById('delete-chat-btn');
+const chatSidebar = document.getElementById('chat-sidebar');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+const openSidebarBtn = document.getElementById('open-sidebar-btn');
+const closeSidebarBtn = document.getElementById('close-sidebar-btn');
+const sidebarNewChatBtn = document.getElementById('sidebar-new-chat-btn');
+const sidebarSessionList = document.getElementById('sidebar-session-list');
+const sidebarMemoryCount = document.getElementById('sidebar-memory-count');
+const sidebarPipelineBtn = document.getElementById('sidebar-pipeline-btn');
+const sidebarSettingsBtn = document.getElementById('sidebar-settings-btn');
 
 // Document Upload Controls
 const uploadDocBtn = document.getElementById('upload-doc-btn');
@@ -534,7 +543,8 @@ function updateMemoryCount() {
     fetch('/api/memory-count')
         .then(res => res.json())
         .then(data => {
-            memoryCount.textContent = data.count;
+            if (memoryCount) memoryCount.textContent = data.count;
+            if (sidebarMemoryCount) sidebarMemoryCount.textContent = `${data.count} Fakta`;
         })
         .catch(err => console.error("Memory fetch error", err));
 }
@@ -773,24 +783,79 @@ async function loadChatHistory() {
     }
 }
 
-// Session Management Functions (Multi-Session with Persistent Memory)
+// Session & Sidebar Management Functions (Multi-Session with Persistent Memory)
 async function loadSessions() {
-    if (!sessionSelect) return;
     try {
         const res = await fetch('/api/sessions');
         const data = await res.json();
         if (data.sessions) {
-            sessionSelect.innerHTML = '';
-            data.sessions.forEach(s => {
-                const opt = document.createElement('option');
-                opt.value = s.id;
-                opt.textContent = s.title || `Chat ${s.id.slice(0, 6)}`;
-                if (s.id === data.active_session_id) {
-                    opt.selected = true;
-                }
-                sessionSelect.appendChild(opt);
-            });
             activeSessionId = data.active_session_id;
+
+            // Update legacy select if present in DOM
+            if (sessionSelect) {
+                sessionSelect.innerHTML = '';
+                data.sessions.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.id;
+                    opt.textContent = s.title || `Chat ${s.id.slice(0, 6)}`;
+                    if (s.id === data.active_session_id) {
+                        opt.selected = true;
+                    }
+                    sessionSelect.appendChild(opt);
+                });
+            }
+
+            // Render modern collapsible sidebar session list
+            if (sidebarSessionList) {
+                sidebarSessionList.innerHTML = '';
+                if (data.sessions.length === 0) {
+                    const emptyTip = document.createElement('div');
+                    emptyTip.style.cssText = 'padding: 1rem; color: var(--text-muted); font-size: 0.8rem; text-align: center;';
+                    emptyTip.textContent = 'Belum ada riwayat chat.';
+                    sidebarSessionList.appendChild(emptyTip);
+                } else {
+                    data.sessions.forEach(s => {
+                        const item = document.createElement('div');
+                        item.className = 'session-item' + (s.id === data.active_session_id ? ' active' : '');
+                        item.dataset.sessionId = s.id;
+
+                        const content = document.createElement('div');
+                        content.className = 'session-item-content';
+
+                        const icon = document.createElement('i');
+                        icon.className = 'ph ph-chat-teardrop-text session-item-icon';
+
+                        const titleSpan = document.createElement('span');
+                        titleSpan.className = 'session-item-title';
+                        titleSpan.textContent = s.title || `Chat ${s.id.slice(0, 6)}`;
+
+                        content.appendChild(icon);
+                        content.appendChild(titleSpan);
+
+                        const delBtn = document.createElement('button');
+                        delBtn.type = 'button';
+                        delBtn.className = 'session-item-delete';
+                        delBtn.title = 'Hapus chat ini';
+                        delBtn.innerHTML = '<i class="ph ph-trash"></i>';
+                        delBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            deleteSessionById(s.id, s.title);
+                        });
+
+                        item.appendChild(content);
+                        item.appendChild(delBtn);
+
+                        item.addEventListener('click', () => {
+                            switchSession(s.id);
+                            if (window.innerWidth <= 768) {
+                                closeSidebar();
+                            }
+                        });
+
+                        sidebarSessionList.appendChild(item);
+                    });
+                }
+            }
         }
     } catch (e) {
         console.error("Error loading sessions:", e);
@@ -867,6 +932,7 @@ async function switchSession(sessionId) {
                     );
                 });
             }
+            await loadSessions();
             updateMemoryCount();
             status.textContent = 'Siap';
         }
@@ -876,15 +942,16 @@ async function switchSession(sessionId) {
     }
 }
 
-async function deleteCurrentSession() {
+async function deleteSessionById(sessionId, title) {
     if (isGenerating) return;
 
-    const confirmDelete = confirm('Hapus percakapan di chat ini?\n\nCatatan:\n• Percakapan di layar ini akan dihapus/dibersihkan.\n• Seluruh data pelatihan (training dataset) dan fakta ingatan Shiro tetap tersimpan aman!');
+    const sessionName = title || 'percakapan ini';
+    const confirmDelete = confirm(`Hapus "${sessionName}"?\n\nCatatan:\n• Percakapan di sesi ini akan dihapus.\n• Seluruh data pelatihan (training dataset) dan fakta ingatan Shiro tetap tersimpan aman!`);
     if (!confirmDelete) return;
 
     try {
         status.textContent = 'Menghapus chat...';
-        const res = await fetch(`/api/sessions/${activeSessionId}`, {
+        const res = await fetch(`/api/sessions/${sessionId}`, {
             method: 'DELETE'
         });
         const data = await res.json();
@@ -926,10 +993,95 @@ async function deleteCurrentSession() {
     }
 }
 
-// Event Listeners
+async function deleteCurrentSession() {
+    deleteSessionById(activeSessionId);
+}
+
+// Sidebar Controls & State Management
+function isSidebarCollapsed() {
+    if (!chatSidebar) return false;
+    return chatSidebar.classList.contains('collapsed');
+}
+
+function openSidebar() {
+    if (!chatSidebar) return;
+    chatSidebar.classList.remove('collapsed');
+    if (sidebarBackdrop) {
+        sidebarBackdrop.classList.remove('hidden');
+    }
+    try {
+        localStorage.setItem('shiro_sidebar_collapsed', 'false');
+    } catch (e) {}
+}
+
+function closeSidebar() {
+    if (!chatSidebar) return;
+    chatSidebar.classList.add('collapsed');
+    if (sidebarBackdrop) {
+        sidebarBackdrop.classList.add('hidden');
+    }
+    try {
+        localStorage.setItem('shiro_sidebar_collapsed', 'true');
+    } catch (e) {}
+}
+
+function toggleSidebar() {
+    if (isSidebarCollapsed()) {
+        openSidebar();
+    } else {
+        closeSidebar();
+    }
+}
+
+function initSidebarState() {
+    if (!chatSidebar) return;
+    try {
+        const saved = localStorage.getItem('shiro_sidebar_collapsed');
+        if (saved === 'true') {
+            closeSidebar();
+        } else if (saved === 'false') {
+            openSidebar();
+        } else {
+            if (window.innerWidth <= 768) {
+                closeSidebar();
+            } else {
+                openSidebar();
+            }
+        }
+    } catch (e) {
+        if (window.innerWidth <= 768) {
+            closeSidebar();
+        }
+    }
+}
+
+// Event Listeners for Chat, Sidebar & Sessions
 sendBtn.addEventListener('click', sendMessage);
 stopBtn.addEventListener('click', stopGeneration);
 if (newChatBtn) newChatBtn.addEventListener('click', createNewSession);
+if (sidebarNewChatBtn) {
+    sidebarNewChatBtn.addEventListener('click', () => {
+        createNewSession();
+        if (window.innerWidth <= 768) closeSidebar();
+    });
+}
+if (openSidebarBtn) openSidebarBtn.addEventListener('click', toggleSidebar);
+if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', closeSidebar);
+if (sidebarBackdrop) sidebarBackdrop.addEventListener('click', closeSidebar);
+
+if (sidebarPipelineBtn) {
+    sidebarPipelineBtn.addEventListener('click', () => {
+        if (typeof openPipelineModal === 'function') openPipelineModal();
+        if (window.innerWidth <= 768) closeSidebar();
+    });
+}
+if (sidebarSettingsBtn) {
+    sidebarSettingsBtn.addEventListener('click', () => {
+        if (typeof openSettings === 'function') openSettings();
+        if (window.innerWidth <= 768) closeSidebar();
+    });
+}
+
 if (sessionSelect) sessionSelect.addEventListener('change', (e) => switchSession(e.target.value));
 if (deleteChatBtn) deleteChatBtn.addEventListener('click', deleteCurrentSession);
 
@@ -2062,6 +2214,7 @@ if (docPreviewCardEl) {
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
+    initSidebarState();
     loadProfiles().then(() => {
         loadChatHistory();
         loadSessions(); // Load daftar sesi percakapan

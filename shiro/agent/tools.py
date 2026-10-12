@@ -436,23 +436,42 @@ def _fetch_cloud_screenshot(clean_url: str, abs_out_path: str) -> bool:
     encoded_url = urllib.parse.quote_plus(clean_url)
     session = get_agent_session()
 
+    # Urutkan engine cloud berdasarkan keandalan & render instan:
+    # 1. thum.io: Render instan berkecepatan tinggi (format PNG asli > 100KB)
+    # 2. microlink.io: Headless Chrome cloud (format PNG jernih)
+    # 3. wordpress mshots: (Hanya terima gambar render selesai > 15KB JPEG/PNG, tolak GIF placeholder 'Generating Preview...')
     engines = [
-        f"https://s0.wp.com/mshots/v1/{encoded_url}?w=1280&h=800",
-        f"https://api.microlink.io?url={encoded_url}&screenshot=true&embed=screenshot.url",
-        f"https://image.thum.io/get/width/1280/crop/800/{clean_url}"
+        ("thum.io", f"https://image.thum.io/get/width/1280/crop/800/{clean_url}"),
+        ("microlink", f"https://api.microlink.io?url={encoded_url}&screenshot=true&embed=screenshot.url"),
+        ("mshots", f"https://s0.wp.com/mshots/v1/{encoded_url}?w=1280&h=800"),
     ]
 
-    for engine_url in engines:
+    for name, engine_url in engines:
         try:
-            resp = session.get(engine_url, timeout=15)
-            if resp.status_code == 200 and len(resp.content) > 1024:
-                content_type = resp.headers.get("content-type", "").lower()
-                # Pastikan data yang diterima adalah gambar biner asli
-                if "image" in content_type or resp.content[:4] in [b'\x89PNG', b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'RIFF', b'GIF8']:
-                    with open(abs_out_path, "wb") as f:
-                        f.write(resp.content)
-                    if os.path.exists(abs_out_path) and os.path.getsize(abs_out_path) > 1024:
-                        return True
+            max_attempts = 3 if name == "mshots" else 1
+            for attempt in range(max_attempts):
+                resp = session.get(engine_url, timeout=12)
+                if resp.status_code == 200 and len(resp.content) > 1024:
+                    content_type = resp.headers.get("content-type", "").lower()
+                    # DETEKSI: WordPress mshots mengembalikan file image/gif ~8KB bertuliskan 'Generating Preview...'
+                    # Jangan simpan GIF placeholder ini!
+                    if name == "mshots" and ("gif" in content_type or resp.content[:4] == b'GIF8' or len(resp.content) < 15000):
+                        if attempt < max_attempts - 1:
+                            time.sleep(2)
+                            continue
+                        else:
+                            break
+
+                    # Pastikan data yang diterima adalah gambar biner asli (PNG / JPEG / WebP) dan bukan placeholder
+                    is_valid = (
+                        len(resp.content) > 10000 and
+                        resp.content[:4] in [b'\x89PNG', b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'RIFF']
+                    )
+                    if is_valid:
+                        with open(abs_out_path, "wb") as f:
+                            f.write(resp.content)
+                        if os.path.exists(abs_out_path) and os.path.getsize(abs_out_path) > 10000:
+                            return True
         except Exception:
             continue
     return False
