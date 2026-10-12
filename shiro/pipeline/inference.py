@@ -60,7 +60,8 @@ def get_shiro_reply(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
-    include_reasoning: bool = False
+    include_reasoning: bool = False,
+    max_tokens: Optional[int] = None
 ) -> Union[str, Tuple[str, Any]]:
     """
     Eksekusi pipeline kognitif Shiro:
@@ -289,14 +290,29 @@ def get_shiro_reply(
                         c = " ".join([p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"]).strip()
                     if c:
                         clean_context.append({"role": role, "content": c})
-            clean_context = clean_context[-12:]
+        elif memory and hasattr(memory, "short_term_history"):
+            for m in memory.short_term_history:
+                r = m.get("role", "")
+                c = m.get("content", "")
+                if r in ["user", "assistant"] and c:
+                    clean_context.append({"role": r, "content": str(c)})
         elif memory and hasattr(memory, "get_memory_context"):
-            raw_context = memory.get_memory_context(limit=10)
+            raw_context = memory.get_memory_context(limit=None)
             for m in raw_context:
                 r = m.get("role", "")
                 c = m.get("content", "")
                 if r in ["user", "assistant"] and c:
                     clean_context.append({"role": r, "content": str(c)})
+
+        # Dynamic Token Budget Guard:
+        # Menjaga seluruh percakapan masuk secara utuh.
+        # Hanya jika total token riwayat mendekati batas context window model aktif,
+        # pangkas dari pesan paling awal agar tidak terjadi context overflow.
+        active_ctx = get_active_model_ctx(llm)
+        reserved_budget = 2500  # Cadangan untuk system prompt, image/doc, dan jawaban output
+        max_history_tokens = max(1000, active_ctx - reserved_budget)
+        while len(clean_context) > 2 and calculate_messages_tokens(clean_context, llm) > max_history_tokens:
+            clean_context.pop(0)
 
         t_mem_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
@@ -432,10 +448,22 @@ def get_shiro_reply(
         # -------------------------------------------------------------
         # NODE 5: Neural Inference Engine
         # -------------------------------------------------------------
-        t0 = time.perf_counter()
-        max_output_tokens = 180 if api_version == "v2" else (1200 if (is_reasoning_enabled or tools) else 500)
+        # Penentuan batas token output yang leluasa agar dialog tidak terpotong di tengah kalimat
+        if max_tokens:
+            desired_max = int(max_tokens)
+        elif api_version == "v2":
+            desired_max = 350
+        elif is_reasoning_enabled or tools:
+            desired_max = 3072
+        else:
+            desired_max = 2048
+
+        prompt_tokens_est = calculate_messages_tokens(msgs, llm)
+        remaining_space = max(512, active_ctx - prompt_tokens_est - 64)
+        max_output_tokens = min(desired_max, remaining_space)
+
         stop_tokens = [
-            "User:", "Kakak:", "Shiro:", "assistant:", "\n\n\n", "###",
+            "User:", "Kakak:", "Shiro:", "assistant:", "###",
             "<|im_end|>", "<|im_start|>", "<|eot_id|>", "<|end|>", "<|end_of_text|>"
         ]
         if not is_reasoning_enabled:

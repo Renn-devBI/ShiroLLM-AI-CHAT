@@ -20,10 +20,10 @@ TRAINING_DIR = os.environ.get("SHIRO_TRAINING_DIR", "training_data")
 MEMORY_TEMPLATE_FILE = str(BASE_DIR / "data" / "templates" / "ingatan_shiro.template.json")
 
 # Model & Context Parameters
-CONTEXT_SIZE = int(os.environ.get("SHIRO_CONTEXT_SIZE", "4096"))
+CONTEXT_SIZE = int(os.environ.get("SHIRO_CONTEXT_SIZE", "8192"))
 DEFAULT_TEMPERATURE = float(os.environ.get("SHIRO_TEMPERATURE", "0.7"))
 DEFAULT_TOP_P = float(os.environ.get("SHIRO_TOP_P", "0.9"))
-DEFAULT_MAX_TOKENS = int(os.environ.get("SHIRO_MAX_TOKENS", "350"))
+DEFAULT_MAX_TOKENS = int(os.environ.get("SHIRO_MAX_TOKENS", "2048"))
 
 # Google Drive Automatic Detection (Google Colab)
 DRIVE_DIR = os.environ.get("SHIRO_DRIVE_DIR")

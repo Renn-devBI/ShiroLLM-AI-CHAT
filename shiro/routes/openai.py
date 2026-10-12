@@ -110,6 +110,9 @@ def handle_openai_chat_completions(api_version="v1"):
             (reasoning_effort and str(reasoning_effort).lower() not in ["none", "false", "0"])
         )
 
+        # Token output limit parameter
+        client_max_tokens = data.get("max_tokens") or data.get("max_completion_tokens")
+
         saved_img_rel = None
         if primary_image:
             try:
@@ -142,6 +145,7 @@ def handle_openai_chat_completions(api_version="v1"):
                 tool_choice=tool_choice,
                 reasoning_effort=reasoning_effort,
                 include_reasoning=include_reasoning,
+                max_tokens=client_max_tokens,
                 return_details=True
             )
             if isinstance(reply_result, tuple):

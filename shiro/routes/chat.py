@@ -86,7 +86,8 @@ def auto_trigger():
             reply = get_shiro_reply(trigger_prompt)
             
             memory.add_message("assistant", reply)
-            compress_old_messages(memory, keep_count=15)
+            if len(memory.short_term_history) > 500:
+                compress_old_messages(memory, keep_count=500)
             memory.save_memory()
             state.serial_questions += 1
             
@@ -111,6 +112,7 @@ def chat():
         image_base64 = data.get('image', None)
         document_text = data.get('document_text', None)
         document_name = data.get('document_name', None)
+        user_max_tokens = data.get('max_tokens') or data.get('max_completion_tokens')
         
         document_info = None
         if document_text:
@@ -174,6 +176,7 @@ def chat():
                 user_message,
                 image_base64=image_base64,
                 document_info=document_info,
+                max_tokens=user_max_tokens,
                 return_trace=True
             )
             
@@ -184,7 +187,9 @@ def chat():
             if not image_base64 or "poster tersebut" not in reply.lower():
                 memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             
-            compress_old_messages(memory, keep_count=15)
+            # Menjaga seluruh riwayat percakapan tetap tersimpan utuh
+            if len(memory.short_term_history) > 500:
+                compress_old_messages(memory, keep_count=500)
             memory.save_memory()
             
             return jsonify({

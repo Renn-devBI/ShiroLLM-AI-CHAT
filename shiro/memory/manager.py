@@ -111,7 +111,7 @@ class AdvancedMemoryManager:
         
         self.short_term_history = []  # Recent messages
         self.archived_training_history = []  # Permanent archive of all completed/deleted session dialogues for dataset training
-        self.MAX_SHORT_TERM = 25
+        self.MAX_SHORT_TERM = int(os.environ.get("SHIRO_MAX_HISTORY", "500"))
         self.active_session_id = "default"
         self.sessions_store = {
             "default": {
@@ -923,8 +923,10 @@ class AdvancedMemoryManager:
             except Exception as e:
                 print(f"Error saving memory: {e}")
     
-    def get_memory_context(self, limit: int = 5) -> List[Dict]:
-        """Get recent messages for LLM context"""
+    def get_memory_context(self, limit: Optional[int] = None) -> List[Dict]:
+        """Get messages for LLM context (returns full conversation if limit is None)"""
+        if limit is None:
+            return list(self.short_term_history)
         return self.short_term_history[-limit:]
     
     def get_full_memory(self) -> Dict:
