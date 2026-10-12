@@ -650,7 +650,95 @@ class ResponseGenerator:
         from shiro.llm.cleaner import clean_vtuber_response as _cvr
         return _cvr(response, user_input)
 
-def get_shiro_reply(user_input, image_base64=None, document_info=None, return_trace=False, api_version="v1", custom_system_prompt=None, incoming_messages=None):
+def get_gemini_api_key():
+    """Mengambil GEMINI_API_KEY dari environment atau berkas .env lokal"""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if key:
+        return key
+    for env_path in [
+        ".env",
+        r"D:\Downloads\vtuber\.env",
+        os.path.join(os.path.dirname(__file__), ".env")
+    ]:
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().startswith("GEMINI_API_KEY="):
+                            k = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+                            if k:
+                                return k
+            except Exception:
+                pass
+    return ""
+
+def analyze_visual_bridge(images, query_text=""):
+    """
+    Visual bridge untuk model teks (Qwen3.8-27B, Qwen3-32B, dll.):
+    Menganalisis screenshot desktop, foto kamera/webcam, diagram arsitektur, grafik, tabel,
+    dokumen visual, serta rangkaian frame rekaman video (video understanding).
+    """
+    gemini_key = get_gemini_api_key()
+    if not gemini_key or not images:
+        return None
+    try:
+        import urllib.request
+        is_video = len(images) > 1
+        parts = []
+        if is_video:
+            prompt = (
+                f"Analisis rangkaian {len(images)} frame visual (video stream / urutan kejadian bertahap) ini secara komprehensif. "
+                f"Jelaskan urutan kejadian dari awal hingga akhir, perubahan posisi/gerak, peristiwa kunci, dan aktivitas yang terjadi secara kronologis.\n"
+                f"Pertanyaan pengguna: \"{query_text if query_text else 'Jelaskan alur kejadian dalam rekaman video ini.'}\""
+            )
+        else:
+            prompt = (
+                f"Analisis gambar/screenshot/tampilan antarmuka desktop/diagram visual ini secara detail, akurat, dan menyeluruh. "
+                f"Sertakan: (1) Apa saja objek, orang, atau tampilan layar desktop/aplikasi; "
+                f"(2) Teks, pesan error, kode program, atau tulisan yang terbaca (OCR); "
+                f"(3) Struktur diagram, alur sistem, grafik, atau data tabel jika ada; "
+                f"(4) Konteks visual utama.\n"
+                f"Pertanyaan pengguna: \"{query_text if query_text else 'Apa yang terlihat di gambar ini?'}\""
+            )
+        parts.append({"text": prompt})
+        for img in images[:8]:  # Maksimal 8 frame untuk efisiensi
+            clean_b64 = img.split(",", 1)[1] if "," in img else img
+            mime = "image/png" if img.startswith("data:image/png") else "image/jpeg"
+            parts.append({"inline_data": {"mime_type": mime, "data": clean_b64}})
+
+        req_data = {"contents": [{"parts": parts}]}
+        for model_id in ["gemini-2.5-flash", "gemini-1.5-flash"]:
+            try:
+                req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={gemini_key}"
+                req = urllib.request.Request(
+                    req_url,
+                    data=json.dumps(req_data).encode('utf-8'),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    resp_json = json.loads(resp.read().decode('utf-8'))
+                    return resp_json['candidates'][0]['content']['parts'][0]['text'].strip()
+            except Exception:
+                continue
+    except Exception as e_vis:
+        print(f"[Visual Bridge] Warning: {e_vis}")
+    return None
+
+def get_shiro_reply(
+    user_input, 
+    image_base64=None, 
+    images_base64=None,
+    document_info=None, 
+    return_trace=False, 
+    return_details=False,
+    api_version="v1", 
+    custom_system_prompt=None, 
+    incoming_messages=None,
+    tools=None,
+    tool_choice=None,
+    reasoning_effort=None,
+    include_reasoning=False
+):
     t_start_total = time.perf_counter()
     nodes = []
     try:
@@ -659,12 +747,27 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         has_vision = bool(getattr(llm, 'chat_handler', None) is not None or vision_chat_handler is not None)
         
         # -------------------------------------------------------------
-        # NODE 1: Input Ingestion
+        # NODE 1: Input Ingestion (Mendukung Teks, Multi-Gambar & Video Frames)
         # -------------------------------------------------------------
         t0 = time.perf_counter()
-        has_image = bool(image_base64)
+        
+        # Penanganan list gambar (screenshot, visual document, atau sequential video frames)
+        all_images = []
+        if isinstance(image_base64, list):
+            all_images.extend(image_base64)
+        elif image_base64:
+            all_images.append(image_base64)
+        if isinstance(images_base64, list):
+            for img in images_base64:
+                if img and img not in all_images:
+                    all_images.append(img)
+        elif images_base64 and images_base64 not in all_images:
+            all_images.append(images_base64)
+
+        has_image = bool(all_images)
+        is_video_stream = len(all_images) > 1
         raw_chars = len(user_input) if user_input else 0
-        img_len = len(image_base64) if image_base64 else 0
+        img_len = sum(len(img) for img in all_images) if all_images else 0
         
         # Penanganan Dokumen Lampiran (PDF, Word, Text, CSV, dll.)
         doc_prompt_addon = ""
@@ -679,33 +782,20 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         normalized_input, typo_corrections = typo_helper.normalize_typos(user_input)
         typo_prompt_addon = typo_helper.get_typo_understanding_prompt(typo_corrections) if typo_corrections else ""
         
-        # Penanganan khusus jika Kakak mengirim gambar:
-        if image_base64:
+        # Penanganan Visual (Vision & Video Understanding):
+        if has_image:
             if not has_vision:
-                # Cek apakah ada GEMINI_API_KEY di environment untuk visual bridge
-                gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-                if gemini_key:
-                    try:
-                        import urllib.request
-                        clean_b64 = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
-                        req_data = {
-                            "contents": [{
-                                "parts": [
-                                    {"text": "Deskripsikan secara detail dan padat apa saja yang terlihat di gambar ini dalam 1-2 kalimat bahasa Indonesia untuk konteks visual Shiro."},
-                                    {"inline_data": {"mime_type": "image/jpeg", "data": clean_b64}}
-                                ]
-                            }]
-                        }
-                        req_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
-                        req = urllib.request.Request(req_url, data=json.dumps(req_data).encode('utf-8'), headers={"Content-Type": "application/json"})
-                        with urllib.request.urlopen(req, timeout=10) as resp:
-                            resp_json = json.loads(resp.read().decode('utf-8'))
-                            vis_desc = resp_json['candidates'][0]['content']['parts'][0]['text'].strip()
-                            user_input = f"[Shiro melihat gambar yang diperlihatkan Kakak: {vis_desc}]\n{user_input if user_input.strip() else 'Bagaimana menurutmu, Shiro?'}"
-                    except Exception as gemini_err:
-                        print(f"Gemini visual bridge: {gemini_err}")
+                # Model aktif adalah model teks murni (seperti Qwen3.8-27B-Uncensored / Qwen3-32B)
+                vis_desc = analyze_visual_bridge(all_images, user_input)
+                if vis_desc:
+                    if is_video_stream:
+                        user_input = f"[Konteks Visual Shiro - Analisis Rangkaian Frame Video ({len(all_images)} frames): {vis_desc}]\n{user_input if user_input.strip() else 'Jelaskan alur kejadian dalam video ini, Shiro!'}"
+                    else:
+                        user_input = f"[Konteks Visual Shiro - Analisis Screenshot/Gambar/Desktop: {vis_desc}]\n{user_input if user_input.strip() else 'Bagaimana menurutmu tentang gambar ini, Shiro?'}"
                 else:
-                    fallback_vision = "*melihat foto yang Kakak perlihatkan* Wah, Kakak memperlihatkan gambar baru ya? Tapi mata visual Shiro (Vision Projector mmproj) belum aktif atau sedang memakai model teks biasa. Pastikan file 'mmproj-F16.gguf' sudah ada di folder model/ dan pilih model Vision **Qwen2.5-VL-7B** di Pengaturan Model ya, Kak! (//∇//)"
+                    fallback_vision = "*melihat ke arah visual yang Kakak perlihatkan* Wah, Kakak memperlihatkan gambar baru ya? Tapi mata visual Shiro (Vision Projector mmproj) belum aktif atau sedang memakai model teks biasa. Pastikan file 'mmproj-F16.gguf' sudah ada di folder model/ dan pilih model Vision **Qwen2.5-VL-7B** di Pengaturan Model, atau pasang GEMINI_API_KEY untuk visual bridge ya, Kak! (//∇//)"
+                    if return_details:
+                        return fallback_vision, {"trace": latest_pipeline_trace}
                     if return_trace:
                         return fallback_vision, latest_pipeline_trace
                     return fallback_vision
@@ -930,6 +1020,51 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             for ex in exemplars:
                 exemplar_prompt += f"Kakak: \"{ex.get('user')}\"\nShiro: \"{ex.get('assistant')}\"\n"
 
+        # Agentic Tools & Function Calling schema
+        tools_addon = ""
+        if tools:
+            try:
+                tools_str = json.dumps(tools, indent=2, ensure_ascii=False)
+                tools_addon = (
+                    f"\n\n### SISTEM TOOLS & AGENTIC FUNCTION CALLING:\n"
+                    f"Daftar tool yang tersedia:\n{tools_str}\n\n"
+                    f"ATURAN AGENTIC PLANNING & PEMANGGILAN TOOL:\n"
+                    f"1. Rencanakan langkah secara bertahap (Planning).\n"
+                    f"2. Jika memerlukan eksekusi tool, panggil dengan format JSON valid tepat seperti ini:\n"
+                    f"```json\n"
+                    f'{{"tool_calls": [{{"id": "call_1", "type": "function", "function": {{"name": "<nama_tool>", "arguments": {{<argumen>}}}}}}]}}\n'
+                    f"```\n"
+                    f"3. Jika tugas sudah selesai atau tidak memerlukan tool, jawab langsung kepada pengguna.\n"
+                )
+            except Exception:
+                pass
+
+        # Controlled Reasoning directive (Thinking Mode)
+        reasoning_addon = ""
+        is_reasoning_enabled = bool(
+            include_reasoning or 
+            (reasoning_effort and str(reasoning_effort).lower() not in ["none", "false", "0"])
+        )
+        if is_reasoning_enabled:
+            effort_str = str(reasoning_effort or "medium").upper()
+            reasoning_addon = (
+                f"\n\n### MODE PENALARAN TERKONTROL (REASONING EFFORT: {effort_str}):\n"
+                "Sebelum memberikan respon akhir, tuliskan seluruh alur pemikiran, analisis masalah, perencanaan, dan pengujian solusi di dalam tag <think>...</think>.\n"
+            )
+            if effort_str == "LOW":
+                reasoning_addon += "Lakukan analisis ringkas dan langsung fokus pada solusi inti.\n"
+            elif effort_str == "HIGH":
+                reasoning_addon += "Lakukan penalaran langkah demi langkah yang sangat mendalam, pertimbangkan berbagai skenario alternatif, antisipasi edge cases, dan verifikasi secara ketat sebelum menjawab.\n"
+            else:
+                reasoning_addon += "Lakukan penalaran bertahap yang seimbang dan evaluasi logika solusi sebelum menjawab.\n"
+
+            if api_version == "v1":
+                reasoning_addon += "PENTING: Jawaban akhir setelah tag </think> WAJIB tetap disampaikan dalam nuansa dan persona Shiro (Adik manja, cerdas, bahasa Indonesia, sayang Kakak)!\n"
+            elif api_version == "v2":
+                reasoning_addon += "PENTING: Jawaban akhir setelah tag </think> WAJIB diawali dengan tepat satu tag emosi [Tag] \"...\" khas VTuber!\n"
+            else:
+                reasoning_addon += "Setelah tag </think>, berikan jawaban akhir secara langsung, rapi, dan solutif.\n"
+
         if api_version == "v2":
             # VTuber Persona Mode (100% Japanese with [Tag])
             client_sys = custom_system_prompt or ""
@@ -941,19 +1076,18 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             system_prompt = build_vtuber_system_prompt(
                 owner_name="Renku",
                 custom_instruction=client_sys
-            )
+            ) + tools_addon + reasoning_addon
             msgs = [{"role": "system", "content": system_prompt}]
             msgs.extend(clean_context)
             vtuber_user_prompt = f"{user_input}\n(Awali dengan [Tag] emosi yang tepat dan jawab dalam Bahasa Indonesia khas Shiro)"
-            if image_base64 and has_vision:
-                img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
-                msgs.append({
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"[VTuber Vision Screen / Camera]: {vtuber_user_prompt}"},
-                        {"type": "image_url", "image_url": {"url": img_url}}
-                    ]
-                })
+            if has_image and has_vision:
+                content_parts = [
+                    {"type": "text", "text": f"[VTuber Vision Screen / Camera / Video Frames]: {vtuber_user_prompt}"}
+                ]
+                for img_item in all_images:
+                    img_url = img_item if img_item.startswith("data:") else f"data:image/jpeg;base64,{img_item}"
+                    content_parts.append({"type": "image_url", "image_url": {"url": img_url}})
+                msgs.append({"role": "user", "content": content_parts})
             else:
                 msgs.append({"role": "user", "content": vtuber_user_prompt})
 
@@ -965,18 +1099,15 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
                     if m.get("role") == "system":
                         sys_text = m.get("content", "")
                         break
-            system_prompt = build_custom_system_prompt(sys_text)
+            system_prompt = build_custom_system_prompt(sys_text) + tools_addon + reasoning_addon
             msgs = [{"role": "system", "content": system_prompt}]
             msgs.extend(clean_context)
-            if image_base64 and has_vision:
-                img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
-                msgs.append({
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_input},
-                        {"type": "image_url", "image_url": {"url": img_url}}
-                    ]
-                })
+            if has_image and has_vision:
+                content_parts = [{"type": "text", "text": user_input}]
+                for img_item in all_images:
+                    img_url = img_item if img_item.startswith("data:") else f"data:image/jpeg;base64,{img_item}"
+                    content_parts.append({"type": "image_url", "image_url": {"url": img_url}})
+                msgs.append({"role": "user", "content": content_parts})
             else:
                 msgs.append({"role": "user", "content": user_input})
 
@@ -991,32 +1122,36 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
                 typo_prompt_addon=typo_prompt_addon,
                 document_prompt_addon=doc_prompt_addon,
                 cross_session_addon=cross_session_addon
-            )
+            ) + tools_addon + reasoning_addon
             msgs = [{"role": "system", "content": system_prompt}]
             msgs.extend(clean_context)
 
-            if image_base64 and has_vision:
-                img_url = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
+            if has_image and has_vision:
                 custom_q = user_input.strip() if user_input.strip() and not user_input.startswith("Kakak memperlihatkan gambar") else ""
-                if custom_q:
+                if is_video_stream:
                     prompt_text = (
-                        f"[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini sambil bertanya: \"{custom_q}\".\n"
+                        f"[ANALISIS RANGKAIAN FRAME VIDEO]: Kakak memperlihatkan {len(all_images)} frame visual secara berurutan"
+                        + (f" dengan pertanyaan: \"{custom_q}\".\n" if custom_q else ".\n")
+                        + "TUGAS SHIRO: Amati kronologi, perubahan gerak, aktivitas, dan alur kejadian visual dari frame awal sampai akhir. "
+                        "Jelaskan apa yang terjadi dengan gaya bicaramu yang cerdas, hangat, dan manja khas Shiro!"
+                    )
+                elif custom_q:
+                    prompt_text = (
+                        f"[ANALISIS VISUAL GAMBAR/DESKTOP]: Kakak memperlihatkan gambar ini sambil bertanya: \"{custom_q}\".\n"
                         f"TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, dan detail visual di dalam GAMBAR TERBARU INI secara langsung. "
-                        f"Jawab pertanyaan Kakak secara spesifik sesuai apa yang benar-benar ada di gambar baru ini (jangan pernah mengulang atau mengaitkan dengan gambar dari obrolan sebelumnya)!"
+                        f"Jawab pertanyaan Kakak secara spesifik sesuai apa yang benar-benar ada di gambar baru ini!"
                     )
                 else:
                     prompt_text = (
-                        "[ANALISIS VISUAL GAMBAR BARU]: Kakak memperlihatkan gambar baru ini kepadamu, Shiro!\n"
+                        "[ANALISIS VISUAL GAMBAR/DESKTOP]: Kakak memperlihatkan gambar ini kepadamu, Shiro!\n"
                         "TUGAS SHIRO: Amati dengan cermat apa saja objek nyata, warna, tulisan, orang/benda, dan suasana yang terlihat di dalam GAMBAR BARU INI secara langsung. "
-                        "Jelaskan apa yang kamu lihat sekarang secara segar, unik, dan mendetail dengan gaya bicaramu yang manja, cerdas, dan hangat khas Shiro (jangan pernah mengulang deskripsi gambar sebelumnya)!"
+                        "Jelaskan apa yang kamu lihat sekarang secara segar, unik, dan mendetail dengan gaya bicaramu yang manja, cerdas, dan hangat khas Shiro!"
                     )
-                msgs.append({
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt_text},
-                        {"type": "image_url", "image_url": {"url": img_url}}
-                    ]
-                })
+                content_parts = [{"type": "text", "text": prompt_text}]
+                for img_item in all_images:
+                    img_url = img_item if img_item.startswith("data:") else f"data:image/jpeg;base64,{img_item}"
+                    content_parts.append({"type": "image_url", "image_url": {"url": img_url}})
+                msgs.append({"role": "user", "content": content_parts})
             else:
                 msgs.append({"role": "user", "content": user_input})
 
@@ -1112,6 +1247,15 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         # NODE 5: Neural Inference Engine (LLM)
         # -------------------------------------------------------------
         t0 = time.perf_counter()
+        # Batas output token lebih longgar untuk coding, riset, tool calling, dan reasoning
+        max_output_tokens = 180 if api_version == "v2" else (1200 if (is_reasoning_enabled or tools) else 450)
+        
+        stop_tokens = ["User:", "Kakak:", "Shiro:", "assistant:", "\n\n\n", "###", 
+                       "Note:", "<|im_end|>", "<|im_start|>", "<|eot_id|>", 
+                       "<|end|>", "<|end_of_text|>"]
+        if not is_reasoning_enabled:
+            stop_tokens.extend(["Okay, let me", "The user is"])
+
         gen_params = {
             "temperature": 0.72 if has_image else (0.70 if api_version == "v2" else 0.65),
             "repeat_penalty": 1.25 if has_image else 1.2,
@@ -1119,17 +1263,31 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             "presence_penalty": 0.3 if has_image else 0.0,
             "top_p": 0.92,
             "top_k": 40,
-            "max_tokens": 180 if api_version == "v2" else 450,
-            "stop": ["User:", "Kakak:", "Shiro:", "assistant:", "\n\n\n", "###", 
-                     "Note:", "<|im_end|>", "<|im_start|>", "<|eot_id|>", 
-                     "<|end|>", "<|end_of_text|>", "Okay, let me", "The user is"]
+            "max_tokens": max_output_tokens,
+            "stop": stop_tokens
         }
 
+        call_kwargs = dict(gen_params)
+        res = None
         try:
-            res = llm.create_chat_completion(
-                messages=msgs,
-                **gen_params
-            )
+            if tools:
+                try:
+                    res = llm.create_chat_completion(
+                        messages=msgs,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        **call_kwargs
+                    )
+                except (TypeError, Exception):
+                    res = llm.create_chat_completion(
+                        messages=msgs,
+                        **call_kwargs
+                    )
+            else:
+                res = llm.create_chat_completion(
+                    messages=msgs,
+                    **call_kwargs
+                )
         except Exception as inf_err:
             err_str = str(inf_err).lower()
             if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
@@ -1142,12 +1300,13 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
                     emergency_msgs.append(user_turn_msg)
                 res = llm.create_chat_completion(
                     messages=emergency_msgs,
-                    **gen_params
+                    **call_kwargs
                 )
             else:
                 raise inf_err
 
-        raw_reply = res['choices'][0]['message']['content'].strip()
+        raw_reply = res['choices'][0]['message'].get('content', '') or ''
+        raw_reply = raw_reply.strip()
         t_llm_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
             "id": "node_llm",
@@ -1173,7 +1332,38 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         # NODE 6: Anti-Hallucination & Neural Filter
         # -------------------------------------------------------------
         t0 = time.perf_counter()
-        had_think = ("<think>" in raw_reply.lower() or "</think>" in raw_reply.lower())
+        
+        # 1. Ekstrak native tool calls dari model jika didukung
+        native_tool_calls = res['choices'][0]['message'].get('tool_calls', None)
+        parsed_tool_calls = list(native_tool_calls) if native_tool_calls else []
+
+        # 2. Ekstrak proses penalaran (<think>...</think>) ke reasoning_content
+        reasoning_content = None
+        think_match = re.search(r'<think>(.*?)</think>', raw_reply, flags=re.DOTALL | re.IGNORECASE)
+        if think_match:
+            reasoning_content = think_match.group(1).strip()
+            raw_reply = re.sub(r'<think>.*?</think>', '', raw_reply, flags=re.DOTALL | re.IGNORECASE).strip()
+        elif "<think>" in raw_reply.lower():
+            parts = re.split(r'<think>', raw_reply, flags=re.IGNORECASE)
+            if len(parts) > 1:
+                reasoning_content = parts[1].strip()
+                raw_reply = parts[0].strip()
+
+        # 3. Ekstrak tool_calls berbasis JSON jika model mengeluarkannya dalam blok teks
+        if not parsed_tool_calls and ("tool_calls" in raw_reply or "```json" in raw_reply):
+            json_tc_match = re.search(r'```(?:json)?\s*(\{.*?"tool_calls".*?\})\s*```', raw_reply, flags=re.DOTALL)
+            if not json_tc_match:
+                json_tc_match = re.search(r'(\{.*?"tool_calls"\s*:\s*\[.*?\].*?\})', raw_reply, flags=re.DOTALL)
+            if json_tc_match:
+                try:
+                    tc_dict = json.loads(json_tc_match.group(1))
+                    if "tool_calls" in tc_dict and isinstance(tc_dict["tool_calls"], list):
+                        parsed_tool_calls = tc_dict["tool_calls"]
+                        raw_reply = raw_reply.replace(json_tc_match.group(0), "").strip()
+                except Exception:
+                    pass
+
+        had_think = bool(reasoning_content or "<think>" in raw_reply.lower() or "</think>" in raw_reply.lower())
         had_cot = any(x in raw_reply.lower() for x in ["okay, let me", "let me break this down", "possible responses", "let's craft"])
 
         if api_version == "v2":
@@ -1186,8 +1376,13 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             is_fallback = False
         else:
             cleaned_reply = ResponseGenerator.clean_response(raw_reply)
-            is_valid = ResponseGenerator.validate_response(cleaned_reply, user_input)
-            is_fallback = False
+            # Jika tool calls dipanggil atau berisi blok kode pemrograman valid, jangan timpa dengan fallback
+            if parsed_tool_calls or "```" in cleaned_reply:
+                is_valid = True
+                is_fallback = False
+            else:
+                is_valid = ResponseGenerator.validate_response(cleaned_reply, user_input)
+                is_fallback = False
 
             if not is_valid:
                 is_fallback = True
@@ -1341,6 +1536,13 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
         }
         broadcast_pipeline_trace(trace)
 
+        if return_details:
+            return cleaned_reply, {
+                "reasoning_content": reasoning_content,
+                "tool_calls": parsed_tool_calls,
+                "finish_reason": "tool_calls" if parsed_tool_calls else "stop",
+                "trace": trace
+            }
         if return_trace:
             return cleaned_reply, trace
         return cleaned_reply
@@ -1364,6 +1566,13 @@ def get_shiro_reply(user_input, image_base64=None, document_info=None, return_tr
             "nodes": nodes
         }
         broadcast_pipeline_trace(err_trace)
+        if return_details:
+            return err_msg, {
+                "reasoning_content": None,
+                "tool_calls": [],
+                "finish_reason": "stop",
+                "trace": err_trace
+            }
         if return_trace:
             return err_msg, err_trace
         return err_msg
@@ -1815,7 +2024,7 @@ def handle_openai_chat_completions(api_version="v1"):
 
         # Ambil pesan user terakhir & ekstrak teks serta gambar multimodal (OpenAI format)
         user_message = ""
-        image_base64 = None
+        incoming_images = []
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 content = msg.get("content", "")
@@ -1829,26 +2038,48 @@ def handle_openai_chat_completions(api_version="v1"):
                             elif p_type == "image_url":
                                 img_url_obj = part.get("image_url", {})
                                 if isinstance(img_url_obj, dict):
-                                    image_base64 = img_url_obj.get("url", "")
-                                elif isinstance(img_url_obj, str):
-                                    image_base64 = img_url_obj
+                                    url_val = img_url_obj.get("url", "")
+                                    if url_val:
+                                        incoming_images.append(url_val)
+                                elif isinstance(img_url_obj, str) and img_url_obj:
+                                    incoming_images.append(img_url_obj)
                     user_message = " ".join(text_parts).strip()
                 elif isinstance(content, str):
                     user_message = content.strip()
                 break
-                
-        if not user_message and not image_base64:
+
+        # Cek juga gambar tambahan dari field images / frames (video stream)
+        extra_imgs = data.get("images") or data.get("frames") or []
+        if isinstance(extra_imgs, list):
+            for extra in extra_imgs:
+                if isinstance(extra, str) and extra not in incoming_images:
+                    incoming_images.append(extra)
+
+        primary_image = incoming_images[0] if incoming_images else None
+        if not user_message and not primary_image:
             user_message = messages[-1].get("content", "").strip() if messages else "Halo Shiro!"
-            
+
+        # Extract agentic tools & tool choice
+        tools = data.get("tools")
+        tool_choice = data.get("tool_choice")
+
+        # Extract reasoning parameters
+        reasoning_effort = data.get("reasoning_effort") or data.get("thinking_budget")
+        include_reasoning = bool(
+            data.get("include_reasoning") or 
+            (data.get("thinking") is not None) or 
+            (reasoning_effort and str(reasoning_effort).lower() not in ["none", "false", "0"])
+        )
+
         saved_img_rel = None
-        if image_base64:
+        if primary_image:
             try:
                 import uuid
                 v_dir = os.path.join("training_data", "vision", "images")
                 os.makedirs(v_dir, exist_ok=True)
                 fn = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.jpg"
                 fp = os.path.join(v_dir, fn)
-                raw = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
+                raw = primary_image.split(",", 1)[1] if "," in primary_image else primary_image
                 with open(fp, "wb") as f_out:
                     f_out.write(base64.b64decode(raw))
                 saved_img_rel = os.path.join("images", fn).replace("\\", "/")
@@ -1856,17 +2087,29 @@ def handle_openai_chat_completions(api_version="v1"):
                 print(f"Warning saving vision image in completions: {e_img}")
 
         with memory.lock:
-            log_msg = user_message if not image_base64 else f"[Visual VTuber/Webcam] {user_message}"
+            log_msg = user_message if not primary_image else f"[Visual VTuber/Webcam/Video] {user_message}"
             memory.add_message("user", log_msg, image_path=saved_img_rel)
-            reply = get_shiro_reply(
+            reply_result = get_shiro_reply(
                 user_message,
-                image_base64=image_base64,
+                image_base64=primary_image,
+                images_base64=incoming_images if len(incoming_images) > 1 else None,
                 api_version=effective_version,
                 custom_system_prompt=client_system_prompt,
-                incoming_messages=messages
+                incoming_messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                reasoning_effort=reasoning_effort,
+                include_reasoning=include_reasoning,
+                return_details=True
             )
+            if isinstance(reply_result, tuple):
+                reply, details = reply_result
+            else:
+                reply = reply_result
+                details = {}
+
             memory.add_message("assistant", reply)
-            if effective_version == "v1" and (not image_base64 or "poster tersebut" not in reply.lower()):
+            if effective_version == "v1" and (not primary_image or "poster tersebut" not in reply.lower()):
                 memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
@@ -1877,6 +2120,17 @@ def handle_openai_chat_completions(api_version="v1"):
         created_time = int(time.time())
         prompt_tokens = len(user_message.split())
         comp_tokens = len(reply.split())
+
+        msg_obj = {
+            "role": "assistant",
+            "content": reply
+        }
+        if details.get("reasoning_content"):
+            msg_obj["reasoning_content"] = details["reasoning_content"]
+        if details.get("tool_calls"):
+            msg_obj["tool_calls"] = details["tool_calls"]
+
+        finish_reason = details.get("finish_reason") or ("tool_calls" if details.get("tool_calls") else "stop")
         
         return jsonify({
             "id": response_id,
@@ -1887,11 +2141,8 @@ def handle_openai_chat_completions(api_version="v1"):
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": reply
-                    },
-                    "finish_reason": "stop"
+                    "message": msg_obj,
+                    "finish_reason": finish_reason
                 }
             ],
             "usage": {
