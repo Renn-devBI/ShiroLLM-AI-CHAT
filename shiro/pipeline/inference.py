@@ -210,19 +210,13 @@ def get_shiro_reply(
         # NODE 3: Cognitive Memory & RDF Retrieval
         # -------------------------------------------------------------
         t0 = time.perf_counter()
-        relevant_facts = memory.get_relevant_facts(raw_user_typed, limit=3) if (memory and raw_user_typed) else []
-        traits = memory.get_user_traits() if memory else []
-        exemplars = memory.get_exemplars(limit=2) if memory else []
-
-        cross_session_addon = ""
-        has_cross_session = False
-        if memory and raw_user_typed:
-            cross_history = memory.search_across_sessions(raw_user_typed, limit=3)
-            if cross_history:
-                has_cross_session = True
-                cross_session_addon = "\n\n### INGATAN PERCAKAPAN TERDAHULU DARI SESI LAIN:\n"
-                for item in cross_history:
-                    cross_session_addon += f"- Kakak pernah berkata: \"{item.get('content', '')}\"\n"
+        facts = memory.knowledge_base.get("facts", []) if (memory and hasattr(memory, "knowledge_base")) else []
+        relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.7][:5]
+        traits = memory.user_profile.get("personality_traits", []) if (memory and hasattr(memory, "user_profile")) else []
+        exemplars = memory.get_relevant_exemplars(raw_user_typed, max_count=2) if (memory and hasattr(memory, "get_relevant_exemplars") and raw_user_typed) else []
+        
+        cross_session_addon = memory.get_cross_session_context(raw_user_typed) if (memory and hasattr(memory, "get_cross_session_context") and raw_user_typed) else ""
+        has_cross_session = bool(cross_session_addon)
 
         clean_context = []
         if incoming_messages and len(incoming_messages) > 1:
@@ -235,8 +229,13 @@ def get_shiro_reply(
                     if c:
                         clean_context.append({"role": role, "content": c})
             clean_context = clean_context[-12:]
-        elif memory:
-            clean_context = memory.get_context_messages(limit=10)
+        elif memory and hasattr(memory, "get_memory_context"):
+            raw_context = memory.get_memory_context(limit=10)
+            for m in raw_context:
+                r = m.get("role", "")
+                c = m.get("content", "")
+                if r in ["user", "assistant"] and c:
+                    clean_context.append({"role": r, "content": str(c)})
 
         t_mem_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
