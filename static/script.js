@@ -91,6 +91,33 @@ if (typeof mermaid !== 'undefined') {
     }
 }
 
+// Tema mermaid mengikuti warna tema aktif
+function applyMermaidTheme() {
+    if (typeof mermaid === 'undefined') return;
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n) => cs.getPropertyValue(n).trim();
+    const light = window.ShiroTheme ? window.ShiroTheme.isLight(v('--bg-base') || '#161719') : false;
+    try {
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: light ? 'default' : 'dark',
+            securityLevel: 'loose',
+            themeVariables: {
+                darkMode: !light,
+                background: v('--bg-surface'),
+                primaryColor: v('--bg-elevated'),
+                primaryTextColor: v('--text-primary'),
+                primaryBorderColor: v('--border-hover'),
+                lineColor: v('--text-secondary'),
+                secondaryColor: v('--border-default'),
+                tertiaryColor: v('--bg-surface')
+            }
+        });
+    } catch (e) {
+        console.warn('[Mermaid Theme Warning]:', e);
+    }
+}
+
 let mermaidCounter = 0;
 
 // Parse message formatting: Markdown, Syntax Highlighting, Mermaid, Sanitization
@@ -2234,3 +2261,84 @@ document.addEventListener('DOMContentLoaded', () => {
         userInput.focus();
     });
 });
+
+// --- Pengaturan tema (tab "Tema") ---
+(function initThemeUi() {
+    const ST = window.ShiroTheme;
+    const grid = document.getElementById('theme-grid');
+    if (!ST || !grid) return;
+
+    const inputs = {
+        bg: document.getElementById('theme-bg'),
+        fg: document.getElementById('theme-fg'),
+        accent: document.getElementById('theme-accent')
+    };
+    const contrastEl = document.getElementById('theme-contrast');
+    const swatches = {};
+
+    function makeSwatch(id, name) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'theme-swatch';
+        btn.dataset.id = id;
+        btn.innerHTML = '<span class="theme-swatch-name"></span><span class="theme-swatch-bars"><span></span><span></span><span class="accent"></span></span>';
+        btn.querySelector('.theme-swatch-name').textContent = name;
+        btn.addEventListener('click', () => {
+            const cur = ST.get();
+            ST.set({ preset: id, custom: cur.custom });
+            refresh();
+        });
+        grid.appendChild(btn);
+        swatches[id] = btn;
+    }
+
+    function paintSwatch(id, c) {
+        const b = swatches[id];
+        b.style.setProperty('--sw-bg', c.bg);
+        b.style.setProperty('--sw-fg', c.fg);
+        b.style.setProperty('--sw-accent', c.accent);
+    }
+
+    ST.presets.forEach((p) => makeSwatch(p.id, p.name));
+    makeSwatch('custom', 'Kustom');
+
+    function refresh() {
+        const theme = ST.get();
+        ST.presets.forEach((p) => paintSwatch(p.id, p));
+        paintSwatch('custom', theme.custom);
+        Object.keys(swatches).forEach((id) => swatches[id].classList.toggle('active', id === theme.preset));
+
+        const c = ST.resolve(theme);
+        ['bg', 'fg', 'accent'].forEach((k) => {
+            inputs[k].value = c[k];
+            document.getElementById('theme-' + k + '-hex').textContent = c[k].toUpperCase();
+        });
+
+        const ratio = ST.contrast(c.bg, c.fg);
+        const low = ratio < 4.5;
+        contrastEl.classList.toggle('low', low);
+        contrastEl.textContent = low
+            ? 'Kontras teks rendah (' + ratio.toFixed(1) + ':1). Teks mungkin sulit dibaca.'
+            : 'Kontras teks ' + (ratio >= 7 ? 'sangat baik' : 'baik') + ' (' + ratio.toFixed(1) + ':1).';
+
+        applyMermaidTheme();
+    }
+
+    Object.keys(inputs).forEach((k) => {
+        inputs[k].addEventListener('input', () => {
+            ST.set({
+                preset: 'custom',
+                custom: { bg: inputs.bg.value, fg: inputs.fg.value, accent: inputs.accent.value }
+            });
+            refresh();
+        });
+    });
+
+    document.getElementById('theme-reset').addEventListener('click', () => {
+        ST.set(ST.defaults());
+        refresh();
+        showToast('Tema dikembalikan ke default');
+    });
+
+    refresh();
+})();
