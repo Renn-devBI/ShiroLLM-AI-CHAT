@@ -3,200 +3,189 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shiro AI</title>
+    <title>Shiro</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
-    <!-- Highlight.js Theme for Syntax Highlighting -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
 </head>
 <body>
     <div class="app-layout">
-        <!-- Collapsible Left Sidebar (ChatGPT / Claude / Gemini Style) -->
+        <!-- Sidebar riwayat -->
         <aside class="chat-sidebar" id="chat-sidebar">
             <div class="sidebar-header">
-                <button id="sidebar-new-chat-btn" class="btn-sidebar-new-chat" title="Mulai Obrolan Baru" type="button">
+                <button id="sidebar-new-chat-btn" class="btn-sidebar-new-chat" type="button">
                     <i class="ph ph-plus"></i>
-                    <span>Chat Baru</span>
+                    <span>Chat baru</span>
                 </button>
-                <button id="close-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Tutup Menu" type="button">
+                <button id="close-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Tutup sidebar" aria-label="Tutup sidebar" type="button">
                     <i class="ph ph-sidebar-simple"></i>
                 </button>
             </div>
 
-            <div class="sidebar-section-title">
-                <i class="ph ph-clock-counter-clockwise"></i>
-                <span>Riwayat Obrolan</span>
-            </div>
-
             <div class="sidebar-session-list" id="sidebar-session-list">
-                <!-- Sesi percakapan di-render secara dinamis -->
+                <!-- Sesi percakapan di-render lewat script.js -->
             </div>
 
             <div class="sidebar-footer">
-                <div class="sidebar-footer-stat" title="Jumlah ingatan aktif Shiro">
+                <div class="sidebar-footer-stat" title="Jumlah fakta yang diingat Shiro">
                     <div class="stat-icon"><i class="ph ph-brain"></i></div>
                     <div class="stat-info">
-                        <span class="stat-label">Ingatan Aktif</span>
-                        <span class="stat-val" id="sidebar-memory-count">0 Fakta</span>
+                        <span class="stat-label">Ingatan</span>
+                        <span class="stat-val" id="sidebar-memory-count">0 fakta</span>
                     </div>
                 </div>
                 <div class="sidebar-footer-actions">
-                    <button id="sidebar-pipeline-btn" class="btn-sidebar-footer" title="Pipeline Telemetry" type="button">
+                    <button id="sidebar-pipeline-btn" class="btn-sidebar-footer" type="button">
                         <i class="ph ph-tree-structure"></i>
-                        <span>Pipeline</span>
+                        <span>Alur eksekusi</span>
                     </button>
-                    <button id="sidebar-settings-btn" class="btn-sidebar-footer" title="Pengaturan Model" type="button">
+                    <button id="sidebar-settings-btn" class="btn-sidebar-footer" type="button">
                         <i class="ph ph-gear"></i>
-                        <span>Settings</span>
+                        <span>Pengaturan</span>
                     </button>
                 </div>
             </div>
         </aside>
 
-        <!-- Sidebar Mobile Backdrop -->
         <div class="sidebar-backdrop hidden" id="sidebar-backdrop"></div>
 
-        <!-- Main Content Area (Expands to 100% when sidebar is collapsed) -->
         <div class="main-content" id="main-content">
-            <!-- Top Navigation Bar -->
             <header class="navbar">
                 <div class="nav-left">
-                    <button id="open-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Buka/Tutup Riwayat Obrolan" type="button">
+                    <button id="open-sidebar-btn" class="btn-icon" title="Buka sidebar" aria-label="Buka sidebar" type="button">
                         <i class="ph ph-sidebar-simple"></i>
                     </button>
                     <div class="brand">
-                        <div class="status-dot"></div>
+                        <span class="status-dot" title="Terhubung"></span>
                         <div class="brand-text">
-                            <span class="brand-title">SHIRO</span>
+                            <span class="brand-title">Shiro</span>
                             <span class="model-pill">Qwen3-32B</span>
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="nav-actions">
-                    <button id="new-chat-btn" class="btn-icon btn-new-chat-top btn-duplicate-nav" title="Chat Baru" type="button">
-                        <i class="ph ph-plus"></i>
-                        <span class="btn-new-chat-text">Chat Baru</span>
-                    </button>
-                    <button id="pipeline-btn" class="btn-icon btn-pipeline-toggle btn-duplicate-nav" title="Pipeline Workflow" type="button">
-                        <i class="ph ph-tree-structure"></i>
-                        <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
-                    </button>
                     <div class="memory-badge btn-duplicate-nav" title="Jumlah ingatan aktif">
                         <span class="badge-label">Ingatan:</span>
                         <span id="memory-count">0</span>
                     </div>
-                    <button id="settings-btn" class="btn-icon btn-duplicate-nav" title="Pengaturan" type="button">
+                    <button id="new-chat-btn" class="btn-icon btn-duplicate-nav" title="Chat baru" aria-label="Chat baru" type="button">
+                        <i class="ph ph-plus"></i>
+                        <span class="btn-new-chat-text">Chat baru</span>
+                    </button>
+                    <button id="pipeline-btn" class="btn-icon btn-duplicate-nav" title="Alur eksekusi" aria-label="Alur eksekusi" type="button">
+                        <i class="ph ph-tree-structure"></i>
+                        <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
+                    </button>
+                    <button id="settings-btn" class="btn-icon btn-duplicate-nav" title="Pengaturan" aria-label="Pengaturan" type="button">
                         <i class="ph ph-gear"></i>
                     </button>
-                    <button id="reset-btn" class="btn-icon btn-danger-hover" title="Bersihkan Obrolan Sesi Ini" type="button">
+                    <button id="reset-btn" class="btn-icon btn-danger-hover" title="Hapus percakapan sesi ini" aria-label="Hapus percakapan sesi ini" type="button">
                         <i class="ph ph-trash"></i>
                     </button>
-                    <select id="session-select" class="hidden" title="Pilih Percakapan"></select>
+                    <select id="session-select" class="hidden" title="Pilih percakapan"></select>
                     <button id="delete-chat-btn" class="hidden" type="button"></button>
                 </div>
             </header>
 
-        <!-- Chat History Viewport -->
-        <main class="chat-viewport" id="chat-viewport">
-            <div id="chat-messages" class="messages-list">
-                <div class="message assistant">
-                    <div class="avatar shiro-avatar">S</div>
-                    <div class="bubble">
-                        Halo Kakak. Ada yang bisa Shiro bantu hari ini?
+            <main class="chat-viewport" id="chat-viewport">
+                <div id="chat-messages" class="messages-list">
+                    <div class="message assistant">
+                        <div class="avatar shiro-avatar">S</div>
+                        <div class="bubble">Halo Kakak. Ada yang bisa Shiro bantu hari ini?</div>
+                    </div>
+
+                    <div id="typing-indicator" class="message assistant hidden">
+                        <div class="avatar shiro-avatar">S</div>
+                        <div class="bubble typing" aria-label="Shiro sedang mengetik">
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <footer class="input-section">
+                <div id="document-preview-bar" class="image-preview-bar hidden">
+                    <div class="image-preview-card doc-preview-card">
+                        <div class="doc-icon-badge"><i class="ph ph-file-text"></i></div>
+                        <div class="image-preview-info">
+                            <span class="image-preview-title" id="doc-preview-name">dokumen.pdf</span>
+                            <span class="image-preview-sub" id="doc-preview-sub">Siap dirangkum atau diperiksa</span>
+                        </div>
+                        <button type="button" id="remove-doc-btn" class="btn-remove-thumb" title="Hapus dokumen" aria-label="Hapus dokumen">
+                            <i class="ph ph-x"></i>
+                        </button>
                     </div>
                 </div>
 
-                <div id="typing-indicator" class="message assistant hidden">
-                    <div class="avatar shiro-avatar">S</div>
-                    <div class="bubble typing">
-                        <div class="dot"></div>
-                        <div class="dot"></div>
-                        <div class="dot"></div>
+                <div id="image-preview-bar" class="image-preview-bar hidden">
+                    <div class="image-preview-card">
+                        <img id="image-preview-thumb" src="" alt="Gambar terlampir">
+                        <div class="image-preview-info">
+                            <span class="image-preview-title" id="image-preview-name">gambar.jpg</span>
+                            <span class="image-preview-sub">Siap dianalisis</span>
+                        </div>
+                        <button type="button" id="remove-image-btn" class="btn-remove-thumb" title="Hapus gambar" aria-label="Hapus gambar">
+                            <i class="ph ph-x"></i>
+                        </button>
                     </div>
                 </div>
-            </div>
-        </main>
 
-        <!-- Bottom Input Bar -->
-        <footer class="input-section">
-            <div id="document-preview-bar" class="image-preview-bar hidden">
-                <div class="image-preview-card doc-preview-card">
-                    <div class="doc-icon-badge">
-                        <i class="ph ph-file-text"></i>
+                <div class="input-card">
+                    <textarea
+                        id="user-input"
+                        class="chat-input"
+                        placeholder="Tulis pesan"
+                        autocomplete="off"
+                        rows="1"
+                    ></textarea>
+                    <div class="composer-bar">
+                        <div class="media-input-buttons">
+                            <button id="upload-doc-btn" class="btn-media" title="Lampirkan dokumen (PDF, Word, TXT, CSV, MD)" aria-label="Lampirkan dokumen" type="button">
+                                <i class="ph ph-paperclip"></i>
+                            </button>
+                            <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.json,.csv,.py,.log,.html,.xml,.yaml,.yml" class="hidden">
+                            <button id="upload-image-btn" class="btn-media" title="Lampirkan gambar" aria-label="Lampirkan gambar" type="button">
+                                <i class="ph ph-image"></i>
+                            </button>
+                            <button id="open-camera-btn" class="btn-media" title="Ambil foto dengan kamera" aria-label="Buka kamera" type="button">
+                                <i class="ph ph-camera"></i>
+                            </button>
+                            <input type="file" id="image-file-input" accept="image/*" class="hidden">
+                        </div>
+                        <div class="input-actions">
+                            <button id="send-btn" class="btn-send" title="Kirim (Enter)" aria-label="Kirim pesan" type="button">
+                                <i class="ph ph-arrow-up"></i>
+                            </button>
+                            <button id="stop-btn" class="btn-send btn-stop hidden" title="Hentikan respons" aria-label="Hentikan respons" type="button">
+                                <i class="ph ph-stop"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div class="image-preview-info">
-                        <span class="image-preview-title" id="doc-preview-name">dokumen.pdf</span>
-                        <span class="image-preview-sub" id="doc-preview-sub">Siap dirangkum atau diperiksa Shiro</span>
-                    </div>
-                    <button type="button" id="remove-doc-btn" class="btn-remove-thumb" title="Hapus Dokumen">
-                        <i class="ph ph-x"></i>
-                    </button>
                 </div>
-            </div>
+                <div class="footer-meta">
+                    <span id="status">Siap</span>
+                </div>
+            </footer>
+        </div>
+    </div>
 
-            <div id="image-preview-bar" class="image-preview-bar hidden">
-                <div class="image-preview-card">
-                    <img id="image-preview-thumb" src="" alt="Lampiran Visual">
-                    <div class="image-preview-info">
-                        <span class="image-preview-title" id="image-preview-name">visual_input.jpg</span>
-                        <span class="image-preview-sub">Gambar visual siap dianalisis Shiro</span>
-                    </div>
-                    <button type="button" id="remove-image-btn" class="btn-remove-thumb" title="Hapus Gambar">
-                        <i class="ph ph-x"></i>
-                    </button>
-                </div>
-            </div>
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
-            <div class="input-card">
-                <div class="media-input-buttons">
-                    <button id="upload-doc-btn" class="btn-media" title="Kirim Berkas / Dokumen (PDF, Word, TXT, CSV, MD)" type="button">
-                        <i class="ph ph-file-text"></i>
-                    </button>
-                    <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.json,.csv,.py,.log,.html,.xml,.yaml,.yml" class="hidden">
-                    <button id="upload-image-btn" class="btn-media" title="Kirim Foto / Gambar" type="button">
-                        <i class="ph ph-image"></i>
-                    </button>
-                    <button id="open-camera-btn" class="btn-media" title="Kamera Real-Time / Webcam" type="button">
-                        <i class="ph ph-camera"></i>
-                    </button>
-                    <input type="file" id="image-file-input" accept="image/*" class="hidden">
-                </div>
-                <textarea 
-                    id="user-input" 
-                    class="chat-input" 
-                    placeholder="Ketik pesan..."
-                    autocomplete="off"
-                    rows="1"
-                ></textarea>
-                <div class="input-actions">
-                    <button id="send-btn" class="btn-send" title="Kirim pesan" type="button">
-                        <i class="ph ph-paper-plane-right"></i>
-                    </button>
-                    <button id="stop-btn" class="btn-send btn-stop hidden" title="Hentikan respons" type="button">
-                        <i class="ph ph-stop"></i>
-                    </button>
-                </div>
-            </div>
-            <div class="footer-meta">
-                <span id="status">Siap</span>
-            </div>
-        </footer>
-        </div> <!-- end main-content -->
-    </div> <!-- end app-layout -->
-
-    <!-- Real-Time Camera Modal -->
+    <!-- Kamera -->
     <div id="camera-modal" class="modal-backdrop hidden">
         <div class="modal-dialog camera-dialog">
             <div class="modal-header">
                 <div class="camera-header-title">
                     <i class="ph ph-camera"></i>
-                    <h2>Kamera Real-Time</h2>
+                    <h2>Kamera</h2>
                 </div>
-                <button id="close-camera-modal" class="btn-icon" type="button" title="Tutup Kamera">
+                <button id="close-camera-modal" class="btn-icon" type="button" title="Tutup" aria-label="Tutup kamera">
                     <i class="ph ph-x"></i>
                 </button>
             </div>
@@ -210,224 +199,162 @@
                 </div>
                 <canvas id="camera-canvas" class="hidden"></canvas>
                 <div class="camera-controls">
-                    <button type="button" id="switch-camera-btn" class="btn-secondary" title="Ganti Kamera">
-                        <i class="ph ph-arrows-clockwise"></i> Ganti Kamera
+                    <button type="button" id="switch-camera-btn" class="btn-secondary" title="Ganti kamera">
+                        <i class="ph ph-arrows-clockwise"></i> Ganti kamera
                     </button>
-                    <button type="button" id="capture-photo-btn" class="btn-primary btn-capture" title="Ambil Foto">
-                        <i class="ph ph-camera"></i> Ambil Foto
+                    <button type="button" id="capture-photo-btn" class="btn-primary btn-capture" title="Ambil foto">
+                        <i class="ph ph-camera"></i> Ambil foto
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Neural Workflow Modal (n8n-style Real-Time Pipeline Inspector) -->
+    <!-- Alur eksekusi: editor kanvas yang sama dengan halaman /pipeline -->
     <div id="pipeline-modal" class="modal-backdrop hidden">
         <div class="modal-dialog pipeline-dialog">
             <div class="modal-header">
                 <div class="pipeline-header-title">
-                    <div class="pipeline-icon-circle">
-                        <i class="ph ph-tree-structure"></i>
-                    </div>
-                    <div>
-                        <h2>Alur Eksekusi</h2>
-                        <span class="pipeline-modal-sub">Pemantauan alur pemrosesan dan latensi node</span>
-                    </div>
+                    <h2>Alur eksekusi</h2>
+                    <span class="pipeline-modal-sub">Geser node untuk menata ulang. Tampilan saja, eksekusi tidak berubah.</span>
                 </div>
                 <div class="pipeline-modal-actions">
                     <span id="pipeline-total-time" class="badge-time">0 ms</span>
-                    <a href="/pipeline" target="_blank" class="btn-secondary btn-sm" title="Buka Halaman Penuh di Tab Baru">
-                        <i class="ph ph-arrow-square-out"></i> Layar Penuh
+                    <a href="/pipeline" target="_blank" class="btn-secondary btn-sm" title="Buka di tab baru">
+                        <i class="ph ph-arrow-square-out"></i> Layar penuh
                     </a>
-                    <button id="close-pipeline-modal" class="btn-icon" type="button" title="Tutup">
+                    <button id="close-pipeline-modal" class="btn-icon" type="button" title="Tutup" aria-label="Tutup">
                         <i class="ph ph-x"></i>
                     </button>
                 </div>
             </div>
-
-            <!-- Workflow Flowchart Area (2-Stage Diagram) -->
-            <div class="flowchart-viewport">
-                <div id="modal-nodes-container" class="flowchart-canvas">
-                    <!-- Populated dynamically via script.js -->
-                </div>
-            </div>
-
-            <!-- Real-Time Node Data Inspector Panel -->
-            <div class="pipeline-modal-inspector">
-                <div class="inspector-bar">
-                    <div class="inspector-meta">
-                        <span class="inspector-badge">INSPEKTOR</span>
-                        <h4 id="modal-node-title">Pilih Node</h4>
-                        <span id="modal-node-sub" class="inspector-meta-sub">Payload input dan output JSON</span>
-                    </div>
-                    <div class="inspector-actions">
-                        <div class="tab-group-sm">
-                            <button type="button" id="modal-tab-out" class="tab-btn-sm active" onclick="switchModalTab('output')">Data Output</button>
-                            <button type="button" id="modal-tab-in" class="tab-btn-sm" onclick="switchModalTab('input')">Data Input</button>
-                        </div>
-                        <button type="button" class="btn-secondary btn-sm" onclick="copyModalJson()" title="Salin JSON">
-                            <i class="ph ph-copy"></i> Salin
-                        </button>
-                    </div>
-                </div>
-                <div class="inspector-pre-wrapper">
-                    <pre><code id="modal-json-display">// Menunggu aktivitas alur pipeline...</code></pre>
-                </div>
-            </div>
+            <iframe id="pipeline-frame" class="pipeline-frame" title="Editor alur eksekusi"></iframe>
         </div>
     </div>
 
-    <!-- Settings Modal -->
+    <!-- Pengaturan -->
     <div id="settings-modal" class="modal-backdrop hidden">
         <div class="modal-dialog">
             <div class="modal-header">
                 <h2>Pengaturan</h2>
-                <button id="close-settings" class="btn-icon" type="button" title="Tutup">
+                <button id="close-settings" class="btn-icon" type="button" title="Tutup" aria-label="Tutup pengaturan">
                     <i class="ph ph-x"></i>
                 </button>
             </div>
 
             <div class="modal-tabs">
-                <button class="tab-btn active" data-tab="user" type="button">Profil Pengguna</button>
+                <button class="tab-btn active" data-tab="user" type="button">Profil Anda</button>
                 <button class="tab-btn" data-tab="ai" type="button">Profil Shiro</button>
-                <button class="tab-btn" data-tab="model" type="button">Model AI</button>
-                <button class="tab-btn" data-tab="api" type="button">API Key</button>
+                <button class="tab-btn" data-tab="model" type="button">Model</button>
+                <button class="tab-btn" data-tab="api" type="button">API</button>
             </div>
 
-            <!-- User Profile Tab -->
             <div id="user-tab" class="tab-content active">
                 <form id="user-form" enctype="multipart/form-data">
                     <div class="profile-preview-box">
-                        <div id="user-preview" class="avatar-preview">
-                            <i class="ph ph-user"></i>
-                        </div>
+                        <div id="user-preview" class="avatar-preview"><i class="ph ph-user"></i></div>
                     </div>
-
                     <div class="form-field">
-                        <label for="user-name">Nama Panggilan</label>
+                        <label for="user-name">Nama panggilan</label>
                         <input type="text" id="user-name" placeholder="Nama Anda" value="Kakak">
                     </div>
-
                     <div class="form-field">
-                        <label for="user-desc">Keterangan Tambahan</label>
-                        <textarea id="user-desc" placeholder="Catatan personal tentang Kakak..."></textarea>
+                        <label for="user-desc">Catatan tentang Anda</label>
+                        <textarea id="user-desc" placeholder="Hal yang perlu Shiro ketahui tentang Kakak"></textarea>
                     </div>
-
                     <div class="form-field">
-                        <label for="user-image">Foto Profil</label>
+                        <label for="user-image">Foto profil</label>
                         <input type="file" id="user-image" accept="image/*">
                     </div>
-
-                    <button type="button" onclick="saveProfile('user')" class="btn-primary">Simpan Profil Pengguna</button>
+                    <button type="button" onclick="saveProfile('user')" class="btn-primary">Simpan profil</button>
                 </form>
             </div>
 
-            <!-- AI Profile Tab -->
             <div id="ai-tab" class="tab-content">
                 <form id="ai-form" enctype="multipart/form-data">
                     <div class="profile-preview-box">
-                        <div id="ai-preview" class="avatar-preview ai">
-                            <i class="ph ph-robot"></i>
-                        </div>
+                        <div id="ai-preview" class="avatar-preview ai"><i class="ph ph-robot"></i></div>
                     </div>
-
                     <div class="form-field">
-                        <label for="ai-name">Nama AI</label>
+                        <label for="ai-name">Nama</label>
                         <input type="text" id="ai-name" placeholder="Nama AI" value="Shiro">
                     </div>
-
                     <div class="form-field">
                         <label for="ai-desc">Kepribadian</label>
-                        <textarea id="ai-desc" placeholder="Deskripsi sifat Shiro..."></textarea>
+                        <textarea id="ai-desc" placeholder="Sifat dan gaya bicara Shiro"></textarea>
                     </div>
-
                     <div class="form-field">
-                        <label for="ai-image">Foto Avatar AI</label>
+                        <label for="ai-image">Foto avatar</label>
                         <input type="file" id="ai-image" accept="image/*">
                     </div>
-
-                    <button type="button" onclick="saveProfile('ai')" class="btn-primary">Simpan Profil AI</button>
+                    <button type="button" onclick="saveProfile('ai')" class="btn-primary">Simpan profil</button>
                 </form>
             </div>
 
-            <!-- Model Tab -->
             <div id="model-tab" class="tab-content">
                 <div class="model-card">
                     <div class="model-row">
-                        <span class="field-title">Model Aktif:</span>
-                        <span id="current-model-badge" class="badge-active">Loading...</span>
+                        <span class="field-title">Model aktif</span>
+                        <span id="current-model-badge" class="badge-active">Memuat...</span>
                     </div>
-
                     <div class="form-field">
-                        <label for="model-select">Pilih Model</label>
+                        <label for="model-select">Pilih model</label>
                         <select id="model-select" class="form-select">
                             <option disabled selected>Memuat daftar model...</option>
                         </select>
-                        <span class="field-help">Pilih model untuk beralih instan. File .gguf di folder model/ terdeteksi otomatis.</span>
+                        <span class="field-help">File .gguf di folder model/ terdeteksi otomatis.</span>
                     </div>
-
                     <div id="model-info" class="info-box">
                         <p id="model-desc-text">Memuat detail model...</p>
                     </div>
-
                     <div class="model-hint-box">
-                        <span class="model-hint-text"><i class="ph ph-info"></i> <strong>Tambah Model Manual:</strong> Salin file <code>.gguf</code> ke dalam folder <code>model/</code>, lalu buka menu ini untuk memilihnya.</span>
+                        <span class="model-hint-text"><i class="ph ph-info"></i> Untuk menambah model, salin file <code>.gguf</code> ke folder <code>model/</code>, lalu buka menu ini lagi.</span>
                     </div>
-
-                    <button type="button" onclick="switchModel()" class="btn-primary">Terapkan Pergantian Model</button>
+                    <button type="button" onclick="switchModel()" class="btn-primary">Terapkan model</button>
                 </div>
             </div>
 
-            <!-- API Key Tab -->
             <div id="api-tab" class="tab-content">
                 <div class="model-card">
                     <div class="form-field">
-                        <label for="active-api-key-input">API Key Aktif (External Bots &amp; Integrasi)</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" id="active-api-key-input" readonly value="Memuat key..." style="flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; background: var(--bg-input);">
-                            <button type="button" class="btn-secondary" onclick="copyApiKey()" title="Salin API Key">
+                        <label for="active-api-key-input">API key aktif</label>
+                        <div class="key-row">
+                            <input type="text" id="active-api-key-input" readonly value="Memuat key...">
+                            <button type="button" class="btn-secondary" onclick="copyApiKey()" title="Salin API key" aria-label="Salin API key">
                                 <i class="ph ph-copy"></i>
                             </button>
                         </div>
-                        <span class="field-help">Header: <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code>. Key yang sama berlaku untuk v1, v2, dan v3.</span>
+                        <span class="field-help">Kirim lewat header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code>. Key yang sama berlaku untuk v1, v2, dan v3.</span>
                     </div>
 
-                    <div style="margin-top: 15px; display: flex; gap: 10px;">
-                        <button type="button" onclick="regenerateApiKey()" class="btn-primary" id="btn-regen-key">
-                            <i class="ph ph-arrows-clockwise"></i> Generate Key Baru
-                        </button>
-                    </div>
+                    <button type="button" onclick="regenerateApiKey()" class="btn-secondary" id="btn-regen-key">
+                        <i class="ph ph-arrows-clockwise"></i> Buat key baru
+                    </button>
 
-                    <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                        <h4 style="font-size: 0.85rem; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);">Pilihan Route API (v1 / v2 / v3)</h4>
-                        
-                        <div style="display: flex; flex-direction: column; gap: 10px;">
-                            <div style="background: var(--bg-primary); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                    <span style="font-weight: 600; font-size: 0.82rem; color: #38bdf8;">v1 (Default - Bahasa Indonesia)</span>
-                                    <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyEndpointUrl('/v1')" title="Salin Base URL">Salin URL</button>
-                                </div>
-                                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary);" id="endpoint-v1-url">/v1</div>
-                                <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: 4px;">Persona Shiro Adik Manja 14 tahun dalam 100% Bahasa Indonesia. Cocok untuk WhatsApp, Telegram, Chatbot.</div>
+                    <div class="endpoint-list">
+                        <div class="endpoint-item">
+                            <div class="endpoint-head">
+                                <span class="endpoint-name">v1, Bahasa Indonesia</span>
+                                <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v1')">Salin URL</button>
                             </div>
-
-                            <div style="background: var(--bg-primary); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                    <span style="font-weight: 600; font-size: 0.82rem; color: #ec4899;">v2 (VTuber Engine - Native Japanese VoiceVox)</span>
-                                    <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyEndpointUrl('/v2')" title="Salin Base URL">Salin URL</button>
-                                </div>
-                                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary);" id="endpoint-v2-url">/v2</div>
-                                <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: 4px;">Khusus aplikasi VTuber (<code>D:\Downloads\vtuber</code>) &amp; VoiceVox TTS. Wajib output 100% Bahasa Jepang dengan format tag <code>[Tag] "..."</code>.</div>
+                            <div class="endpoint-url" id="endpoint-v1-url">/v1</div>
+                            <div class="endpoint-desc">Persona Shiro dalam bahasa Indonesia penuh. Cocok untuk WhatsApp, Telegram, dan chatbot.</div>
+                        </div>
+                        <div class="endpoint-item">
+                            <div class="endpoint-head">
+                                <span class="endpoint-name">v2, VTuber (VoiceVox)</span>
+                                <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v2')">Salin URL</button>
                             </div>
-
-                            <div style="background: var(--bg-primary); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                    <span style="font-weight: 600; font-size: 0.82rem; color: #10b981;">v3 (Custom Base Prompt)</span>
-                                    <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyEndpointUrl('/v3')" title="Salin Base URL">Salin URL</button>
-                                </div>
-                                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary);" id="endpoint-v3-url">/v3</div>
-                                <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: 4px;">Bebas mengikuti custom system prompt klien tanpa paksaan bahasa. Fleksibel untuk coding, riset, atau asisten umum.</div>
+                            <div class="endpoint-url" id="endpoint-v2-url">/v2</div>
+                            <div class="endpoint-desc">Untuk aplikasi VTuber dan VoiceVox. Output wajib bahasa Jepang dengan format tag <code>[Tag] "..."</code>.</div>
+                        </div>
+                        <div class="endpoint-item">
+                            <div class="endpoint-head">
+                                <span class="endpoint-name">v3, prompt kustom</span>
+                                <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v3')">Salin URL</button>
                             </div>
+                            <div class="endpoint-url" id="endpoint-v3-url">/v3</div>
+                            <div class="endpoint-desc">Mengikuti system prompt dari klien tanpa paksaan bahasa. Fleksibel untuk coding, riset, atau asisten umum.</div>
                         </div>
                     </div>
                 </div>
@@ -435,33 +362,33 @@
         </div>
     </div>
 
-    <!-- Image Lightbox Modal -->
+    <!-- Lightbox gambar -->
     <div id="image-lightbox-modal" class="image-lightbox-backdrop hidden" onclick="handleLightboxBackdropClick(event)">
         <div class="lightbox-container" onclick="event.stopPropagation()">
             <div class="lightbox-toolbar">
                 <div class="lightbox-title-wrap">
                     <i class="ph ph-image"></i>
-                    <span id="lightbox-title">Pratinjau Gambar</span>
+                    <span id="lightbox-title">Pratinjau gambar</span>
                 </div>
                 <div class="lightbox-actions">
-                    <a id="lightbox-open-newtab" href="#" target="_blank" class="btn-icon" title="Buka Gambar Asli di Tab Baru">
+                    <a id="lightbox-open-newtab" href="#" target="_blank" class="btn-icon" title="Buka di tab baru" aria-label="Buka di tab baru">
                         <i class="ph ph-arrow-square-out"></i>
                     </a>
-                    <a id="lightbox-download-btn" href="#" download class="btn-icon" title="Unduh Gambar">
+                    <a id="lightbox-download-btn" href="#" download class="btn-icon" title="Unduh" aria-label="Unduh gambar">
                         <i class="ph ph-download-simple"></i>
                     </a>
-                    <button id="close-lightbox-btn" class="btn-icon lightbox-close-btn" type="button" onclick="closeImageLightbox()" title="Tutup (Esc)">
+                    <button id="close-lightbox-btn" class="btn-icon" type="button" onclick="closeImageLightbox()" title="Tutup (Esc)" aria-label="Tutup">
                         <i class="ph ph-x"></i>
                     </button>
                 </div>
             </div>
             <div class="lightbox-content-box">
-                <img id="lightbox-img" src="" alt="Pratinjau Gambar">
+                <img id="lightbox-img" src="" alt="Pratinjau gambar">
             </div>
         </div>
     </div>
 
-    <!-- Document Viewer Modal -->
+    <!-- Viewer dokumen -->
     <div id="doc-viewer-modal" class="modal-backdrop hidden" onclick="handleDocModalBackdropClick(event)">
         <div class="modal-dialog doc-dialog" onclick="event.stopPropagation()">
             <div class="modal-header">
@@ -470,27 +397,26 @@
                         <i id="doc-modal-icon" class="ph ph-file-text"></i>
                     </div>
                     <div class="doc-modal-header-meta">
-                        <h2 id="doc-modal-filename">document.pdf</h2>
-                        <span id="doc-modal-sub" class="pipeline-modal-sub">Pratinjau Dokumen Lampiran</span>
+                        <h2 id="doc-modal-filename">dokumen.pdf</h2>
+                        <span id="doc-modal-sub" class="pipeline-modal-sub">Pratinjau dokumen</span>
                     </div>
                 </div>
                 <div class="pipeline-modal-actions">
-                    <button type="button" class="btn-secondary btn-sm" id="doc-modal-copy-btn" onclick="copyDocModalContent()" title="Salin Teks Dokumen">
-                        <i class="ph ph-copy"></i> Salin Teks
+                    <button type="button" class="btn-secondary btn-sm" id="doc-modal-copy-btn" onclick="copyDocModalContent()" title="Salin teks dokumen">
+                        <i class="ph ph-copy"></i> Salin teks
                     </button>
-                    <a id="doc-modal-download-link" href="#" target="_blank" class="btn-secondary btn-sm" title="Buka Berkas Asli di Tab Baru">
-                        <i class="ph ph-arrow-square-out"></i> Buka Asli
+                    <a id="doc-modal-download-link" href="#" target="_blank" class="btn-secondary btn-sm" title="Buka berkas asli di tab baru">
+                        <i class="ph ph-arrow-square-out"></i> Buka asli
                     </a>
-                    <button id="close-doc-modal" class="btn-icon" type="button" onclick="closeDocModal()" title="Tutup (Esc)">
+                    <button id="close-doc-modal" class="btn-icon" type="button" onclick="closeDocModal()" title="Tutup (Esc)" aria-label="Tutup">
                         <i class="ph ph-x"></i>
                     </button>
                 </div>
             </div>
 
-            <!-- Tab Switcher for PDF/Docs (Frame View vs Extracted Text) -->
             <div class="modal-tabs" id="doc-modal-tabs">
-                <button class="tab-btn active" id="tab-btn-doc-frame" type="button" onclick="switchDocViewMode('frame')">Tampilan Dokumen</button>
-                <button class="tab-btn" id="tab-btn-doc-text" type="button" onclick="switchDocViewMode('text')">Teks Ekstraksi</button>
+                <button class="tab-btn active" id="tab-btn-doc-frame" type="button" onclick="switchDocViewMode('frame')">Dokumen</button>
+                <button class="tab-btn" id="tab-btn-doc-text" type="button" onclick="switchDocViewMode('text')">Teks hasil ekstraksi</button>
             </div>
 
             <div class="doc-modal-body">
@@ -502,9 +428,6 @@
         </div>
     </div>
 
-    <!-- Markdown parser: full GFM support (tables, lists, blockquotes, fenced code) -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- Core UI & Rendering Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
