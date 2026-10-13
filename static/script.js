@@ -7,6 +7,17 @@ const stopBtn = document.getElementById('stop-btn');
 const resetBtn = document.getElementById('reset-btn');
 const memoryCount = document.getElementById('memory-count');
 const status = document.getElementById('status');
+
+// Notifikasi singkat non-blocking (menggantikan alert)
+function showToast(message, duration = 2200) {
+    const stack = document.getElementById('toast-stack');
+    if (!stack) { console.log(message); return; }
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = message;
+    stack.appendChild(el);
+    setTimeout(() => el.remove(), duration);
+}
 const typingIndicator = document.getElementById('typing-indicator');
 
 // Session & Sidebar Controls
@@ -66,13 +77,13 @@ if (typeof mermaid !== 'undefined') {
             securityLevel: 'loose',
             themeVariables: {
                 darkMode: true,
-                background: '#181825',
-                primaryColor: '#89b4fa',
-                primaryTextColor: '#cdd6f4',
-                primaryBorderColor: '#b4befe',
-                lineColor: '#a6adc8',
-                secondaryColor: '#f5c2e7',
-                tertiaryColor: '#313244'
+                background: '#1b1c1f',
+                primaryColor: '#232428',
+                primaryTextColor: '#e8e8ea',
+                primaryBorderColor: '#4a4d54',
+                lineColor: '#a3a5ab',
+                secondaryColor: '#2b2d31',
+                tertiaryColor: '#1b1c1f'
             }
         });
     } catch (e) {
@@ -82,41 +93,46 @@ if (typeof mermaid !== 'undefined') {
 
 let mermaidCounter = 0;
 
-// Parse message formatting: full Markdown via marked.js, safe HTML via DOMPurify.
-// Fallback parser remains available if the CDN library is unavailable.
+// Parse message formatting: Markdown, Syntax Highlighting, Mermaid, Sanitization
 function parseMessageContent(text) {
     if (!text) return '';
-    const source = String(text);
 
-    if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
-        try {
-            const renderer = new marked.Renderer();
-            renderer.code = function({ text: code, lang }) {
-                const cleanLang = String(lang || '').trim().split(/\s+/)[0].toLowerCase();
-                const escapedCode = String(code || '')
-                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#39;');
+    const codeBlocks = [];
 
-                if (cleanLang === 'mermaid' && typeof mermaid !== 'undefined') {
-                    const mId = `mermaid_${Date.now()}_${++mermaidCounter}`;
-                    return `<div class="mermaid-container" id="${mId}">
-                        <div class="mermaid-toolbar">
-                            <span class="mermaid-badge"><i class="ph ph-tree-structure"></i> Diagram Mermaid</span>
-                            <button type="button" class="btn-toggle-mermaid-code" onclick="toggleMermaidCode(this)">
-                                <i class="ph ph-code"></i> Tampilkan Kode
-                            </button>
-                        </div>
-                        <div class="mermaid-diagram-render" id="render_${mId}">
-                            <pre class="mermaid-raw-source" style="display:none;">${escapedCode}</pre>
-                        </div>
-                        <pre class="mermaid-raw-code hidden"><code>${escapedCode}</code></pre>
-                    </div>`;
-                }
+    // 1. Ekstrak Fenced Code Blocks: ```lang ... ```
+    let content = text.replace(/```([a-zA-Z0-9_\-\.]*)\s*\n?([\s\S]*?)```/g, function(match, lang, code) {
+        const cleanLang = (lang || '').trim().toLowerCase();
+        const rawCode = (code || '').trim();
+        const placeholder = `___SHIRO_BLOCK_${codeBlocks.length}___`;
 
-                const displayLang = cleanLang ? cleanLang.toUpperCase() : 'CODE';
-                const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
-                return `<div class="code-block-wrapper">
+        const escapedCode = rawCode
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        if (cleanLang === 'mermaid') {
+            const mId = `mermaid_${Date.now()}_${++mermaidCounter}`;
+            codeBlocks.push(`
+                <div class="mermaid-container" id="${mId}">
+                    <div class="mermaid-toolbar">
+                        <span class="mermaid-badge"><i class="ph ph-tree-structure"></i> Diagram</span>
+                        <button type="button" class="btn-toggle-mermaid-code" onclick="toggleMermaidCode(this)">
+                            <i class="ph ph-code"></i> Lihat kode
+                        </button>
+                    </div>
+                    <div class="mermaid-diagram-render" id="render_${mId}">
+                        <pre class="mermaid-raw-source">${escapedCode}</pre>
+                    </div>
+                    <pre class="mermaid-raw-code hidden"><code>${escapedCode}</code></pre>
+                </div>
+            `);
+        } else {
+            const displayLang = cleanLang || 'kode';
+            const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
+            codeBlocks.push(`
+                <div class="code-block-wrapper">
                     <div class="code-block-header">
                         <span class="code-lang-label">${displayLang}</span>
                         <button type="button" class="btn-copy-code" onclick="copyCodeSnippet(this)" title="Salin Kode">
@@ -124,47 +140,76 @@ function parseMessageContent(text) {
                         </button>
                     </div>
                     <pre><code class="${langClass}">${escapedCode}</code></pre>
-                </div>`;
-            };
-            marked.setOptions({ gfm: true, breaks: true, renderer });
-            let html = marked.parse(source);
-            if (typeof DOMPurify !== 'undefined') {
-                html = DOMPurify.sanitize(html, {
-                    ADD_TAGS: ['svg','path','marker','g','rect','circle','line','polygon','text','tspan','style','defs'],
-                    ADD_ATTR: ['target','rel','data-*','class','id','d','fill','stroke','viewBox','width','height','style','title']
-                });
-            }
-            return html;
-        } catch (err) {
-            console.error('[Markdown Render Error]', err);
+                </div>
+            `);
+        }
+        return placeholder;
+    });
+
+    // 2. Escape teks non-kode untuk sanitasi awal
+    let div = document.createElement('div');
+    div.textContent = content;
+    content = div.innerHTML;
+
+    // 3. Parse Markdown Images: ![alt](url) -> Clickable lightbox preview
+    content = content.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s<>"'\)]+|\/[^\s<>"'\)]+)\)/g, function(match, alt, rawUrl) {
+        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
+        let safeAlt = (alt || 'Gambar').replace(/"/g, '&quot;');
+        let jsUrl = cleanUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `<div class="chat-inline-img-wrap" onclick="openImageLightbox('${jsUrl}', '${safeAlt}')" title="Klik untuk melihat pratinjau penuh"><img src="${cleanUrl}" alt="${safeAlt}" class="chat-img-attachment" loading="lazy"></div>`;
+    });
+
+    // 4. Parse Markdown links [text](url)
+    const mdLinks = [];
+    content = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\s<>"']+)\)/g, function(match, label, rawUrl) {
+        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
+        let placeholder = `___SHIRO_MD_LINK_${mdLinks.length}___`;
+        mdLinks.push(`<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${label}</a>`);
+        return placeholder;
+    });
+
+    // 5. Parse plain URL menjadi link yang bisa diklik
+    const urlRegex = /(https?:\/\/[^\s<>"']+)/g;
+    content = content.replace(urlRegex, function(match) {
+        let cleanUrl = match.replace(/[.,;!?)]+$/, '');
+        let trailing = match.slice(cleanUrl.length);
+        return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${cleanUrl}</a>${trailing}`;
+    });
+
+    // Kembalikan placeholder Markdown links
+    mdLinks.forEach((linkHtml, idx) => {
+        content = content.replace(`___SHIRO_MD_LINK_${idx}___`, linkHtml);
+    });
+
+    // 6. Parse inline code: `code`
+    content = content.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+    // 7. Parse formatting teks
+    content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    content = content.replace(/~~(.+?)~~/g, '<del>$1</del>');
+    content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // 8. Parse baris baru menjadi <br>
+    content = content.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
+
+    // 9. Pulihkan blok kode & diagram mermaid
+    codeBlocks.forEach((blockHtml, idx) => {
+        content = content.replace(`___SHIRO_BLOCK_${idx}___`, blockHtml);
+    });
+
+    // 10. Markdown Sanitization via DOMPurify jika tersedia
+    if (typeof DOMPurify !== 'undefined') {
+        try {
+            content = DOMPurify.sanitize(content, {
+                ADD_TAGS: ['svg', 'path', 'marker', 'g', 'rect', 'circle', 'line', 'polygon', 'text', 'tspan', 'style', 'defs'],
+                ADD_ATTR: ['target', 'rel', 'onclick', 'data-*', 'class', 'id', 'd', 'fill', 'stroke', 'viewBox', 'width', 'height', 'style', 'title']
+            });
+        } catch (pErr) {
+            console.warn('[DOMPurify Warning]:', pErr);
         }
     }
 
-    // Safe fallback if marked.js failed to load. Supports common inline Markdown and fenced code.
-    const blocks = [];
-    let safe = source.replace(/```([a-zA-Z0-9_.+-]*)[ \t]*\r?\n?([\s\S]*?)(?:```|$)/g, (_, lang, code) => {
-        const esc = String(code || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const cls = lang ? `language-${lang.toLowerCase()}` : 'nohighlight';
-        blocks.push(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang-label">${(lang || 'CODE').toUpperCase()}</span><button type="button" class="btn-copy-code" onclick="copyCodeSnippet(this)"><i class="ph ph-copy"></i> <span>Salin</span></button></div><pre><code class="${cls}">${esc}</code></pre></div>`);
-        return `___SHIRO_BLOCK_${blocks.length-1}___`;
-    });
-    const el = document.createElement('div');
-    el.textContent = safe;
-    safe = el.innerHTML;
-    safe = safe.replace(/^######\s+(.+)$/gm,'<h6>$1</h6>')
-        .replace(/^#####\s+(.+)$/gm,'<h5>$1</h5>')
-        .replace(/^####\s+(.+)$/gm,'<h4>$1</h4>')
-        .replace(/^###\s+(.+)$/gm,'<h3>$1</h3>')
-        .replace(/^##\s+(.+)$/gm,'<h2>$1</h2>')
-        .replace(/^#\s+(.+)$/gm,'<h1>$1</h1>')
-        .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-        .replace(/~~(.+?)~~/g,'<del>$1</del>')
-        .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>')
-        .replace(/`([^`\n]+)`/g,'<code>$1</code>')
-        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-        .replace(/\r?\n/g,'<br>');
-    blocks.forEach((b,i)=>{ safe=safe.replace(`___SHIRO_BLOCK_${i}___`,b); });
-    return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(safe) : safe;
+    return content;
 }
 
 // Global visual attachment state
@@ -181,7 +226,7 @@ function copyCodeSnippet(btn) {
         const span = btn.querySelector('span');
         const icon = btn.querySelector('i');
         const oldText = span ? span.textContent : '';
-        if (span) span.textContent = 'Tersalin!';
+        if (span) span.textContent = 'Tersalin';
         if (icon) icon.className = 'ph ph-check';
         setTimeout(() => {
             if (span) span.textContent = oldText || 'Salin';
@@ -196,8 +241,8 @@ function copyMessageText(btn) {
     const orig = bubble.getAttribute('data-original-text') || bubble.innerText;
     navigator.clipboard.writeText(orig).then(() => {
         const oldHTML = btn.innerHTML;
-        btn.innerHTML = '<i class="ph ph-check"></i> Tersalin!';
-        setTimeout(() => { btn.innerHTML = oldHTML; }, 1800);
+        btn.innerHTML = '<i class="ph ph-check"></i>';
+        setTimeout(() => { btn.innerHTML = oldHTML; }, 1500);
     });
 }
 
@@ -208,7 +253,7 @@ function toggleMermaidCode(btn) {
     if (!rawCode) return;
     rawCode.classList.toggle('hidden');
     const isHidden = rawCode.classList.contains('hidden');
-    btn.innerHTML = isHidden ? '<i class="ph ph-code"></i> Tampilkan Kode' : '<i class="ph ph-eye-slash"></i> Sembunyikan Kode';
+    btn.innerHTML = isHidden ? '<i class="ph ph-code"></i> Lihat kode' : '<i class="ph ph-eye-slash"></i> Sembunyikan kode';
 }
 
 function toggleStatusCard(header) {
@@ -264,11 +309,11 @@ function addErrorMessage(errorMsg, failedPayload = null) {
     messageDiv.innerHTML = `
         <div class="error-retry-card">
             <div class="error-retry-card-msg">
-                <i class="ph ph-warning-circle" style="font-size:1.2rem;"></i>
+                <i class="ph ph-warning-circle"></i>
                 <span>${errorMsg}</span>
             </div>
             <button type="button" class="btn-retry-action" onclick="retryLastFailedMessage()">
-                <i class="ph ph-arrows-clockwise"></i> Coba Lagi
+                <i class="ph ph-arrows-clockwise"></i> Coba lagi
             </button>
         </div>
     `;
@@ -348,9 +393,7 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
                 <div class="chat-doc-info">
                     <div class="chat-doc-name" title="${safeFilename}">${safeFilename}</div>
                     <div class="chat-doc-meta">
-                        <span>Dokumen Lampiran</span>
-                        <span class="chat-doc-dot">•</span>
-                        <span class="chat-doc-action"><i class="ph ph-eye"></i> Klik untuk Melihat</span>
+                        <span class="chat-doc-action"><i class="ph ph-eye"></i> Lihat dokumen</span>
                     </div>
                 </div>
                 <button type="button" class="chat-doc-open-btn" onclick="event.stopPropagation(); window.open('${jsUrl}', '_blank')" title="Buka File Asli di Tab Baru">
@@ -412,11 +455,11 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
                         <span class="status-card-icon"><i class="ph ${toolIcon}"></i></span>
                         <span class="status-card-title">${toolTitle}: ${descText}</span>
                     </div>
-                    <div style="display:flex;align-items:center;gap:8px;">
+                    <div class="status-card-end">
                         <span class="status-card-badge ${isSuccess ? 'status-badge-success' : 'status-badge-error'}">
-                            <i class="ph ${isSuccess ? 'ph-check-circle' : 'ph-x-circle'}"></i> ${isSuccess ? 'Sukses' : 'Gagal'} ${dur ? '(' + dur + ')' : ''}
+                            <i class="ph ${isSuccess ? 'ph-check-circle' : 'ph-x-circle'}"></i> ${isSuccess ? 'Berhasil' : 'Gagal'}${dur ? ' · ' + dur : ''}
                         </span>
-                        <i class="ph ph-caret-down status-card-caret" style="color:var(--text-tertiary);font-size:0.8rem;"></i>
+                        <i class="ph ph-caret-down status-card-caret"></i>
                     </div>
                 </div>
                 <div class="status-card-body hidden">
@@ -431,22 +474,22 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     if (role === 'user') {
         actionsBarHTML = `
             <div class="msg-actions-bar">
-                <button type="button" class="btn-msg-action" onclick="editUserPrompt(this)" title="Edit prompt ini">
-                    <i class="ph ph-pencil-simple"></i> Edit
+                <button type="button" class="btn-msg-action" onclick="editUserPrompt(this)" title="Edit pesan" aria-label="Edit pesan">
+                    <i class="ph ph-pencil-simple"></i>
                 </button>
-                <button type="button" class="btn-msg-action" onclick="copyMessageText(this)" title="Salin pesan">
-                    <i class="ph ph-copy"></i> Salin
+                <button type="button" class="btn-msg-action" onclick="copyMessageText(this)" title="Salin pesan" aria-label="Salin pesan">
+                    <i class="ph ph-copy"></i>
                 </button>
             </div>
         `;
     } else if (role === 'assistant') {
         actionsBarHTML = `
             <div class="msg-actions-bar">
-                <button type="button" class="btn-msg-action" onclick="regenerateLastResponse()" title="Buat ulang respons">
-                    <i class="ph ph-arrows-clockwise"></i> Regenerate
+                <button type="button" class="btn-msg-action" onclick="copyMessageText(this)" title="Salin jawaban" aria-label="Salin jawaban">
+                    <i class="ph ph-copy"></i>
                 </button>
-                <button type="button" class="btn-msg-action" onclick="copyMessageText(this)" title="Salin jawaban">
-                    <i class="ph ph-copy"></i> Salin
+                <button type="button" class="btn-msg-action" onclick="regenerateLastResponse()" title="Buat ulang jawaban" aria-label="Buat ulang jawaban">
+                    <i class="ph ph-arrows-clockwise"></i>
                 </button>
             </div>
         `;
@@ -498,7 +541,7 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
                     renderTarget.innerHTML = svg;
                 } catch (mErr) {
                     console.warn('[Mermaid Render Error]:', mErr);
-                    renderTarget.innerHTML = `<div style="color:#f38ba8;font-size:0.75rem;padding:8px;"><i class="ph ph-warning"></i> Format diagram mermaid tidak valid. Klik 'Tampilkan Kode' di atas untuk melihat sintaks mentah.</div>`;
+                    renderTarget.innerHTML = `<div class="mermaid-error"><i class="ph ph-warning"></i> Diagram tidak valid. Pilih "Lihat kode" untuk melihat sintaks aslinya.</div>`;
                 }
             }
         });
@@ -511,7 +554,7 @@ function updateMemoryCount() {
         .then(res => res.json())
         .then(data => {
             if (memoryCount) memoryCount.textContent = data.count;
-            if (sidebarMemoryCount) sidebarMemoryCount.textContent = `${data.count} Fakta`;
+            if (sidebarMemoryCount) sidebarMemoryCount.textContent = `${data.count} fakta`;
         })
         .catch(err => console.error("Memory fetch error", err));
 }
@@ -809,7 +852,7 @@ async function loadSessions() {
                 sidebarSessionList.innerHTML = '';
                 if (data.sessions.length === 0) {
                     const emptyTip = document.createElement('div');
-                    emptyTip.style.cssText = 'padding: 1rem; color: var(--text-muted); font-size: 0.8rem; text-align: center;';
+                    emptyTip.className = 'session-empty';
                     emptyTip.textContent = 'Belum ada riwayat chat.';
                     sidebarSessionList.appendChild(emptyTip);
                 } else {
@@ -1161,77 +1204,6 @@ function decodeHtmlEntities(text) {
     return textarea.value;
 }
 
-// Message action buttons (copy, edit) - like Gemini
-let currentBubble = null;
-
-document.addEventListener('mouseover', (e) => {
-    const bubble = e.target.closest('.bubble');
-    
-    // Skip jika bukan user message atau sama dengan bubble sebelumnya
-    if (!bubble || !bubble.parentElement.classList.contains('user') || bubble === currentBubble) {
-        return;
-    }
-    
-    // Remove actions dari bubble lama
-    if (currentBubble) {
-        const oldActions = currentBubble.querySelector('.message-actions');
-        if (oldActions) oldActions.remove();
-    }
-    
-    // Add action buttons ke bubble baru
-    let originalText = bubble.getAttribute('data-original-text') || '';
-    originalText = decodeHtmlEntities(originalText); // Decode HTML entities
-    currentBubble = bubble;
-    
-    const actions = document.createElement('div');
-    actions.className = 'message-actions';
-    actions.innerHTML = `
-        <button class="action-btn copy-btn" title="Copy" type="button">
-            <i class="ph ph-copy"></i>
-        </button>
-        <button class="action-btn edit-btn" title="Edit" type="button">
-            <i class="ph ph-pencil"></i>
-        </button>
-    `;
-    
-    // Copy button handler
-    const copyBtn = actions.querySelector('.copy-btn');
-    copyBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        navigator.clipboard.writeText(originalText).then(() => {
-            const toast = document.createElement('div');
-            toast.textContent = 'Tersalin';
-            toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1e293b;border:1px solid #334155;color:#f8fafc;padding:8px 14px;border-radius:6px;font-size:12px;z-index:9999;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);';
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 1500);
-        });
-    });
-    
-    // Edit button handler
-    const editBtn = actions.querySelector('.edit-btn');
-    editBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        userInput.value = originalText;
-        adjustInputHeight();
-        userInput.focus();
-        userInput.setSelectionRange(userInput.value.length, userInput.value.length);
-    });
-    
-    bubble.appendChild(actions);
-});
-
-// Hide actions saat mouse leave dari message area
-document.addEventListener('mouseleave', (e) => {
-    const bubble = e.target.closest('.bubble');
-    if (bubble && currentBubble === bubble) {
-        const actions = bubble.querySelector('.message-actions');
-        if (actions) actions.remove();
-        currentBubble = null;
-    }
-}, true);
-
 // Settings Modal Functions
 const settingsModal = document.getElementById('settings-modal');
 const settingsBtn = document.getElementById('settings-btn');
@@ -1328,27 +1300,27 @@ async function saveProfile(type) {
         
         const data = await response.json();
         if (data.success) {
-            alert(`${type} profile saved!`);
+            showToast(`${type} profile saved!`);
             // Reload preview
             loadProfiles();
         }
     } catch (error) {
         console.error('Error saving profile:', error);
-        alert('Error saving profile');
+        showToast('Error saving profile');
     }
 }
 
 // Tab switching
-document.querySelectorAll('.tab-btn').forEach(btn => {
+document.querySelectorAll('#settings-modal .tab-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
         const tab = e.target.closest('.tab-btn').dataset.tab;
         
         // Update active tab button
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('#settings-modal .tab-btn').forEach(b => b.classList.remove('active'));
         e.target.closest('.tab-btn').classList.add('active');
         
         // Update active tab content
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('#settings-modal .tab-content').forEach(c => c.classList.remove('active'));
         document.getElementById(`${tab}-tab`).classList.add('active');
 
         if (tab === 'api') {
@@ -1382,18 +1354,18 @@ function copyApiKey() {
     const input = document.getElementById('active-api-key-input');
     if (!input || !input.value) return;
     navigator.clipboard.writeText(input.value).then(() => {
-        alert('API Key berhasil disalin!');
+        showToast('API Key berhasil disalin!');
     }).catch(() => {
         input.select();
         document.execCommand('copy');
-        alert('API Key berhasil disalin!');
+        showToast('API Key berhasil disalin!');
     });
 }
 
 function copyEndpointUrl(path) {
     const fullUrl = window.location.origin + path;
     navigator.clipboard.writeText(fullUrl).then(() => {
-        alert(`URL ${fullUrl} berhasil disalin!`);
+        showToast(`URL ${fullUrl} berhasil disalin!`);
     }).catch(() => {
         prompt('Salin URL:', fullUrl);
     });
@@ -1408,13 +1380,13 @@ async function regenerateApiKey() {
         if (res.ok) {
             const data = await res.json();
             if (input) input.value = data.api_key;
-            alert('API Key baru berhasil di-generate!');
+            showToast('API Key baru berhasil di-generate!');
         } else {
-            alert('Gagal generate API Key');
+            showToast('Gagal generate API Key');
         }
     } catch (e) {
         console.error('Error regenerating API key:', e);
-        alert('Error: ' + e.message);
+        showToast('Error: ' + e.message);
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -1527,13 +1499,13 @@ async function uploadDocumentFile(file) {
             });
             status.textContent = 'Dokumen siap';
         } else {
-            alert(`Gagal membaca berkas: ${data.error || 'Format tidak didukung'}`);
+            showToast(`Gagal membaca berkas: ${data.error || 'Format tidak didukung'}`);
             clearAttachedDocument();
             status.textContent = 'Siap';
         }
     } catch (err) {
         console.error("Document upload error:", err);
-        alert("Gagal mengunggah dokumen: " + (err.message || "Koneksi bermasalah"));
+        showToast("Gagal mengunggah dokumen: " + (err.message || "Koneksi bermasalah"));
         clearAttachedDocument();
         status.textContent = 'Siap';
     }
@@ -1702,7 +1674,7 @@ async function startCamera() {
         }
     } catch (err) {
         console.error("Camera access error:", err);
-        alert("Tidak dapat mengakses kamera: " + (err.message || "Izin kamera ditolak."));
+        showToast("Tidak dapat mengakses kamera: " + (err.message || "Izin kamera ditolak."));
         closeCamera();
     }
 }
@@ -1827,7 +1799,7 @@ async function switchModel() {
     const selectedModel = select.value;
     
     if (!selectedModel) {
-        alert('Silakan pilih model terlebih dahulu');
+        showToast('Silakan pilih model terlebih dahulu');
         return;
     }
     
@@ -1852,7 +1824,7 @@ async function switchModel() {
         
         if (data.success) {
             const visionTag = data.has_vision ? ' (Vision Aktif)' : '';
-            alert(`Model berhasil dialihkan ke ${modelName}${visionTag}`);
+            showToast(`Model berhasil dialihkan ke ${modelName}${visionTag}`);
             status.textContent = 'Model berhasil dialihkan!';
             
             // Reload models to update UI
@@ -1861,12 +1833,12 @@ async function switchModel() {
                 status.textContent = 'Siap';
             }, 600);
         } else {
-            alert(`Error: ${data.error}`);
+            showToast(`Error: ${data.error}`);
             status.textContent = 'Gagal beralih model';
         }
     } catch (error) {
         console.error('Error switching model:', error);
-        alert(`Error: ${error.message}`);
+        showToast(`Error: ${error.message}`);
         status.textContent = 'Error';
     }
 }
@@ -1883,16 +1855,33 @@ const pipelineBtn = document.getElementById('pipeline-btn');
 const pipelineModal = document.getElementById('pipeline-modal');
 const closePipelineModalBtn = document.getElementById('close-pipeline-modal');
 const pipelineNavDot = document.getElementById('pipeline-nav-dot');
-const modalNodesContainer = document.getElementById('modal-nodes-container');
 const pipelineTotalTime = document.getElementById('pipeline-total-time');
-const modalNodeTitle = document.getElementById('modal-node-title');
-const modalNodeSub = document.getElementById('modal-node-sub');
-const modalJsonDisplay = document.getElementById('modal-json-display');
+const pipelineFrame = document.getElementById('pipeline-frame');
 
 let activePipelineTrace = null;
-let selectedModalNodeId = null;
-let modalActiveTab = 'output';
+let pipelineFrameReady = false;
 let pipelineSimTimers = [];
+
+// Kirim trace terbaru ke editor kanvas (iframe). Editor hanya memperbarui
+// status node, posisi dan sambungan yang diatur pengguna tidak disentuh.
+function postTraceToFrame() {
+    if (!pipelineFrame || !pipelineFrameReady || !activePipelineTrace) return;
+    try {
+        pipelineFrame.contentWindow.postMessage(
+            { type: 'shiro:trace', trace: activePipelineTrace },
+            window.location.origin
+        );
+    } catch (e) {
+        console.warn('Gagal mengirim trace ke editor:', e);
+    }
+}
+
+if (pipelineFrame) {
+    pipelineFrame.addEventListener('load', () => {
+        pipelineFrameReady = true;
+        postTraceToFrame();
+    });
+}
 
 function clearPipelineSimulation() {
     pipelineSimTimers.forEach(t => clearTimeout(t));
@@ -1966,10 +1955,10 @@ function startPipelineAnimation(userInputText) {
 function openPipelineModal() {
     if (!pipelineModal) return;
     pipelineModal.classList.remove('hidden');
-    if (!activePipelineTrace) {
-        fetchLatestPipelineTrace();
+    if (pipelineFrame && !pipelineFrame.getAttribute('src')) {
+        pipelineFrame.src = '/pipeline?embed=1';   // dimuat sekali, state kanvas tetap hidup
     } else {
-        renderModalPipeline(activePipelineTrace);
+        postTraceToFrame();
     }
 }
 
@@ -1992,140 +1981,11 @@ async function fetchLatestPipelineTrace() {
 }
 
 function renderModalPipeline(trace) {
-    if (!modalNodesContainer) return;
+    if (!trace) return;
     if (trace.total_duration_ms && pipelineTotalTime) {
         pipelineTotalTime.textContent = `${Math.round(trace.total_duration_ms)} ms`;
     }
-
-    if (!trace.nodes || trace.nodes.length === 0) return;
-
-    const stage1Nodes = trace.nodes.slice(0, 4);
-    const stage2Nodes = trace.nodes.slice(4, 8);
-
-    const renderCard = (node, idx) => {
-        const isSelected = selectedModalNodeId === node.id || (!selectedModalNodeId && idx === 0);
-        if (isSelected && !selectedModalNodeId) selectedModalNodeId = node.id;
-
-        const isRunning = node.status === 'running';
-        const isSuccess = node.status === 'success';
-
-        let badgeHtml = '';
-        if (isRunning) {
-            badgeHtml = `<span class="flow-node-badge running"><i class="ph ph-spinner ph-spin"></i> Proses</span>`;
-        } else if (isSuccess) {
-            const dur = node.duration_ms ? `${Math.round(node.duration_ms)}ms` : '0ms';
-            badgeHtml = `<span class="flow-node-badge success"><i class="ph ph-check"></i> ${dur}</span>`;
-        } else {
-            badgeHtml = `<span class="flow-node-badge idle">Idle</span>`;
-        }
-
-        return `
-            <div class="flow-node-card ${isSelected ? 'selected' : ''} ${node.status || ''}" onclick="selectModalNode('${node.id}')">
-                <div class="flow-node-top">
-                    <div class="flow-node-icon" style="background: ${node.color || '#3b82f6'};">
-                        <i class="ph ${node.icon || 'ph-gear'}"></i>
-                    </div>
-                    ${badgeHtml}
-                </div>
-                <div class="flow-node-title" title="${node.name}">${node.name}</div>
-                <div class="flow-node-summary">${node.summary || ''}</div>
-            </div>
-        `;
-    };
-
-    const renderArrow = (active) => {
-        return `
-            <div class="flow-arrow-track ${active ? 'active' : ''}">
-                <div class="flow-arrow-line"></div>
-            </div>
-        `;
-    };
-
-    const stage1Ms = stage1Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
-    const stage2Ms = stage2Nodes.reduce((acc, n) => acc + (n.duration_ms || 0), 0);
-    const stage1Done = stage1Nodes.every(n => n.status === 'success');
-
-    let html = `
-        <div class="flow-stage-bar">
-            <span class="flow-stage-label"><i class="ph ph-sliders"></i> Tahap 1: Ekstraksi Data</span>
-            <span class="flow-stage-info">${Math.round(stage1Ms)}ms</span>
-        </div>
-        <div class="flow-stage-row">
-    `;
-
-    stage1Nodes.forEach((node, idx) => {
-        html += renderCard(node, idx);
-        if (idx < stage1Nodes.length - 1) {
-            const isConnActive = node.status === 'success';
-            html += renderArrow(isConnActive);
-        }
-    });
-
-    html += `
-        </div>
-        <div class="flow-bridge-row">
-            <div class="flow-bridge-track ${stage1Done ? 'active' : ''}">
-                <div class="bridge-pulse-dot"></div>
-                <i class="ph ph-arrow-down-right"></i>
-                <span>Tahap 2</span>
-            </div>
-        </div>
-        <div class="flow-stage-bar">
-            <span class="flow-stage-label"><i class="ph ph-cpu"></i> Tahap 2: Inferensi Model</span>
-            <span class="flow-stage-info">${Math.round(stage2Ms)}ms</span>
-        </div>
-        <div class="flow-stage-row">
-    `;
-
-    stage2Nodes.forEach((node, idx) => {
-        html += renderCard(node, idx + 4);
-        if (idx < stage2Nodes.length - 1) {
-            const isConnActive = node.status === 'success';
-            html += renderArrow(isConnActive);
-        }
-    });
-
-    html += `</div>`;
-
-    modalNodesContainer.innerHTML = html;
-    updateModalInspector();
-}
-
-function selectModalNode(nodeId) {
-    selectedModalNodeId = nodeId;
-    document.querySelectorAll('.flow-node-card').forEach(item => item.classList.remove('selected'));
-    if (activePipelineTrace) {
-        renderModalPipeline(activePipelineTrace);
-    }
-}
-
-function switchModalTab(tab) {
-    modalActiveTab = tab;
-    const tabOut = document.getElementById('modal-tab-out');
-    const tabIn = document.getElementById('modal-tab-in');
-    if (tabOut) tabOut.classList.toggle('active', tab === 'output');
-    if (tabIn) tabIn.classList.toggle('active', tab === 'input');
-    updateModalInspector();
-}
-
-function updateModalInspector() {
-    if (!activePipelineTrace || !activePipelineTrace.nodes || !modalJsonDisplay) return;
-    const node = activePipelineTrace.nodes.find(n => n.id === selectedModalNodeId) || activePipelineTrace.nodes[0];
-    if (!node) return;
-
-    if (modalNodeTitle) modalNodeTitle.textContent = node.name;
-    if (modalNodeSub) modalNodeSub.textContent = `${node.summary || ''} • Durasi eksekusi: ${node.duration_ms || 0}ms`;
-
-    const dataToView = modalActiveTab === 'output' ? node.data_out : node.data_in;
-    modalJsonDisplay.textContent = JSON.stringify(dataToView || {}, null, 2);
-}
-
-function copyModalJson() {
-    if (!modalJsonDisplay) return;
-    const text = modalJsonDisplay.textContent;
-    navigator.clipboard.writeText(text).then(() => {
-        alert("JSON data node berhasil disalin ke clipboard!");
-    });
+    postTraceToFrame();
 }
 
 // Pipeline modal event listeners
