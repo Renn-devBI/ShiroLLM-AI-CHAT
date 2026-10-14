@@ -16,8 +16,9 @@ COLAB_MODELS = {
     "27b": {
         "repo": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",
         "file": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
-        "extra_file": None,
-        "desc": "Qwen3.8-27B-Uncensored (Model #2: Uncensored / A100 GPU, ~16.8 GB)"
+        "extra_file": "mmproj-F16.gguf",
+        "extra_repo": "unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
+        "desc": "Qwen3.8-27B-Uncensored (Model #2: Multimodal Vision / A100 GPU, ~16.8 GB)"
     },
     "vl": {
         "repo": "unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
@@ -100,7 +101,7 @@ def download_single_model(m_key, info):
             print(f"[DOWNLOAD] Mengunduh Vision Projector ({extra})...")
             try:
                 hf_hub_download(
-                    repo_id=repo,
+                    repo_id=model_info.get("extra_repo", repo),
                     filename=extra,
                     local_dir="model",
                     local_dir_use_symlinks=False

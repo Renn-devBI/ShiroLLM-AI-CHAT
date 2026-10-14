@@ -12,7 +12,6 @@ Dokumen ini memuat seluruh opsi konfigurasi, variabel lingkungan (environment va
 | `SHIRO_DRIVE_DIR` | `/content/drive/MyDrive/Shiro_Memory` | Direktori Google Drive untuk pencadangan & sinkronisasi otomatis |
 | `SHIRO_CONTEXT_SIZE` | `4096` | Ukuran context window model Llama |
 | `N_GPU_LAYERS` | `0` (CPU) / `-1` (Full GPU) | Jumlah layer model yang di-offload ke VRAM GPU NVIDIA |
-| `GEMINI_API_KEY` | *(Opsional)* | API Key Gemini Flash untuk jembatan visual fallback pada model teks biasa |
 
 ---
 

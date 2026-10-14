@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 from shiro.persona import build_system_prompt
 from shiro.llm.cleaner import clean_response
-from shiro.vision.bridge import analyze_visual_bridge, get_gemini_api_key
 from shiro.pipeline.inference import get_shiro_reply
 from shiro.server_state import state
 
@@ -69,43 +68,34 @@ class TestPromptAndMultimodal(unittest.TestCase):
             self.assertIn("[Melampirkan Dokumen: laporan_proyek.txt]", user_msg)
             self.assertIn("Tolong rangkum dokumen ini ya!", user_msg)
 
-    def test_image_attachment_in_text_only_inference(self):
+    def test_image_attachment_in_native_multimodal_inference(self):
         mock_llm = MagicMock()
         mock_llm.model_path = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
         mock_llm.chat_handler = None
         mock_llm.create_chat_completion.return_value = {
             "choices": [{
-                "message": {"content": "*menatap layar* Uwah, Kakak kirim foto ya? Shiro belum bisa lihat gambarnya langsung nih!"},
+                "message": {"content": "*menatap gambar* Aku melihat kucing lucu di gambar ini!"},
                 "finish_reason": "stop"
             }],
             "usage": {}
         }
 
-        with patch.object(state, 'llm', mock_llm), patch.object(state, 'vision_chat_handler', None):
-            with patch('shiro.vision.bridge.get_gemini_api_key', return_value=None):
-                reply, trace = get_shiro_reply(
-                    "shiro tau dia siapa?",
-                    image_base64="data:image/jpeg;base64,/9j/4AAQSkZJRg==",
-                    return_trace=True
-                )
-                self.assertIn("Kakak kirim foto ya", reply)
-                call_args = mock_llm.create_chat_completion.call_args[1]
-                msgs = call_args["messages"]
-                # System prompt has clear guidance when vision is inactive
-                sys_msg = next(m["content"] for m in msgs if m["role"] == "system")
-                self.assertIn("INFORMASI HASIL OBSERVASI VISUAL", sys_msg)
-                # User turn explicitly states image is attached
-                user_msg = msgs[-1]["content"]
-                self.assertIn("[Melampirkan Gambar Visual]", user_msg)
-                self.assertIn("shiro tau dia siapa?", user_msg)
-
-    def test_gemini_api_key_from_http_headers(self):
-        from flask import Flask
-        from shiro.vision.bridge import get_gemini_api_key
-        app = Flask(__name__)
-        with app.test_request_context('/', headers={'X-Gemini-Key': 'AIzaTestHeaderKey123'}):
-            key = get_gemini_api_key()
-            self.assertEqual(key, 'AIzaTestHeaderKey123')
+        with patch.object(state, 'llm', mock_llm):
+            reply, trace = get_shiro_reply(
+                "shiro tau dia siapa?",
+                image_base64="data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+                return_trace=True
+            )
+            self.assertIn("kucing lucu", reply)
+            call_args = mock_llm.create_chat_completion.call_args[1]
+            msgs = call_args["messages"]
+            # Multimodal user turn content has image_url and text directly for Qwen
+            user_msg = msgs[-1]["content"]
+            self.assertIsInstance(user_msg, list)
+            self.assertEqual(user_msg[0]["type"], "image_url")
+            self.assertIn("data:image/jpeg;base64,", user_msg[0]["image_url"]["url"])
+            self.assertEqual(user_msg[1]["type"], "text")
+            self.assertIn("shiro tau dia siapa?", user_msg[1]["text"])
 
     def test_optimal_tokens_scaling_for_27b_32b(self):
         from shiro.models import get_optimal_model_tokens
@@ -127,7 +117,7 @@ class TestPromptAndMultimodal(unittest.TestCase):
         }
         with patch.object(state, 'llm', mock_llm):
             reply = get_shiro_reply("coba kamu buat ulang progam semua nya")
-            # Should NOT be the fake canned greeting!
+            # Should NOT be fake canned greeting!
             self.assertNotIn("Iya Kak? Shiro siap mendengarkan", reply)
             self.assertIn("def rewrite_program():", reply)
 

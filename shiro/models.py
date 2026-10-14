@@ -102,60 +102,79 @@ def get_available_gguf_models() -> List[str]:
                 models.append(rel_path)
     return models
 
+def is_vision_model(model_path: str) -> bool:
+    """Mendeteksi apakah model mendukung multimodal vision (Qwen, 27B, 32B, VL, Llava)"""
+    if not model_path:
+        return False
+    name = os.path.basename(model_path).lower()
+    return any(k in name for k in ["qwen", "vl", "vision", "llava", "27b", "32b"])
+
 def init_vision_handler(model_path: str):
     """
     Inisialisasi Vision Chat Handler (multimodal projector) untuk model vision.
-    Mendukung Qwen2.5-VL via Qwen25VLChatHandler dan Llava via Llava15ChatHandler.
+    Mendukung Qwen (Qwen3.8-27B, Qwen3-32B, Qwen2.5-VL) via Qwen25VLChatHandler dan Llava via Llava15ChatHandler.
     """
     if not model_path:
         return None
         
     name = os.path.basename(model_path).lower()
-    is_vision = "vl" in name or "vision" in name or "llava" in name
-    if not is_vision:
+    if not is_vision_model(model_path):
         return None
         
+    model_dir = os.path.dirname(model_path) if model_path else MODEL_DIR
+    search_dirs = [
+        model_dir,
+        MODEL_DIR,
+        "model",
+        "/content",
+        "/content/model",
+        "/content/drive/MyDrive/model",
+        "/content/drive/MyDrive/Shiro_Memory/model",
+        "."
+    ]
+
     mmproj_candidates = [
         os.path.join(MODEL_DIR, "mmproj-F16.gguf"),
         os.path.join(MODEL_DIR, "mmproj-BF16.gguf"),
         os.path.join(MODEL_DIR, "mmproj-model-f16.gguf"),
     ]
-    if os.path.exists(MODEL_DIR):
-        for f in os.listdir(MODEL_DIR):
-            if "mmproj" in f.lower() and f.endswith(".gguf"):
-                cand = os.path.join(MODEL_DIR, f)
-                if cand not in mmproj_candidates:
-                    mmproj_candidates.append(cand)
+    for s_dir in search_dirs:
+        if s_dir and os.path.exists(s_dir):
+            try:
+                for f in os.listdir(s_dir):
+                    if "mmproj" in f.lower() and f.endswith(".gguf"):
+                        cand = os.path.join(s_dir, f)
+                        if cand not in mmproj_candidates:
+                            mmproj_candidates.append(cand)
+            except Exception:
+                pass
                     
     mmproj_file = None
     for cand in mmproj_candidates:
         if os.path.exists(cand):
             mmproj_file = cand
             break
-            
-    if not mmproj_file:
-        print(f"⚠️ Warning: Model {name} adalah vision model, tapi file mmproj-*.gguf belum ditemukan di {MODEL_DIR}")
-        return None
-        
-    # 1. Khusus Qwen2.5-VL: Gunakan Qwen25VLChatHandler
-    if "qwen" in name or "vl" in name:
+
+    # 1. Arsitektur Qwen (Qwen3.8-27B, Qwen3-32B, Qwen2.5-VL):
+    if any(k in name for k in ["qwen", "vl", "27b", "32b"]):
         try:
             from llama_cpp.llama_chat_format import Qwen25VLChatHandler
-            vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file)
-            print(f"👁️ Vision Chat Handler (Qwen25VL) aktif dengan projector: {mmproj_file}")
-            return vision_chat_handler
+            if mmproj_file:
+                vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file)
+                print(f"👁️ Vision Chat Handler (Qwen25VL) aktif dengan projector: {mmproj_file}")
+                return vision_chat_handler
         except Exception as e1:
-            print(f"⚠️ Qwen25VLChatHandler tidak dapat diinisialisasi: {e1}")
+            print(f"[Vision Notice] Qwen25VLChatHandler fallback: {e1}")
 
-    # 2. Khusus Llava: Gunakan Llava15ChatHandler
-    if "llava" in name:
+    # 2. Khusus Llava / Model Vision Standar:
+    if mmproj_file:
         try:
             from llama_cpp.llama_chat_format import Llava15ChatHandler
             vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file)
             print(f"👁️ Vision Chat Handler (Llava15) aktif dengan projector: {mmproj_file}")
             return vision_chat_handler
         except Exception as e2:
-            print(f"⚠️ Llava15ChatHandler tidak dapat diinisialisasi: {e2}")
+            print(f"[Vision Notice] Llava15ChatHandler fallback: {e2}")
 
     return None
 

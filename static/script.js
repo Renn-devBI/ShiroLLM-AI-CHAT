@@ -1372,53 +1372,8 @@ async function loadApiKey() {
             if (elV2) elV2.textContent = `${origin}/v2`;
             if (elV3) elV3.textContent = `${origin}/v3`;
         }
-        loadGeminiApiKey();
     } catch (e) {
         console.error('Error loading API key:', e);
-    }
-}
-
-async function loadGeminiApiKey() {
-    const input = document.getElementById('gemini-api-key-input');
-    const status = document.getElementById('gemini-api-key-status');
-    if (!input) return;
-    try {
-        const res = await fetch('/api/gemini-key');
-        if (res.ok) {
-            const data = await res.json();
-            if (data.is_configured) {
-                input.placeholder = `Aktif (${data.masked_key})`;
-                if (status) status.innerHTML = `<span style="color:var(--color-primary, #06b6d4);">✓ Gemini Visual Bridge aktif (${data.masked_key})</span>`;
-            } else {
-                input.placeholder = 'AIzaSy... (Opsional untuk Visual Bridge)';
-                if (status) status.textContent = 'Digunakan untuk melihat screenshot, webcam, foto, dan diagram secara visual saat model lokal berjalan dalam mode teks murni.';
-            }
-        }
-    } catch (e) {
-        console.error('Error loading Gemini key status:', e);
-    }
-}
-
-async function saveGeminiApiKey() {
-    const input = document.getElementById('gemini-api-key-input');
-    if (!input) return;
-    const val = input.value.trim();
-    try {
-        const res = await fetch('/api/gemini-key', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ gemini_key: val })
-        });
-        const data = await res.json();
-        if (res.ok) {
-            showToast(data.message || 'Gemini API Key berhasil disimpan!');
-            input.value = '';
-            loadGeminiApiKey();
-        } else {
-            showToast('Gagal menyimpan Gemini Key: ' + (data.error || 'Unknown error'));
-        }
-    } catch (e) {
-        showToast('Error: ' + e.message);
     }
 }
 

@@ -24,7 +24,6 @@ from shiro.persona import (
 from shiro.nlp.emotion import detect_emotion_category
 from shiro.nlp.typo import normalize_typos, get_typo_understanding_prompt
 from shiro.llm.cleaner import clean_response, clean_vtuber_response
-from shiro.vision.bridge import analyze_visual_bridge
 from shiro.pipeline.trace import global_pipeline_manager
 
 def calculate_messages_tokens(messages: List[Dict[str, Any]], llm_instance: Any) -> int:
@@ -101,20 +100,6 @@ def get_shiro_reply(
         is_video_stream = len(all_images) > 1
         has_doc = bool(document_info and document_info.get("text"))
         doc_name = document_info.get("filename", "Dokumen") if has_doc else None
-
-        visual_bridge_context = ""
-        # Jika model teks biasa menerima visual, gunakan visual bridge sebagai konteks sistem objektif
-        if has_image and not has_vision:
-            vis_desc = analyze_visual_bridge(all_images, query_text=raw_user_typed)
-            if not vis_desc:
-                vis_desc = f"- Dilampirkan {len(all_images)} gambar visual oleh Kakak."
-            visual_bridge_context = (
-                f"\n\n### INFORMASI HASIL OBSERVASI VISUAL:\n"
-                f"{vis_desc}\n"
-                f"[Panduan Visual: Kakak sedang melampirkan gambar/screenshot di atas. "
-                f"Tanggapi pertanyaan Kakak sesuai fakta dan teks visual yang terdeteksi secara cerdas dan akurat dengan persona Shiro. "
-                f"JANGAN PERNAH menolak dengan mengatakan mata visual Shiro belum aktif atau monitor mati!]\n"
-            )
 
         # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math via Cloudflare 1.1.1.1 & Mozilla)
         agent_action_data = None
@@ -418,24 +403,24 @@ def get_shiro_reply(
 
         # Susun System Prompt berdasarkan persona Shiro (v1, v2, atau v3)
         if api_version == "v2":
-            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon + doc_prompt_addon
+            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon
         elif api_version == "v3":
             base_p = custom_system_prompt or ""
-            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + visual_bridge_context + web_prompt_addon + doc_prompt_addon
+            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon
         else:
             system_prompt = build_system_prompt(
                 conversation_summary=conversation_summary,
                 facts_summary=facts_summary,
                 exemplar_prompt=exemplar_prompt,
-                web_prompt_addon=web_prompt_addon + visual_bridge_context,
+                web_prompt_addon=web_prompt_addon,
                 typo_prompt_addon=typo_prompt_addon,
                 document_prompt_addon=doc_prompt_addon,
                 cross_session_addon=cross_session_addon
             ) + tools_addon + reasoning_addon
 
         # Susun Pesan Giliran Pengguna (User Turn)
-        if has_image and has_vision:
-            # Format multimodal vision native
+        # Selalu kirim gambar visual langsung ke model (Qwen multimodal)
+        if has_image:
             content_parts = []
             for img in all_images[:8]:
                 clean_img = img if img.startswith("data:image/") else f"data:image/jpeg;base64,{img}"
@@ -443,15 +428,13 @@ def get_shiro_reply(
                     "type": "image_url",
                     "image_url": {"url": clean_img}
                 })
-            user_text = raw_user_typed if raw_user_typed else "Shiro, coba lihat gambar yang Kakak kirim ini!"
+            user_text = raw_user_typed if raw_user_typed else "Shiro, coba lihat dan analisis gambar yang Kakak kirim ini ya."
             if has_doc:
                 user_text = f"[Melampirkan Dokumen: {doc_name}]\n{user_text}"
             content_parts.append({"type": "text", "text": user_text})
             user_turn_msg = {"role": "user", "content": content_parts}
         else:
             parts_user = []
-            if has_image:
-                parts_user.append("[Melampirkan Gambar Visual]")
             if has_doc:
                 parts_user.append(f"[Melampirkan Dokumen: {doc_name}]")
 
@@ -459,8 +442,6 @@ def get_shiro_reply(
                 parts_user.append(raw_user_typed)
             elif has_doc:
                 parts_user.append(f"Shiro, tolong pelajari dokumen '{doc_name}' yang Kakak lampirkan ya!")
-            elif has_image:
-                parts_user.append("Shiro, coba lihat gambar yang Kakak kirim ini! Bagaimana menurutmu?")
             else:
                 parts_user.append(" ")
 
@@ -558,6 +539,13 @@ def get_shiro_reply(
                 emergency_msgs = [{"role": "system", "content": system_prompt[:1200]}]
                 emergency_msgs.append(user_turn_msg)
                 res = llm.create_chat_completion(messages=emergency_msgs, **call_kwargs)
+            elif has_image and any(k in err_str for k in ["image", "list", "content", "dict", "str", "iterable"]):
+                # Fallback teks lokal jika runtime llama-cpp belum memiliki chat_handler terpasang
+                from shiro.vision.bridge import extract_local_image_text_and_info
+                local_obs = extract_local_image_text_and_info(all_images) or "Gambar visual terlampir"
+                text_user = f"[Pengamatan Gambar Visual: {local_obs}]\n{raw_user_typed}"
+                msgs[-1] = {"role": "user", "content": text_user}
+                res = llm.create_chat_completion(messages=msgs, **call_kwargs)
             else:
                 raise inf_err
 
@@ -638,20 +626,9 @@ def get_shiro_reply(
         if not cleaned_reply and raw_reply:
             cleaned_reply = raw_reply.strip()
 
-        # Jika model menghasilkan teks kosong padahal memanggil tool
-        if not cleaned_reply and parsed_tool_calls:
-            cleaned_reply = "Shiro sedang memproses perintah dengan tool yang sesuai ya, Kak!" if api_version == "v1" else ""
-
-        # Jika model benar-benar menghasilkan output kosong tanpa tool
+        # Respon murni dari model AI tanpa teks feedback atau basa-basi robotik buatan program
         if not cleaned_reply:
-            if raw_reply and raw_reply.strip():
-                cleaned_reply = raw_reply.strip()
-            elif has_image:
-                cleaned_reply = "*melihat gambar yang Kakak kirim dengan saksama* Shiro sudah menerima gambarnya, Kak! Ada bagian spesifik yang ingin Kakak tanyakan atau minta Shiro jelaskan? 💕" if api_version == "v1" else "..."
-            elif has_doc:
-                cleaned_reply = f"*mengangguk manis* Shiro sudah menerima dokumen '{doc_name}' dari Kakak. Ada bagian tertentu yang ingin Shiro jelaskan atau rangkum, Kak?" if api_version == "v1" else "..."
-            else:
-                cleaned_reply = "Maaf Kak, generasi respon Shiro sempat terhenti atau kosong. Boleh tolong ulangi atau minta Shiro lanjutkan lagi?" if api_version == "v1" else "..."
+            cleaned_reply = raw_reply.strip() if raw_reply else ""
 
         t_filter_dur = (time.perf_counter() - t0) * 1000
         nodes.append({
