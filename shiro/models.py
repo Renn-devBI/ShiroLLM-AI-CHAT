@@ -46,8 +46,8 @@ def get_optimal_model_tokens(model_path: str) -> Tuple[int, int]:
 
     # 1. Model Besar: 27B, 32B, 70B, dll.
     if any(k in name for k in ["27b", "32b", "70b", "34b"]):
-        n_ctx = 32768 if (is_gpu and is_running_in_colab()) else 16384
-        max_output = 8192
+        n_ctx = 32768 if (is_gpu or is_running_in_colab()) else 16384
+        max_output = 16384 if (is_gpu or is_running_in_colab()) else 8192
         return (n_ctx, max_output)
 
     # 2. Model Sedang: 7B, 8B, 14B, VL
@@ -305,7 +305,13 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
     
     optimal_ctx, optimal_out = get_optimal_model_tokens(model_path)
     env_ctx = os.environ.get("SHIRO_CONTEXT_SIZE")
-    chosen_ctx = int(env_ctx) if env_ctx else optimal_ctx
+    if env_ctx:
+        try:
+            chosen_ctx = max(int(env_ctx), optimal_ctx)
+        except Exception:
+            chosen_ctx = optimal_ctx
+    else:
+        chosen_ctx = optimal_ctx
 
     llama_kwargs = {
         "model_path": model_path,

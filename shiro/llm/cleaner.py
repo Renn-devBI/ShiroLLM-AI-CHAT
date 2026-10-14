@@ -112,10 +112,17 @@ def clean_response(response: str) -> str:
         return ""
 
     # 1. Hapus seluruh isi tag <think>...</think> (Chain-of-Thought LLM)
+    pre_think_raw = response
     response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL | re.IGNORECASE)
     response = re.sub(r'^.*?</think>', '', response, flags=re.DOTALL | re.IGNORECASE)
     if '<think>' in response.lower():
         response = re.sub(r'<think>.*$', '', response, flags=re.DOTALL | re.IGNORECASE)
+
+    # Jika seluruh respon berada di dalam <think> atau terpotong sebelum </think>, jangan jadikan kosong
+    if not response.strip() and pre_think_raw.strip():
+        inner = re.sub(r'</?think>', '', pre_think_raw, flags=re.IGNORECASE).strip()
+        if inner:
+            response = inner
 
     # 1b. Lindungi blok kode agar indentasi dan karakter kode tidak rusak selama pembersihan teks
     code_blocks = []
@@ -156,14 +163,17 @@ def clean_response(response: str) -> str:
             if quotes_match:
                 response = quotes_match.group(1).strip()
     
-    # 5. Split dan ambil hanya bagian pertama jika ada multiple responses
-    if 'assistant' in response.lower() or re.search(r'\n(User|Kakak|Shiro):', response):
-        parts = re.split(r'\n(User|Kakak|Shiro|assistant):', response, maxsplit=1)
-        response = parts[0]
+    # 5. Split HANYA jika model mulai berhalusinasi giliran User berikutnya
+    if re.search(r'\n(?:User|Kakak|user):\s*', response):
+        parts = re.split(r'\n(?:User|Kakak|user):\s*', response, maxsplit=1)
+        if parts[0].strip():
+            response = parts[0]
+        elif len(parts) > 1 and parts[1].strip():
+            response = parts[1]
     
-    # 6. Hapus role labels
-    response = re.sub(r'\s*(Shiro:|User:|Kakak:|assistant:|user:)\s*', ' ', response, flags=re.IGNORECASE)
-    response = re.sub(r'^\s*(Shiro|User|Kakak|Assistant)[\s:]+', '', response, flags=re.IGNORECASE)
+    # 6. Hapus role labels di awal baris/teks tanpa merusak isi kode atau teks
+    response = re.sub(r'(?mi)^\s*(?:Shiro|Assistant|Kakak|User)\s*:\s*', '', response)
+    response = re.sub(r'^\s*(?:Shiro|User|Kakak|Assistant)[\s:]+', '', response, flags=re.IGNORECASE)
     
     # 7. Hapus meta-commentary sections
     response = re.sub(r'\*\*Note\*\*:.*?(?=\n|$)', '', response, flags=re.IGNORECASE | re.DOTALL)

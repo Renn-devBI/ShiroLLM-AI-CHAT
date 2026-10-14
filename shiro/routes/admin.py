@@ -93,6 +93,41 @@ def regenerate_api_key_route():
         }
     })
 
+@admin_bp.route('/api/gemini-key', methods=['GET', 'POST'])
+def handle_gemini_key():
+    """Mendapatkan status atau mengatur Gemini API Key untuk Visual Bridge"""
+    from shiro.vision.bridge import get_gemini_api_key
+    if request.method == 'GET':
+        key = get_gemini_api_key() or ""
+        masked = (key[:6] + "..." + key[-4:]) if len(key) > 10 else ("***" if key else "")
+        return jsonify({
+            "is_configured": bool(key),
+            "masked_key": masked,
+            "has_key": bool(key)
+        })
+
+    data = request.json or {}
+    new_key = data.get("gemini_key", "").strip()
+    config = load_model_config()
+    if new_key:
+        os.environ["GEMINI_API_KEY"] = new_key
+        config["gemini_api_key"] = new_key
+        save_model_config(config)
+        return jsonify({
+            "success": True,
+            "message": "Gemini API Key berhasil disimpan untuk Visual Bridge!",
+            "is_configured": True
+        })
+    else:
+        os.environ.pop("GEMINI_API_KEY", None)
+        config.pop("gemini_api_key", None)
+        save_model_config(config)
+        return jsonify({
+            "success": True,
+            "message": "Gemini API Key berhasil dihapus.",
+            "is_configured": False
+        })
+
 @admin_bp.route('/api/reset', methods=['POST'])
 def reset():
     memory = state.init_memory()

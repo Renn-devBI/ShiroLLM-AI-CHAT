@@ -106,19 +106,15 @@ def get_shiro_reply(
         # Jika model teks biasa menerima visual, gunakan visual bridge sebagai konteks sistem objektif
         if has_image and not has_vision:
             vis_desc = analyze_visual_bridge(all_images, query_text=raw_user_typed)
-            if vis_desc:
-                visual_bridge_context = (
-                    f"\n\n### INFORMASI HASIL OBSERVASI VISUAL:\n"
-                    f"{vis_desc}\n"
-                    f"[Catatan: Informasi visual di atas adalah apa yang saat ini terlihat pada gambar yang dikirim Kakak. "
-                    f"Jawab pertanyaan Kakak sesuai fakta visual tersebut dengan persona Shiro.]\n"
-                )
-            else:
-                visual_bridge_context = (
-                    f"\n\n### CATATAN SISTEM VISUAL:\n"
-                    f"[Kakak melampirkan sebuah gambar visual, namun model saat ini berjalan dalam mode teks murni tanpa vision projector lokal dan Gemini Visual Bridge belum aktif. "
-                    f"Beri tahu Kakak secara jujur, ramah, dan manja bahwa Shiro mendeteksi gambar yang Kakak kirim, tapi mata visual Shiro belum aktif sehingga belum bisa melihat gambarnya secara langsung. Minta Kakak menceritakan siapa atau apa di gambar tersebut.]\n"
-                )
+            if not vis_desc:
+                vis_desc = f"- Dilampirkan {len(all_images)} gambar visual oleh Kakak."
+            visual_bridge_context = (
+                f"\n\n### INFORMASI HASIL OBSERVASI VISUAL:\n"
+                f"{vis_desc}\n"
+                f"[Panduan Visual: Kakak sedang melampirkan gambar/screenshot di atas. "
+                f"Tanggapi pertanyaan Kakak sesuai fakta dan teks visual yang terdeteksi secara cerdas dan akurat dengan persona Shiro. "
+                f"JANGAN PERNAH menolak dengan mengatakan mata visual Shiro belum aktif atau monitor mati!]\n"
+            )
 
         # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math via Cloudflare 1.1.1.1 & Mozilla)
         agent_action_data = None
@@ -334,8 +330,13 @@ def get_shiro_reply(
         # Menjaga seluruh percakapan masuk secara utuh menyesuaikan kapasitas model aktif.
         # Semakin besar model dan context window-nya, semakin banyak riwayat obrolan yang ditampung.
         active_ctx = get_active_model_ctx(llm)
-        reserved_budget = min(4096, max(1500, active_ctx // 4))  # Cadangan untuk system prompt & output
-        max_history_tokens = max(1000, active_ctx - reserved_budget)
+        from shiro.models import get_optimal_model_tokens
+        active_model_path = getattr(llm, 'model_path', '') if hasattr(llm, 'model_path') else ''
+        _, model_max_out = get_optimal_model_tokens(active_model_path or active_model_name)
+        
+        # Alokasi cadangan untuk system prompt dan respon lengkap (agar penulisan kode tidak terpotong)
+        reserved_budget = max(4096, min(16384, model_max_out + 2048))
+        max_history_tokens = max(2000, active_ctx - reserved_budget)
         while len(clean_context) > 2 and calculate_messages_tokens(clean_context, llm) > max_history_tokens:
             clean_context.pop(0)
 
@@ -502,15 +503,15 @@ def get_shiro_reply(
         if max_tokens:
             desired_max = int(max_tokens)
         elif api_version == "v2":
-            desired_max = 350
+            desired_max = 2048
         elif is_reasoning_enabled or tools:
-            desired_max = max(model_max_out, 4096)
+            desired_max = max(model_max_out, 8192)
         else:
-            # Model besar (27B/32B) -> 8192, Model sedang (7B/VL) -> 4096, Model ringan -> 2048
+            # Model besar (27B/32B) -> 8192-16384, Model sedang (7B/VL) -> 4096, Model ringan -> 2048
             desired_max = model_max_out
 
         prompt_tokens_est = calculate_messages_tokens(msgs, llm)
-        remaining_space = max(512, active_ctx - prompt_tokens_est - 64)
+        remaining_space = max(1024, active_ctx - prompt_tokens_est - 64)
         max_output_tokens = min(desired_max, remaining_space)
 
         stop_tokens = [
@@ -606,6 +607,11 @@ def get_shiro_reply(
                 reasoning_content = parts[1].strip()
                 raw_reply = parts[0].strip()
 
+        # Penting: Jika model meletakkan seluruh jawaban di dalam blok <think> atau terpotong sebelum </think>,
+        # jangan biarkan raw_reply kosong! Ambil reasoning_content sebagai raw_reply.
+        if not raw_reply and reasoning_content:
+            raw_reply = reasoning_content
+
         # 3. Ekstrak tool_calls berbasis JSON dari teks jika ada
         if not parsed_tool_calls and ("tool_calls" in raw_reply or "```json" in raw_reply):
             json_tc_match = re.search(r'```(?:json)?\s*(\{.*?"tool_calls".*?\})\s*```', raw_reply, flags=re.DOTALL)
@@ -638,12 +644,14 @@ def get_shiro_reply(
 
         # Jika model benar-benar menghasilkan output kosong tanpa tool
         if not cleaned_reply:
-            if has_image:
-                cleaned_reply = "*tersenyum manis menatap Kakak* Shiro mendeteksi gambar yang Kakak kirim! Boleh ceritakan tentang gambar ini ke Shiro, Kak? 💕" if api_version == "v1" else "..."
+            if raw_reply and raw_reply.strip():
+                cleaned_reply = raw_reply.strip()
+            elif has_image:
+                cleaned_reply = "*melihat gambar yang Kakak kirim dengan saksama* Shiro sudah menerima gambarnya, Kak! Ada bagian spesifik yang ingin Kakak tanyakan atau minta Shiro jelaskan? 💕" if api_version == "v1" else "..."
             elif has_doc:
                 cleaned_reply = f"*mengangguk manis* Shiro sudah menerima dokumen '{doc_name}' dari Kakak. Ada bagian tertentu yang ingin Shiro jelaskan atau rangkum, Kak?" if api_version == "v1" else "..."
             else:
-                cleaned_reply = "*tersenyum manis menatap Kakak* Iya Kak? Shiro siap mendengarkan Kakak tercinta~ 💕" if api_version == "v1" else "..."
+                cleaned_reply = "Maaf Kak, generasi respon Shiro sempat terhenti atau kosong. Boleh tolong ulangi atau minta Shiro lanjutkan lagi?" if api_version == "v1" else "..."
 
         t_filter_dur = (time.perf_counter() - t0) * 1000
         nodes.append({

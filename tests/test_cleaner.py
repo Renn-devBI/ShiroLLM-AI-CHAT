@@ -49,5 +49,22 @@ class TestCleaner(unittest.TestCase):
         self.assertNotIn("\U0001f310", cleaned)
         self.assertEqual(cleaned, "*menatap lembut* Tokyo cerah kok Kak!")
 
+    def test_clean_response_unclosed_think_preserves_content(self):
+        text = "<think>\nLet's write a program for the user:\ndef add(a, b):\n    return a + b"
+        cleaned = clean_response(text)
+        self.assertIn("def add(a, b):", cleaned)
+        self.assertNotIn("<think>", cleaned)
+
+    def test_clean_response_shiro_prefix_does_not_wipe_message(self):
+        text = "\nShiro: Halo Kakak tercinta! *tersenyum manis* Ini program yang Kakak minta."
+        cleaned = clean_response(text)
+        self.assertIn("Halo Kakak tercinta!", cleaned)
+        self.assertFalse(cleaned.startswith("Shiro:"))
+
+    def test_clean_response_splits_hallucinated_user_turn_only(self):
+        text = "*tersenyum* Ini jawaban Shiro Kak!\nUser: Wah makasih Shiro!\nShiro: Sama-sama Kak!"
+        cleaned = clean_response(text)
+        self.assertEqual(cleaned, "*tersenyum* Ini jawaban Shiro Kak!")
+
 if __name__ == "__main__":
     unittest.main()

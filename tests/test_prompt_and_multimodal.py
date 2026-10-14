@@ -93,11 +93,43 @@ class TestPromptAndMultimodal(unittest.TestCase):
                 msgs = call_args["messages"]
                 # System prompt has clear guidance when vision is inactive
                 sys_msg = next(m["content"] for m in msgs if m["role"] == "system")
-                self.assertIn("CATATAN SISTEM VISUAL", sys_msg)
+                self.assertIn("INFORMASI HASIL OBSERVASI VISUAL", sys_msg)
                 # User turn explicitly states image is attached
                 user_msg = msgs[-1]["content"]
                 self.assertIn("[Melampirkan Gambar Visual]", user_msg)
                 self.assertIn("shiro tau dia siapa?", user_msg)
+
+    def test_gemini_api_key_from_http_headers(self):
+        from flask import Flask
+        from shiro.vision.bridge import get_gemini_api_key
+        app = Flask(__name__)
+        with app.test_request_context('/', headers={'X-Gemini-Key': 'AIzaTestHeaderKey123'}):
+            key = get_gemini_api_key()
+            self.assertEqual(key, 'AIzaTestHeaderKey123')
+
+    def test_optimal_tokens_scaling_for_27b_32b(self):
+        from shiro.models import get_optimal_model_tokens
+        with patch('shiro.models.get_gpu_layers', return_value=33):
+            n_ctx, max_out = get_optimal_model_tokens("model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf")
+            self.assertEqual(n_ctx, 32768)
+            self.assertEqual(max_out, 16384)
+
+    def test_inference_preserves_reasoning_when_inside_think_block(self):
+        mock_llm = MagicMock()
+        mock_llm.model_path = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        # The model generated output solely within <think>...</think>
+        mock_llm.create_chat_completion.return_value = {
+            "choices": [{
+                "message": {"content": "<think>def rewrite_program():\n    return 'sukses'</think>"},
+                "finish_reason": "stop"
+            }],
+            "usage": {}
+        }
+        with patch.object(state, 'llm', mock_llm):
+            reply = get_shiro_reply("coba kamu buat ulang progam semua nya")
+            # Should NOT be the fake canned greeting!
+            self.assertNotIn("Iya Kak? Shiro siap mendengarkan", reply)
+            self.assertIn("def rewrite_program():", reply)
 
 if __name__ == "__main__":
     unittest.main()
