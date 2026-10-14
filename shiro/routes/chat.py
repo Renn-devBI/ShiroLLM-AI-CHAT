@@ -123,6 +123,19 @@ def chat():
 
         if not user_message and not image_base64 and not document_info:
             return jsonify({"error": "Empty message"}), 400
+
+        # Perintah eksplisit: /moe on|off|auto|concurrent|swap|status
+        from shiro.agent.moe_router import parse_moe_command, get_orchestrator
+        moe_cmd = parse_moe_command(user_message)
+        if moe_cmd:
+            moe = get_orchestrator()
+            try:
+                st = moe.status() if moe_cmd == "status" else moe.set_mode(moe_cmd)
+                expert = os.path.basename(st["vision_expert_path"]) if st.get("vision_expert_path") else "tidak ditemukan"
+                reply = f"[MoE] mode: {st['mode']} • visual expert: {expert} • dimuat: {'ya' if st['vision_expert_loaded'] else 'tidak'}"
+            except ValueError as e_mode:
+                reply = f"[MoE] {e_mode}"
+            return jsonify({"reply": reply, "system_command": True, "moe": moe.status()})
         
         # Fleksibel mendukung teks panjang / kode pemrograman hingga 120.000 karakter
         if len(user_message) > 120000:

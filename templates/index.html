@@ -412,6 +412,23 @@
                         <span class="model-hint-text"><i class="ph ph-info"></i> Untuk menambah model, salin file <code>.gguf</code> ke folder <code>model/</code>, lalu buka menu ini lagi.</span>
                     </div>
                     <button type="button" onclick="switchModel()" class="btn-primary">Terapkan model</button>
+
+                    <hr style="margin: 1.25rem 0; border: none; border-top: 1px solid var(--border-color, rgba(255,255,255,0.1));">
+
+                    <div class="form-field">
+                        <label for="moe-mode-select">Mode MoE Dual-Brain (Vision + Chat)</label>
+                        <select id="moe-mode-select" class="form-select">
+                            <option value="auto">Otomatis (Visual Expert jika model chat buta visual)</option>
+                            <option value="concurrent">Berdampingan (A100 GPU — Expert tetap di VRAM)</option>
+                            <option value="swap">Bergantian / Swap (T4 GPU / 16GB VRAM)</option>
+                            <option value="off">Nonaktif (Hanya gunakan OCR lokal bila model teks)</option>
+                        </select>
+                        <span class="field-help" id="moe-status-help">Menghubungkan Qwen2.5-VL (Mata Visual) dengan Qwen3.8-27B (Otak Chatting).</span>
+                    </div>
+                    <div id="moe-info-box" class="info-box" style="margin-bottom: 0.75rem;">
+                        <p id="moe-desc-text" style="font-size: 0.85rem; color: var(--color-text-dim, #94a3b8);">Status MoE: Memuat...</p>
+                    </div>
+                    <button type="button" onclick="saveMoeSettings()" class="btn-secondary" style="width: 100%;">Simpan Pengaturan MoE</button>
                 </div>
             </div>
 

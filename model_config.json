@@ -60,5 +60,9 @@
       "quantization": "Q5_K_M",
       "description": "Roleplay Model (~5.7 GB)"
     }
+  },
+  "moe": {
+    "mode": "auto",
+    "vision_expert": ""
   }
 }

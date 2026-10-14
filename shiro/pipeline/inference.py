@@ -280,21 +280,16 @@ def get_shiro_reply(
         # -------------------------------------------------------------
         t0 = time.perf_counter()
         facts = memory.knowledge_base.get("facts", []) if (memory and hasattr(memory, "knowledge_base")) else []
-        if has_image:
-            # Cegah halusinasi situs web lama saat user mengirim gambar baru:
-            # Filter fakta yang mengandung URL/domain/web agar tidak mengaburkan konteks visual gambar
-            facts_filtered = [
-                f for f in facts 
-                if f.get("confidence", 0) >= 0.7 and not any(k in str(f.get("object", "")).lower() or k in str(f.get("subject", "")).lower() for k in ["http", "www.", ".com", ".net", ".org", ".id", "situs", "url", "link", "web", "halaman"])
-            ]
-            relevant_facts = facts_filtered[:5]
-        else:
-            relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.7][:5]
+        # Semantic Memory Gating: hanya fakta relevan yang masuk prompt;
+        # saat ada gambar baru, fakta web/URL lama dikarantina agar tidak mencemari observasi visual.
+        from shiro.memory.gating import gate_facts
+        relevant_facts = gate_facts(facts, raw_user_typed, has_image=has_image)
             
         traits = memory.user_profile.get("personality_traits", []) if (memory and hasattr(memory, "user_profile")) else []
-        exemplars = memory.get_relevant_exemplars(raw_user_typed, max_count=2) if (memory and hasattr(memory, "get_relevant_exemplars") and raw_user_typed) else []
+        # Temporal separation: saat ada gambar baru, contoh dialog lama & konteks lintas sesi tidak disertakan
+        exemplars = memory.get_relevant_exemplars(raw_user_typed, max_count=2) if (not has_image and memory and hasattr(memory, "get_relevant_exemplars") and raw_user_typed) else []
         
-        cross_session_addon = memory.get_cross_session_context(raw_user_typed) if (memory and hasattr(memory, "get_cross_session_context") and raw_user_typed) else ""
+        cross_session_addon = memory.get_cross_session_context(raw_user_typed) if (not has_image and memory and hasattr(memory, "get_cross_session_context") and raw_user_typed) else ""
         has_cross_session = bool(cross_session_addon)
 
         clean_context = []
@@ -445,6 +440,7 @@ def get_shiro_reply(
             ) + tools_addon + reasoning_addon + visual_guidance_addon
 
         # Susun Pesan Giliran Pengguna (User Turn)
+        visual_evidence_text = ""
         has_vision_handler = bool(
             getattr(state, "vision_chat_handler", None) or 
             (llm and getattr(llm, "chat_handler", None))
@@ -465,14 +461,37 @@ def get_shiro_reply(
                 content_parts.append({"type": "text", "text": user_text})
                 user_turn_msg = {"role": "user", "content": content_parts}
             else:
-                # Mode Teks (Qwen3.8-27B, Qwen3-32B, dll.):
-                # Ekstraksi informasi visual dan OCR teks langsung agar model teks bisa membaca isi gambar
-                from shiro.vision.bridge import extract_local_image_text_and_info
-                local_obs = extract_local_image_text_and_info(all_images) or "Berkas gambar visual terlampir."
+                # Mode MoE Dual-Brain: model chat (mis. Qwen3.8-27B) buta visual.
+                # Visual Cortex Expert (Qwen2.5-VL) mengamati gambar -> Visual Evidence Contract.
+                # Bila expert tidak tersedia / mode off -> fallback OCR lokal.
+                t_vis = time.perf_counter()
+                from shiro.agent.moe_router import get_orchestrator
+                moe = get_orchestrator()
+                if moe.should_route(has_image=True, chat_has_vision=False):
+                    evidence = moe.extract_visual_evidence(all_images, raw_user_typed)
+                else:
+                    from shiro.vision.bridge import extract_local_image_text_and_info
+                    ocr = extract_local_image_text_and_info(all_images)
+                    evidence = {"ok": bool(ocr), "source": "ocr",
+                                "evidence_text": ocr or "Berkas gambar terlampir (tidak ada teks terdeteksi)."}
+                visual_evidence_text = evidence.get("evidence_text", "")
+                source_label = "Visual Cortex Expert" if evidence.get("source") == "vl_expert" else "OCR lokal"
+                nodes.append({
+                    "id": "node_moe_vision",
+                    "name": "MoE Visual Cortex Expert",
+                    "type": "ai_model",
+                    "icon": "ph-eye",
+                    "color": "#22c55e",
+                    "status": "success" if evidence.get("ok") else "warning",
+                    "duration_ms": round((time.perf_counter() - t_vis) * 1000, 2),
+                    "summary": f"{source_label}" + (f" • {evidence.get('expert')}" if evidence.get("expert") else ""),
+                    "data_in": {"images": len(all_images)},
+                    "data_out": {"source": evidence.get("source"), "evidence": visual_evidence_text[:2000]}
+                })
                 user_lines = [
-                    "[PENGAMATAN GAMBAR DILAMPIRKAN KAKAK]:",
-                    local_obs,
-                    "\n[INSTRUKSI]: Kakak melampirkan berkas gambar baru. Fokus baca teks dan informasi visual di atas untuk menjawab. JANGAN mengasumsikan gambar ini adalah situs web atau link dari ingatan masa lalu.",
+                    f"[OBSERVASI VISUAL GAMBAR YANG DILAMPIRKAN KAKAK — sumber: {source_label}]:",
+                    visual_evidence_text,
+                    "\n[ATURAN]: Jawab berdasarkan observasi di atas saja. Jika sesuatu tidak tercatat di observasi, katakan tidak terlihat jelas. JANGAN mengaitkan gambar ini dengan situs web atau topik dari ingatan lama.",
                     f"\n{raw_user_typed}" if raw_user_typed else "Shiro, coba jelaskan apa yang terlihat pada gambar di atas."
                 ]
                 if has_doc:
@@ -550,10 +569,10 @@ def get_shiro_reply(
             stop_tokens.extend(["\nOkay, let me", "\nThe user is"])
 
         gen_params = {
-            "temperature": 0.72 if has_image else (0.70 if api_version == "v2" else 0.65),
-            "repeat_penalty": 1.25 if has_image else 1.2,
-            "frequency_penalty": 0.5 if has_image else 0.3,
-            "presence_penalty": 0.3 if has_image else 0.0,
+            "temperature": 0.45 if has_image else (0.70 if api_version == "v2" else 0.65),
+            "repeat_penalty": 1.15 if has_image else 1.2,
+            "frequency_penalty": 0.2 if has_image else 0.3,
+            "presence_penalty": 0.0,
             "top_p": 0.92,
             "top_k": 40,
             "max_tokens": max_output_tokens,
@@ -597,6 +616,35 @@ def get_shiro_reply(
 
         raw_reply = res['choices'][0]['message'].get('content', '') or ''
         raw_reply = raw_reply.strip()
+
+        # Grounding Verifier Loop (giliran bergambar):
+        # Jika balasan menyebut domain/situs yang tidak ada di pesan Kakak, bukti visual, atau hasil tool,
+        # regenerasi sekali dengan koreksi eksplisit.
+        grounding_info = {"checked": False, "ungrounded": [], "regenerated": False}
+        if has_image and raw_reply:
+            from shiro.memory.gating import find_ungrounded_domains
+            grounding_info["checked"] = True
+            ungrounded = find_ungrounded_domains(raw_reply, [raw_user_typed, visual_evidence_text, web_prompt_addon])
+            grounding_info["ungrounded"] = ungrounded
+            if ungrounded:
+                correction = (
+                    f"\n\n[KOREKSI]: Jawaban sebelumnya menyebut {', '.join(ungrounded)} yang TIDAK ada di gambar maupun pesan Kakak. "
+                    "Jawab ulang hanya berdasarkan isi gambar ini."
+                )
+                fixed_turn = dict(user_turn_msg)
+                if isinstance(fixed_turn.get("content"), list):
+                    fixed_turn["content"] = list(fixed_turn["content"]) + [{"type": "text", "text": correction}]
+                else:
+                    fixed_turn["content"] = str(fixed_turn.get("content", "")) + correction
+                try:
+                    res_retry = llm.create_chat_completion(messages=msgs[:-1] + [fixed_turn], **call_kwargs)
+                    retry_reply = (res_retry['choices'][0]['message'].get('content', '') or '').strip()
+                    if retry_reply:
+                        res, raw_reply = res_retry, retry_reply
+                        grounding_info["regenerated"] = True
+                except Exception as e_retry:
+                    print(f"[Grounding Verifier] Regenerasi gagal: {e_retry}")
+
         t_llm_dur = (time.perf_counter() - t0) * 1000
 
         nodes.append({
@@ -615,7 +663,8 @@ def get_shiro_reply(
             "data_out": {
                 "raw_response": raw_reply,
                 "finish_reason": res['choices'][0].get('finish_reason', 'stop'),
-                "usage": res.get("usage", {})
+                "usage": res.get("usage", {}),
+                "grounding": grounding_info
             }
         })
 

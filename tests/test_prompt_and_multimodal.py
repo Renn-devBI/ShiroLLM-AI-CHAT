@@ -122,7 +122,7 @@ class TestPromptAndMultimodal(unittest.TestCase):
                 # Text model receives OCR and clear prompt instruction
                 user_msg = msgs[-1]["content"]
                 self.assertIsInstance(user_msg, str)
-                self.assertIn("[PENGAMATAN GAMBAR DILAMPIRKAN KAKAK]", user_msg)
+                self.assertIn("OBSERVASI VISUAL GAMBAR YANG DILAMPIRKAN KAKAK", user_msg)
                 self.assertIn("PROJECT SHIRO AI v2", user_msg)
                 self.assertIn("shiro coba lihat gambar ini", user_msg)
                 # System prompt has visual guidance

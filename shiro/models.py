@@ -162,7 +162,11 @@ def init_vision_handler(model_path: str):
                 pass
                     
     mmproj_file = None
-    for cand in mmproj_candidates:
+    is_32b = "32b" in name
+    def _size_ok(path: str) -> bool:
+        p = os.path.basename(path).lower()
+        return ("32b" in p) == is_32b or ("32b" not in p and "7b" not in p and not is_32b)
+    for cand in [c for c in mmproj_candidates if _size_ok(c)] + mmproj_candidates:
         if os.path.exists(cand):
             mmproj_file = cand
             break

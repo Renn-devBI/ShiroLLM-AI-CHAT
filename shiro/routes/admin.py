@@ -293,3 +293,24 @@ def switch_model():
     except Exception as e:
         print(f"[Admin] Error in switch_model: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route('/api/moe', methods=['GET', 'POST'])
+@admin_bp.route('/v1/moe', methods=['GET', 'POST'])
+def moe_settings():
+    """Lihat atau ubah mode MoE Dual-Brain (off / auto / concurrent / swap)."""
+    from shiro.agent.moe_router import get_orchestrator
+    moe = get_orchestrator()
+    if request.method == 'GET':
+        return jsonify(moe.status())
+    data = request.json or {}
+    try:
+        status = moe.set_mode(data.get("mode", ""), data.get("vision_expert"))
+        if status["mode"] == "concurrent" and data.get("preload") and status["vision_expert_path"]:
+            moe._get_expert(status["vision_expert_path"])
+            status = moe.status()
+        return jsonify({"success": True, **status})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Gagal mengatur MoE: {str(e)[:160]}"}), 500

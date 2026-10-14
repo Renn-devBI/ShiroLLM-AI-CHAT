@@ -1811,12 +1811,55 @@ async function loadModels() {
                 }
             };
         }
+        loadMoeSettings();
     } catch (error) {
         console.error('Error loading models:', error);
         const badge = document.getElementById('current-model-badge');
         if (badge) {
             badge.textContent = 'Error loading';
         }
+    }
+}
+
+async function loadMoeSettings() {
+    try {
+        const res = await fetch('/api/moe');
+        if (!res.ok) return;
+        const data = await res.json();
+        const select = document.getElementById('moe-mode-select');
+        const desc = document.getElementById('moe-desc-text');
+        if (select && data.mode) {
+            select.value = data.mode;
+        }
+        if (desc) {
+            const expertName = data.vision_expert_path ? data.vision_expert_path.split('/').pop().replace('.gguf', '') : 'Belum terdeteksi di folder model/';
+            const loadedBadge = data.vision_expert_loaded ? ' (Dimuat di VRAM)' : ' (Standby)';
+            desc.innerHTML = `<strong>Mode:</strong> <code>${data.mode}</code> • Visual Expert: <strong>${expertName}</strong>${data.vision_expert_loaded ? loadedBadge : ''}`;
+        }
+    } catch (e) {
+        console.error('Error loading MoE settings:', e);
+    }
+}
+
+async function saveMoeSettings() {
+    const select = document.getElementById('moe-mode-select');
+    if (!select) return;
+    const mode = select.value;
+    try {
+        const res = await fetch('/api/moe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: mode })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast(`Mode MoE berhasil disimpan: ${data.mode}`);
+            loadMoeSettings();
+        } else {
+            showToast(`Gagal menyimpan MoE: ${data.error || 'Unknown error'}`);
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`);
     }
 }
 
