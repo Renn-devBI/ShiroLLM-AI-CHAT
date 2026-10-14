@@ -70,8 +70,8 @@ class TestPromptAndMultimodal(unittest.TestCase):
 
     def test_image_attachment_in_native_multimodal_inference(self):
         mock_llm = MagicMock()
-        mock_llm.model_path = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
-        mock_llm.chat_handler = None
+        mock_llm.model_path = "model/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf"
+        mock_llm.chat_handler = MagicMock()
         mock_llm.create_chat_completion.return_value = {
             "choices": [{
                 "message": {"content": "*menatap gambar* Aku melihat kucing lucu di gambar ini!"},
@@ -80,7 +80,7 @@ class TestPromptAndMultimodal(unittest.TestCase):
             "usage": {}
         }
 
-        with patch.object(state, 'llm', mock_llm):
+        with patch.object(state, 'llm', mock_llm), patch.object(state, 'vision_chat_handler', mock_llm.chat_handler):
             reply, trace = get_shiro_reply(
                 "shiro tau dia siapa?",
                 image_base64="data:image/jpeg;base64,/9j/4AAQSkZJRg==",
@@ -89,13 +89,45 @@ class TestPromptAndMultimodal(unittest.TestCase):
             self.assertIn("kucing lucu", reply)
             call_args = mock_llm.create_chat_completion.call_args[1]
             msgs = call_args["messages"]
-            # Multimodal user turn content has image_url and text directly for Qwen
+            # Multimodal user turn content has image_url and text directly for Qwen2.5-VL
             user_msg = msgs[-1]["content"]
             self.assertIsInstance(user_msg, list)
             self.assertEqual(user_msg[0]["type"], "image_url")
             self.assertIn("data:image/jpeg;base64,", user_msg[0]["image_url"]["url"])
             self.assertEqual(user_msg[1]["type"], "text")
             self.assertIn("shiro tau dia siapa?", user_msg[1]["text"])
+
+    def test_image_attachment_in_text_model_inference(self):
+        mock_llm = MagicMock()
+        mock_llm.model_path = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        mock_llm.chat_handler = None
+        mock_llm.create_chat_completion.return_value = {
+            "choices": [{
+                "message": {"content": "*membaca teks di gambar* Gambar ini adalah Project Shiro AI v2!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {}
+        }
+
+        with patch.object(state, 'llm', mock_llm), patch.object(state, 'vision_chat_handler', None):
+            with patch('shiro.vision.bridge.extract_local_image_text_and_info', return_value="- Gambar (PNG, 1280x720 px):\n  [Teks terbaca pada gambar]: \"PROJECT SHIRO AI v2\""):
+                reply, trace = get_shiro_reply(
+                    "shiro coba lihat gambar ini",
+                    image_base64="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                    return_trace=True
+                )
+                self.assertIn("Project Shiro AI v2", reply)
+                call_args = mock_llm.create_chat_completion.call_args[1]
+                msgs = call_args["messages"]
+                # Text model receives OCR and clear prompt instruction
+                user_msg = msgs[-1]["content"]
+                self.assertIsInstance(user_msg, str)
+                self.assertIn("[PENGAMATAN GAMBAR DILAMPIRKAN KAKAK]", user_msg)
+                self.assertIn("PROJECT SHIRO AI v2", user_msg)
+                self.assertIn("shiro coba lihat gambar ini", user_msg)
+                # System prompt has visual guidance
+                sys_msg = next(m["content"] for m in msgs if m["role"] == "system")
+                self.assertIn("PANDUAN PENGAMATAN GAMBAR BARU", sys_msg)
 
     def test_optimal_tokens_scaling_for_27b_32b(self):
         from shiro.models import get_optimal_model_tokens

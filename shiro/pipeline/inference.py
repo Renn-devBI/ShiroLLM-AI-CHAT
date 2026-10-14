@@ -280,7 +280,17 @@ def get_shiro_reply(
         # -------------------------------------------------------------
         t0 = time.perf_counter()
         facts = memory.knowledge_base.get("facts", []) if (memory and hasattr(memory, "knowledge_base")) else []
-        relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.7][:5]
+        if has_image:
+            # Cegah halusinasi situs web lama saat user mengirim gambar baru:
+            # Filter fakta yang mengandung URL/domain/web agar tidak mengaburkan konteks visual gambar
+            facts_filtered = [
+                f for f in facts 
+                if f.get("confidence", 0) >= 0.7 and not any(k in str(f.get("object", "")).lower() or k in str(f.get("subject", "")).lower() for k in ["http", "www.", ".com", ".net", ".org", ".id", "situs", "url", "link", "web", "halaman"])
+            ]
+            relevant_facts = facts_filtered[:5]
+        else:
+            relevant_facts = [f for f in facts if f.get("confidence", 0) >= 0.7][:5]
+            
         traits = memory.user_profile.get("personality_traits", []) if (memory and hasattr(memory, "user_profile")) else []
         exemplars = memory.get_relevant_exemplars(raw_user_typed, max_count=2) if (memory and hasattr(memory, "get_relevant_exemplars") and raw_user_typed) else []
         
@@ -298,13 +308,20 @@ def get_shiro_reply(
                     if c:
                         clean_context.append({"role": role, "content": c})
         elif memory and hasattr(memory, "short_term_history"):
-            for m in memory.short_term_history:
+            history_slice = list(memory.short_term_history)
+            # Cegah duplikasi: jika giliran terakhir di memory adalah pesan user saat ini yang baru ditambahkan di chat(),
+            # potong agar tidak dikirim dua kali beruntun
+            if history_slice and history_slice[-1].get("role") == "user" and history_slice[-1].get("content") == raw_user_typed:
+                history_slice = history_slice[:-1]
+            for m in history_slice:
                 r = m.get("role", "")
                 c = m.get("content", "")
                 if r in ["user", "assistant"] and c:
                     clean_context.append({"role": r, "content": str(c)})
         elif memory and hasattr(memory, "get_memory_context"):
-            raw_context = memory.get_memory_context(limit=None)
+            raw_context = list(memory.get_memory_context(limit=None))
+            if raw_context and raw_context[-1].get("role") == "user" and raw_context[-1].get("content") == raw_user_typed:
+                raw_context = raw_context[:-1]
             for m in raw_context:
                 r = m.get("role", "")
                 c = m.get("content", "")
@@ -401,12 +418,21 @@ def get_shiro_reply(
                 "Uraikan proses penalaran logis Anda di dalam blok <think>...</think> sebelum memberikan jawaban akhir.\n"
             )
 
+        visual_guidance_addon = ""
+        if has_image:
+            visual_guidance_addon = (
+                "\n\n### PANDUAN PENGAMATAN GAMBAR BARU:\n"
+                "- Kakak sedang melampirkan berkas gambar BARU pada giliran pesan ini.\n"
+                "- Amati dan baca informasi, teks, diagram, serta objek pada gambar baru ini secara teliti dan langsung.\n"
+                "- DILARANG KERAS mengaitkan atau berasumsi bahwa gambar baru ini adalah situs web, link, atau halaman dari percakapan masa lalu jika tidak disebutkan secara eksplisit oleh Kakak.\n"
+            )
+
         # Susun System Prompt berdasarkan persona Shiro (v1, v2, atau v3)
         if api_version == "v2":
-            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon
+            system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
         elif api_version == "v3":
             base_p = custom_system_prompt or ""
-            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon
+            system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
         else:
             system_prompt = build_system_prompt(
                 conversation_summary=conversation_summary,
@@ -416,23 +442,43 @@ def get_shiro_reply(
                 typo_prompt_addon=typo_prompt_addon,
                 document_prompt_addon=doc_prompt_addon,
                 cross_session_addon=cross_session_addon
-            ) + tools_addon + reasoning_addon
+            ) + tools_addon + reasoning_addon + visual_guidance_addon
 
         # Susun Pesan Giliran Pengguna (User Turn)
-        # Selalu kirim gambar visual langsung ke model (Qwen multimodal)
+        has_vision_handler = bool(
+            getattr(state, "vision_chat_handler", None) or 
+            (llm and getattr(llm, "chat_handler", None))
+        )
         if has_image:
-            content_parts = []
-            for img in all_images[:8]:
-                clean_img = img if img.startswith("data:image/") else f"data:image/jpeg;base64,{img}"
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": clean_img}
-                })
-            user_text = raw_user_typed if raw_user_typed else "Shiro, coba lihat dan analisis gambar yang Kakak kirim ini ya."
-            if has_doc:
-                user_text = f"[Melampirkan Dokumen: {doc_name}]\n{user_text}"
-            content_parts.append({"type": "text", "text": user_text})
-            user_turn_msg = {"role": "user", "content": content_parts}
+            if has_vision_handler:
+                # Mode Vision Native (Qwen2.5-VL-7B, Qwen2.5-VL-32B) dengan vision projector aktif:
+                content_parts = []
+                for img in all_images[:8]:
+                    clean_img = img if img.startswith("data:image/") else f"data:image/jpeg;base64,{img}"
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": clean_img}
+                    })
+                user_text = raw_user_typed if raw_user_typed else "Shiro, coba lihat dan analisis gambar yang Kakak kirim ini ya."
+                if has_doc:
+                    user_text = f"[Melampirkan Dokumen: {doc_name}]\n{user_text}"
+                content_parts.append({"type": "text", "text": user_text})
+                user_turn_msg = {"role": "user", "content": content_parts}
+            else:
+                # Mode Teks (Qwen3.8-27B, Qwen3-32B, dll.):
+                # Ekstraksi informasi visual dan OCR teks langsung agar model teks bisa membaca isi gambar
+                from shiro.vision.bridge import extract_local_image_text_and_info
+                local_obs = extract_local_image_text_and_info(all_images) or "Berkas gambar visual terlampir."
+                user_lines = [
+                    "[PENGAMATAN GAMBAR DILAMPIRKAN KAKAK]:",
+                    local_obs,
+                    "\n[INSTRUKSI]: Kakak melampirkan berkas gambar baru. Fokus baca teks dan informasi visual di atas untuk menjawab. JANGAN mengasumsikan gambar ini adalah situs web atau link dari ingatan masa lalu.",
+                    f"\n{raw_user_typed}" if raw_user_typed else "Shiro, coba jelaskan apa yang terlihat pada gambar di atas."
+                ]
+                if has_doc:
+                    user_lines.insert(0, f"[Melampirkan Dokumen: {doc_name}]")
+                user_text = "\n".join(user_lines)
+                user_turn_msg = {"role": "user", "content": user_text}
         else:
             parts_user = []
             if has_doc:

@@ -11,20 +11,25 @@ COLAB_MODELS = {
         "repo": "Qwen/Qwen3-32B-GGUF",
         "file": "Qwen3-32B-Q4_K_M.gguf",
         "extra_file": None,
-        "desc": "Qwen3-32B (Model #1: Penalaran Tinggi / A100 GPU, ~19.8 GB)"
+        "desc": "Qwen3-32B (Model #1: Penalaran Tinggi Teks / A100 GPU, ~19.8 GB)"
+    },
+    "vl-32b": {
+        "repo": "bartowski/Qwen_Qwen2.5-VL-32B-Instruct-GGUF",
+        "file": "Qwen_Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf",
+        "extra_file": "mmproj-Qwen_Qwen2.5-VL-32B-Instruct-f16.gguf",
+        "desc": "Qwen2.5-VL-32B (Model Vision Multimodal #1: Kamera, Gambar, & Penalaran Tinggi / A100 GPU, ~19.8 GB)"
     },
     "27b": {
         "repo": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",
         "file": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
-        "extra_file": "mmproj-F16.gguf",
-        "extra_repo": "unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
-        "desc": "Qwen3.8-27B-Uncensored (Model #2: Multimodal Vision / A100 GPU, ~16.8 GB)"
+        "extra_file": None,
+        "desc": "Qwen3.8-27B-Uncensored (Model #2: Uncensored Roleplay & Deep Reasoning / A100 GPU, ~16.8 GB)"
     },
     "vl": {
         "repo": "unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
         "file": "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
         "extra_file": "mmproj-F16.gguf",
-        "desc": "Qwen2.5-VL-7B (Model #3: Vision Multimodal Kamera & Gambar VTuber, ~5.6 GB)"
+        "desc": "Qwen2.5-VL-7B (Model Vision Multimodal #2: Kamera & Gambar Ringan / T4 & A100 GPU, ~5.6 GB)"
     },
     "7b": {
         "repo": "bartowski/Qwen2.5-7B-Instruct-GGUF",

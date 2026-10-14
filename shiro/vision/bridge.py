@@ -2,10 +2,32 @@
 """
 Shiro Vision Inspection & Local Ingestion
 Provides local image inspection (resolution, brightness, aspect ratio) and OCR (easyocr / pytesseract)
-when needed for debugging or as a fallback when vision projector is offline.
+when running models in text-only mode or as fallback when vision projector is offline.
 """
 
 from typing import List, Optional
+
+_CACHED_READER = None
+_READER_TRIED = False
+
+def get_ocr_reader():
+    """Mengambil instance EasyOCR reader ter-cache agar proses OCR cepat tanpa delay inisialisasi"""
+    global _CACHED_READER, _READER_TRIED
+    if _CACHED_READER is not None:
+        return _CACHED_READER
+    if _READER_TRIED:
+        return None
+    _READER_TRIED = True
+    try:
+        import easyocr
+        import torch
+        use_gpu = torch.cuda.is_available()
+        _CACHED_READER = easyocr.Reader(['id', 'en'], gpu=use_gpu, verbose=False)
+        print(f"[Vision OCR] EasyOCR engine aktif (GPU: {use_gpu})")
+        return _CACHED_READER
+    except Exception as e:
+        print(f"[Vision OCR Notice] EasyOCR tidak aktif: {e}")
+        return None
 
 def extract_local_image_text_and_info(images: List[str]) -> Optional[str]:
     """
@@ -20,6 +42,8 @@ def extract_local_image_text_and_info(images: List[str]) -> Optional[str]:
         import base64
 
         info_lines = []
+        reader = get_ocr_reader()
+
         for i, img in enumerate(images[:4]):
             clean_b64 = img.split(",", 1)[1] if "," in img else img
             raw_bytes = base64.b64decode(clean_b64)
@@ -42,17 +66,17 @@ def extract_local_image_text_and_info(images: List[str]) -> Optional[str]:
                 pass
 
             ocr_text = ""
-            # Coba EasyOCR terlebih dahulu (populer dan akurat di Colab / GPU)
-            try:
-                import easyocr
-                import numpy as np
-                reader = easyocr.Reader(['id', 'en'], gpu=False, verbose=False)
-                results = reader.readtext(np.array(pil_img))
-                ocr_text = " ".join([res[1] for res in results]).strip()
-            except Exception:
-                pass
+            # 1. Coba EasyOCR terlebih dahulu (akurat dan cepat dengan GPU)
+            if reader:
+                try:
+                    import numpy as np
+                    results = reader.readtext(np.array(pil_img))
+                    extracted_words = [res[1].strip() for res in results if res[1].strip()]
+                    ocr_text = " ".join(extracted_words).strip()
+                except Exception as e_ocr:
+                    print(f"[Vision OCR Exec]: {e_ocr}")
 
-            # Fallback ke PyTesseract
+            # 2. Fallback ke PyTesseract jika EasyOCR belum ada
             if not ocr_text:
                 try:
                     import pytesseract
@@ -63,9 +87,9 @@ def extract_local_image_text_and_info(images: List[str]) -> Optional[str]:
             frame_label = f"Gambar #{i+1}" if len(images) > 1 else "Gambar"
             line = f"- {frame_label} ({fmt}, {w}x{h} px, rasio {aspect}:1, {theme_desc})"
             if ocr_text:
-                line += f":\n  [Teks terbaca pada gambar/layar]:\n  {ocr_text[:2000]}"
+                line += f":\n  [Teks terbaca pada gambar]: \"{ocr_text[:3000]}\""
             else:
-                line += f":\n  [Objek visual terdeteksi: Gambar/screenshot beresolusi {w}x{h}]"
+                line += f":\n  [Gambar/tangkapan layar terlampir tanpa teks terdeteksi]"
             info_lines.append(line)
 
         if info_lines:

@@ -103,16 +103,15 @@ def get_available_gguf_models() -> List[str]:
     return models
 
 def is_vision_model(model_path: str) -> bool:
-    """Mendeteksi apakah model mendukung multimodal vision (Qwen, 27B, 32B, VL, Llava)"""
+    """Mendeteksi apakah model merupakan model multimodal vision sejati (Qwen-VL, Llava, dsb.)"""
     if not model_path:
         return False
     name = os.path.basename(model_path).lower()
-    return any(k in name for k in ["qwen", "vl", "vision", "llava", "27b", "32b"])
+    return any(k in name for k in ["-vl", "_vl", "vl-", "vl_", "vision", "llava", "internvl", "minicpm"])
 
 def init_vision_handler(model_path: str):
     """
-    Inisialisasi Vision Chat Handler (multimodal projector) untuk model vision.
-    Mendukung Qwen (Qwen3.8-27B, Qwen3-32B, Qwen2.5-VL) via Qwen25VLChatHandler dan Llava via Llava15ChatHandler.
+    Inisialisasi Vision Chat Handler (multimodal projector) untuk model vision sejati (Qwen2.5-VL, Llava).
     """
     if not model_path:
         return None
@@ -133,11 +132,24 @@ def init_vision_handler(model_path: str):
         "."
     ]
 
-    mmproj_candidates = [
+    mmproj_candidates = []
+    if "32b" in name:
+        mmproj_candidates.extend([
+            os.path.join(MODEL_DIR, "mmproj-Qwen_Qwen2.5-VL-32B-Instruct-f16.gguf"),
+            os.path.join(MODEL_DIR, "mmproj-Qwen2.5-VL-32B-Instruct-f16.gguf"),
+            os.path.join(MODEL_DIR, "mmproj-32b-f16.gguf")
+        ])
+    elif "7b" in name:
+        mmproj_candidates.extend([
+            os.path.join(MODEL_DIR, "mmproj-F16.gguf"),
+            os.path.join(MODEL_DIR, "mmproj-model-f16.gguf")
+        ])
+
+    mmproj_candidates.extend([
         os.path.join(MODEL_DIR, "mmproj-F16.gguf"),
         os.path.join(MODEL_DIR, "mmproj-BF16.gguf"),
         os.path.join(MODEL_DIR, "mmproj-model-f16.gguf"),
-    ]
+    ])
     for s_dir in search_dirs:
         if s_dir and os.path.exists(s_dir):
             try:
@@ -155,8 +167,8 @@ def init_vision_handler(model_path: str):
             mmproj_file = cand
             break
 
-    # 1. Arsitektur Qwen (Qwen3.8-27B, Qwen3-32B, Qwen2.5-VL):
-    if any(k in name for k in ["qwen", "vl", "27b", "32b"]):
+    # 1. Arsitektur Qwen-VL (Qwen2.5-VL-7B, Qwen2.5-VL-32B):
+    if "vl" in name or "qwen" in name:
         try:
             from llama_cpp.llama_chat_format import Qwen25VLChatHandler
             if mmproj_file:
