@@ -945,8 +945,10 @@ class AdvancedMemoryManager:
         """Reset all memory"""
         with self.lock:
             self.initialize_memory()
+            self.learned_patterns = []
+            self.archived_training_history = []
             self.save_memory()
-            print("[Memory] All memory reset")
+            print("[Memory] All memory reset (learned patterns & facts cleared)")
 
     def create_new_session(self, title: Optional[str] = None) -> str:
         """

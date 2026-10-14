@@ -3,15 +3,18 @@
 """
 Shiro LLMA - Reset Ingatan & Cache Google Drive
 Skrip utilitas untuk membersihkan ingatan lama / halusinasi dari Google Drive dan direktori lokal Colab.
+Secara bawaan (default), skrip ini juga MENGOSONGKAN seluruh dataset training agar Shiro benar-benar
+bersih dari riwayat atau pola percakapan lama ("fresh start").
 Otomatis membuat cadangan (backup) ber-timestamp sebelum reset.
 
 Penggunaan:
-    python reset_drive_memory.py                # Reset standar (auto-backup ke Drive & lokal)
-    python reset_drive_memory.py --status       # Cek status & daftar backup tanpa mereset
-    python reset_drive_memory.py --all          # Reset total: ingatan + world + cache training
-    python reset_drive_memory.py --reset-world  # Ikut mereset isekai_world.json ke default
-    python reset_drive_memory.py --keep-profile # Bersihkan fakta & chat tapi simpan profil nama user
-    python reset_drive_memory.py --no-backup    # Lewati pembuatan file backup
+    python reset_drive_memory.py                 # Reset total ingatan & data training (auto-backup)
+    python reset_drive_memory.py --status        # Cek status & daftar backup tanpa mereset
+    python reset_drive_memory.py --keep-training # Reset ingatan tapi pertahankan data training
+    python reset_drive_memory.py --all           # Reset total: ingatan + world + data training
+    python reset_drive_memory.py --reset-world   # Ikut mereset isekai_world.json ke default
+    python reset_drive_memory.py --keep-profile  # Bersihkan fakta & chat tapi simpan profil nama user
+    python reset_drive_memory.py --no-backup     # Lewati pembuatan file backup
 """
 
 import os
@@ -52,7 +55,7 @@ def format_size(bytes_val: int) -> str:
 def show_status(drive_dir=None):
     status = get_drive_memory_status(drive_dir)
     print("\n" + "=" * 68)
-    print("  [STATUS] INGATAN SHIRO (Google Drive & Lokal)")
+    print("  [STATUS] INGATAN & DATA TRAINING SHIRO (Google Drive & Lokal)")
     print("=" * 68)
     
     # Drive
@@ -67,6 +70,7 @@ def show_status(drive_dir=None):
             print(f"  Nama Pengguna       : {ds['user_name']}")
         else:
             print("  Berkas Drive        : Belum ada ingatan_shiro.json di Drive")
+        print(f"  Data Training Drive : {ds.get('training_samples', 0)} sampel dataset")
     else:
         print("  Google Drive        : [TIDAK TERHUBUNG / BUKAN DI COLAB]")
         if status["drive_dir"]:
@@ -82,16 +86,17 @@ def show_status(drive_dir=None):
         print(f"  Nama Pengguna       : {ls['user_name']}")
     else:
         print("  Penyimpanan Lokal   : Belum ada ingatan_shiro.json lokal")
+    print(f"  Data Training Lokal : {ls.get('training_samples', 0)} sampel dataset")
 
     # Backups
     print("-" * 68)
     backups = status.get("backups", [])
     if backups:
-        print(f"  Cadangan di Drive   : {len(backups)} berkas backup ditemukan:")
-        for b in backups[:5]:
+        print(f"  Cadangan di Drive   : {len(backups)} cadangan (ingatan & dataset) ditemukan:")
+        for b in backups[:6]:
             print(f"    - {b}")
-        if len(backups) > 5:
-            print(f"    ... dan {len(backups) - 5} berkas backup lainnya.")
+        if len(backups) > 6:
+            print(f"    ... dan {len(backups) - 6} berkas backup lainnya.")
     else:
         print("  Cadangan di Drive   : Belum ada berkas backup.")
 
@@ -99,7 +104,7 @@ def show_status(drive_dir=None):
 
 def run_reset(args):
     print("\n" + "=" * 68)
-    print("  [RESET] Shiro LLMA - Reset Ingatan & Cache Google Drive")
+    print("  [RESET] Shiro LLMA - Reset Ingatan & Data Training")
     print("=" * 68)
 
     drive_dir = args.drive_dir or os.environ.get("SHIRO_DRIVE_DIR")
@@ -116,14 +121,16 @@ def run_reset(args):
         else:
             print("    [INFO] Google Drive tidak aktif. Reset dilakukan pada direktori lokal.")
 
+    clean_training_flag = not args.keep_training
+
     # [2] Eksekusi Reset
-    print("[2] Melakukan Reset Ingatan...")
+    print("[2] Melakukan Reset Ingatan & Dataset...")
     result = reset_drive_memory(
         drive_dir=drive_dir,
         backup=not args.no_backup,
         reset_world=args.reset_world or args.all,
         keep_profile=args.keep_profile,
-        clean_training=args.clean_training or args.all,
+        clean_training=clean_training_flag,
         notify_server=not args.no_server_sync
     )
 
@@ -149,8 +156,13 @@ def run_reset(args):
         print("    [OK] Berkas lokal (ingatan_shiro.json) diperbarui dengan template bersih.")
     if result.get("world_reset"):
         print("    [OK] Pengaturan dunia isekai_world.json berhasil di-reset ke default.")
+
+    # Status Data Training
     if result.get("training_cleaned"):
-        print("    [OK] Cache berkas training_data/ lama berhasil dibersihkan.")
+        print(f"    [OK] Data training lama ({result['training_samples_cleared']} sampel) berhasil dikosongkan.")
+        print("    [OK] learned_patterns & archived_training_history dikosongkan (0 pola).")
+    else:
+        print("    [INFO] Dataset training dipertahankan (--keep-training).")
 
     # [5] Notifikasi Server
     if result.get("server_notified"):
@@ -161,19 +173,19 @@ def run_reset(args):
         print("    [INFO] Server Shiro tidak sedang berjalan di localhost:7474 (tidak perlu sinkronisasi live).")
 
     print("\n" + "=" * 68)
-    print("  [SUKSES] Ingatan Shiro telah bersih dari riwayat dan halusinasi!")
+    print("  [SUKSES] Ingatan & data training Shiro BENAR-BENAR KOSONG kembali!")
     print("  Saat server Shiro dijalankan, ia akan mulai dari awal tanpa data lama.")
     print("=" * 68 + "\n")
     return 0
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Shiro LLMA - Reset ingatan di Google Drive dan direktori lokal Colab"
+        description="Shiro LLMA - Reset ingatan & dataset training di Google Drive dan direktori lokal Colab"
     )
     parser.add_argument(
         "--status",
         action="store_true",
-        help="Hanya tampilkan status ingatan di Drive & lokal serta daftar backup"
+        help="Hanya tampilkan status ingatan & training di Drive & lokal serta daftar backup"
     )
     parser.add_argument(
         "--drive-dir",
@@ -192,9 +204,15 @@ def main():
         help="Ikut mereset berkas isekai_world.json ke pengaturan bawaan Arcadia"
     )
     parser.add_argument(
+        "--keep-training",
+        action="store_true",
+        help="Pertahankan data training (jangan dikosongkan)"
+    )
+    parser.add_argument(
         "--clean-training",
         action="store_true",
-        help="Bersihkan berkas riwayat dataset di folder training_data"
+        default=True,
+        help="(Default aktif) Kosongkan dataset training_data di Drive & lokal"
     )
     parser.add_argument(
         "--keep-profile",
