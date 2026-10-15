@@ -8,7 +8,7 @@ const resetBtn = document.getElementById('reset-btn');
 const memoryCount = document.getElementById('memory-count');
 const status = document.getElementById('status');
 
-// Notifikasi singkat non-blocking (menggantikan alert)
+// Notifikasi singkat non-blocking
 function showToast(message, duration = 2200) {
     const stack = document.getElementById('toast-stack');
     if (!stack) { console.log(message); return; }
@@ -52,9 +52,9 @@ let triggerTimer;
 let isGenerating = false;
 let abortController = null;
 let activeSessionId = 'default';
-let attachedDocument = null; // { text: string, filename: string, fileType: string, charCount: number }
+let attachedDocument = null;
 
-// Auto-scroll yang lebih pintar
+// Auto-scroll
 function scrollToBottom() {
     chatViewport.scrollTo({
         top: chatViewport.scrollHeight,
@@ -62,13 +62,12 @@ function scrollToBottom() {
     });
 }
 
-// Format waktu simpel
 function getCurrentTime() {
     const now = new Date();
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// Inisialisasi Mermaid.js jika tersedia di browser
+// Inisialisasi Mermaid.js
 if (typeof mermaid !== 'undefined') {
     try {
         mermaid.initialize({
@@ -77,13 +76,13 @@ if (typeof mermaid !== 'undefined') {
             securityLevel: 'loose',
             themeVariables: {
                 darkMode: true,
-                background: '#1b1c1f',
-                primaryColor: '#232428',
-                primaryTextColor: '#e8e8ea',
-                primaryBorderColor: '#4a4d54',
-                lineColor: '#a3a5ab',
-                secondaryColor: '#2b2d31',
-                tertiaryColor: '#1b1c1f'
+                background: '#17181b',
+                primaryColor: '#1f2125',
+                primaryTextColor: '#ececef',
+                primaryBorderColor: '#434750',
+                lineColor: '#9ea2ad',
+                secondaryColor: '#23252a',
+                tertiaryColor: '#17181b'
             }
         });
     } catch (e) {
@@ -91,12 +90,11 @@ if (typeof mermaid !== 'undefined') {
     }
 }
 
-// Tema mermaid mengikuti warna tema aktif
 function applyMermaidTheme() {
     if (typeof mermaid === 'undefined') return;
     const cs = getComputedStyle(document.documentElement);
     const v = (n) => cs.getPropertyValue(n).trim();
-    const light = window.ShiroTheme ? window.ShiroTheme.isLight(v('--bg-base') || '#161719') : false;
+    const light = window.ShiroTheme ? window.ShiroTheme.isLight(v('--bg-base') || '#121315') : false;
     try {
         mermaid.initialize({
             startOnLoad: false,
@@ -178,7 +176,7 @@ function parseMessageContent(text) {
     div.textContent = content;
     content = div.innerHTML;
 
-    // 3. Parse Markdown Images: ![alt](url) -> Clickable lightbox preview
+    // 3. Parse Markdown Images
     content = content.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s<>"'\)]+|\/[^\s<>"'\)]+)\)/g, function(match, alt, rawUrl) {
         let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
         let safeAlt = (alt || 'Gambar').replace(/"/g, '&quot;');
@@ -195,7 +193,7 @@ function parseMessageContent(text) {
         return placeholder;
     });
 
-    // 5. Parse plain URL menjadi link yang bisa diklik
+    // 5. Parse plain URL
     const urlRegex = /(https?:\/\/[^\s<>"']+)/g;
     content = content.replace(urlRegex, function(match) {
         let cleanUrl = match.replace(/[.,;!?)]+$/, '');
@@ -203,12 +201,11 @@ function parseMessageContent(text) {
         return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${cleanUrl}</a>${trailing}`;
     });
 
-    // Kembalikan placeholder Markdown links
     mdLinks.forEach((linkHtml, idx) => {
         content = content.replace(`___SHIRO_MD_LINK_${idx}___`, linkHtml);
     });
 
-    // 6. Parse inline code: `code`
+    // 6. Parse inline code
     content = content.replace(/`([^`\n]+)`/g, '<code>$1</code>');
 
     // 7. Parse formatting teks
@@ -216,7 +213,7 @@ function parseMessageContent(text) {
     content = content.replace(/~~(.+?)~~/g, '<del>$1</del>');
     content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
 
-    // 8. Parse baris baru menjadi <br>
+    // 8. Parse baris baru
     content = content.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
 
     // 9. Pulihkan blok kode & diagram mermaid
@@ -224,7 +221,7 @@ function parseMessageContent(text) {
         content = content.replace(`___SHIRO_BLOCK_${idx}___`, blockHtml);
     });
 
-    // 10. Markdown Sanitization via DOMPurify jika tersedia
+    // 10. Markdown Sanitization via DOMPurify
     if (typeof DOMPurify !== 'undefined') {
         try {
             content = DOMPurify.sanitize(content, {
@@ -240,9 +237,15 @@ function parseMessageContent(text) {
 }
 
 // Global visual attachment state
-let attachedImage = null; // { dataUrl: string, name: string }
+let attachedImage = null;
 
-// Helper Actions: Copy Code, Copy Message, Toggle Mermaid, Toggle Status Card, Edit Prompt, Regenerate
+function renderAvatarContent(profile, fallbackChar) {
+    if (profile && profile.image) {
+        return `<img src="data:${profile.image_mime};base64,${profile.image}" alt="${profile.name || fallbackChar}">`;
+    }
+    return profile?.name?.[0]?.toUpperCase() || fallbackChar;
+}
+
 function copyCodeSnippet(btn) {
     const wrapper = btn.closest('.code-block-wrapper');
     if (!wrapper) return;
@@ -348,31 +351,20 @@ function addErrorMessage(errorMsg, failedPayload = null) {
     scrollToBottom();
 }
 
-// Add message ke chat dengan Avatar, Dokumen, Status Card, & Visual Attachment
+// Add message ke chat
 function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null, agentActionData = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
     
-    // Tentukan Avatar berdasarkan Role
     let avatarHTML = '';
     if (role === 'assistant') {
-        if (aiProfile && aiProfile.image) {
-            avatarHTML = `<div class="avatar shiro-avatar"><img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;"></div>`;
-        } else {
-            avatarHTML = `<div class="avatar shiro-avatar">${aiProfile?.name?.[0].toUpperCase() || 'S'}</div>`;
-        }
+        avatarHTML = `<div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>`;
     } else if (role === 'user') {
-        if (userProfile && userProfile.image) {
-            avatarHTML = `<div class="avatar user-avatar"><img src="data:${userProfile.image_mime};base64,${userProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;"></div>`;
-        } else {
-            avatarHTML = `<div class="avatar user-avatar">${userProfile?.name?.[0].toUpperCase() || 'U'}</div>`;
-        }
+        avatarHTML = `<div class="avatar user-avatar">${renderAvatarContent(userProfile, 'U')}</div>`;
     }
 
-    // Parse formatting dalam content
     const formattedContent = parseMessageContent(content);
 
-    // Escape content untuk HTML attribute
     const escapedContent = (content || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -439,7 +431,6 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         `;
     }
 
-    // Status Card untuk eksekusi Tool Agent
     let statusCardHTML = '';
     if (role === 'assistant' && agentActionData && agentActionData.tool) {
         const tool = agentActionData.tool;
@@ -496,7 +487,6 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         `;
     }
 
-    // Message Actions Bar (Edit & Regenerate & Copy)
     let actionsBarHTML = '';
     if (role === 'user') {
         actionsBarHTML = `
@@ -522,7 +512,6 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         `;
     }
 
-    // Render HTML Message
     let innerBubbleHTML = '';
     if (attachmentHTML) {
         innerBubbleHTML += `<div class="msg-attachment-wrap">${attachmentHTML}</div>`;
@@ -544,7 +533,6 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
 
-    // Post-processing: Syntax Highlighting via highlight.js
     if (typeof hljs !== 'undefined') {
         messageDiv.querySelectorAll('pre code[class*="language-"]').forEach(block => {
             try {
@@ -555,7 +543,6 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         });
     }
 
-    // Post-processing: Mermaid Diagrams rendering
     if (typeof mermaid !== 'undefined') {
         messageDiv.querySelectorAll('.mermaid-container').forEach(async (container) => {
             const rawSource = container.querySelector('.mermaid-raw-source');
@@ -575,7 +562,6 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     }
 }
 
-// Update memory count
 function updateMemoryCount() {
     fetch('/api/memory-count')
         .then(res => res.json())
@@ -586,16 +572,11 @@ function updateMemoryCount() {
         .catch(err => console.error("Memory fetch error", err));
 }
 
-// Fungsi Toggle Typing Indicator & Sinkronisasi Avatar Shiro
 function updateTypingIndicatorAvatar() {
     if (!typingIndicator) return;
     const avatarEl = typingIndicator.querySelector('.avatar');
     if (!avatarEl) return;
-    if (aiProfile && aiProfile.image) {
-        avatarEl.innerHTML = `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-    } else {
-        avatarEl.textContent = aiProfile?.name?.[0].toUpperCase() || 'S';
-    }
+    avatarEl.innerHTML = renderAvatarContent(aiProfile, 'S');
 }
 
 function showTyping(show) {
@@ -603,7 +584,6 @@ function showTyping(show) {
     if (show) {
         updateTypingIndicatorAvatar();
         typingIndicator.classList.remove('hidden');
-        // Pastikan indikator berada di dalam chatMessages dan di paling bawah pesan
         if (chatMessages) {
             chatMessages.appendChild(typingIndicator);
         }
@@ -613,15 +593,11 @@ function showTyping(show) {
     }
 }
 
-// Trigger inisiatif Shiro setelah hening lama (Inisiatif natural, bukan spam)
 function startTriggerTimer() {
     clearTimeout(triggerTimer);
-    
-    // Tunggu hening 2.5 - 4 menit (150.000 - 240.000 ms), BUKAN 5 detik!
     const naturalDelay = Math.floor(Math.random() * (240000 - 150000 + 1)) + 150000;
     
     triggerTimer = setTimeout(() => {
-        // Jangan ganggu jika sedang generate atau Kakak sedang mengetik pesan
         if (isGenerating || (userInput && userInput.value.trim().length > 0)) return; 
 
         fetch('/api/trigger', {
@@ -632,14 +608,13 @@ function startTriggerTimer() {
         .then(data => {
             if (data.reply && data.status !== 'idle') {
                 addMessage('assistant', data.reply); 
-                // Cukup 1 inisiatif sampai Kakak membalas — jangan loop panggil startTriggerTimer lagi!
             }
         })
         .catch(err => console.error("Trigger fetch error:", err));
     }, naturalDelay);
 }
 
-// Send message main function (Teks + Visual Gambar/Kamera + Dokumen)
+// Send message main function
 async function sendMessage() {
     const message = userInput.value.trim();
     if ((!message && !attachedImage && !attachedDocument) || isGenerating) return;
@@ -735,7 +710,7 @@ async function sendMessage() {
         }
         
         updateMemoryCount(); 
-        loadSessions(); // Perbarui judul sesi otomatis
+        loadSessions();
         status.textContent = 'Siap';
         startTriggerTimer(); 
         
@@ -763,31 +738,28 @@ async function sendMessage() {
     }
 }
 
-// Stop generation
 function stopGeneration() {
     if (abortController) {
         abortController.abort();
     }
 }
 
-// Reset memory logic
 async function resetMemory() {
     if (!confirm('Lupakan semua percakapan sebelumnya?')) return;
 
     const originalIcon = resetBtn.innerHTML;
-    resetBtn.innerHTML = '<i class="ph ph-spinner ph-spin"></i>'; // Loading icon
+    resetBtn.innerHTML = '<i class="ph ph-spinner ph-spin"></i>';
 
     try {
         const response = await fetch('/api/reset', { method: 'POST' });
         const data = await response.json();
         
         if (data.success) {
-            // Reset UI
             clearAttachedDocument();
             clearAttachedImage();
             chatMessages.innerHTML = `
                 <div class="message assistant">
-                    <div class="avatar shiro-avatar">S</div>
+                    <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
                     <div class="bubble">
                         Halo Kakak. Ada yang bisa Shiro bantu hari ini?
                     </div>
@@ -805,7 +777,6 @@ async function resetMemory() {
     }
 }
 
-// Load History
 async function loadChatHistory() {
     try {
         const response = await fetch('/api/history');
@@ -814,7 +785,6 @@ async function loadChatHistory() {
         chatMessages.innerHTML = '';
         
         if (data.history && data.history.length > 0) {
-            // Render riwayat obrolan asli
             data.history.forEach(msg => {
                 addMessage(
                     msg.role, 
@@ -827,14 +797,9 @@ async function loadChatHistory() {
                 );
             });
         } else {
-            // Hanya tampilkan sapaan awal jika riwayat chat benar-benar kosong
-            const avatarHtml = aiProfile && aiProfile.image ? 
-                `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
-                (aiProfile?.name?.[0]?.toUpperCase() || 'S');
-
             chatMessages.innerHTML = `
                 <div class="message assistant">
-                    <div class="avatar shiro-avatar">${avatarHtml}</div>
+                    <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
                     <div class="bubble">
                         Halo Kakak. Ada yang bisa Shiro bantu hari ini?
                     </div>
@@ -852,7 +817,6 @@ async function loadChatHistory() {
     }
 }
 
-// Session & Sidebar Management Functions (Multi-Session with Persistent Memory)
 async function loadSessions() {
     try {
         const res = await fetch('/api/sessions');
@@ -860,7 +824,6 @@ async function loadSessions() {
         if (data.sessions) {
             activeSessionId = data.active_session_id;
 
-            // Update legacy select if present in DOM
             if (sessionSelect) {
                 sessionSelect.innerHTML = '';
                 data.sessions.forEach(s => {
@@ -874,7 +837,6 @@ async function loadSessions() {
                 });
             }
 
-            // Render modern collapsible sidebar session list
             if (sidebarSessionList) {
                 sidebarSessionList.innerHTML = '';
                 if (data.sessions.length === 0) {
@@ -945,14 +907,10 @@ async function createNewSession() {
             activeSessionId = data.session_id;
             clearAttachedDocument();
             clearAttachedImage();
-            
-            const avatarHtml = aiProfile && aiProfile.image ? 
-                `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
-                (aiProfile?.name?.[0]?.toUpperCase() || 'S');
 
             chatMessages.innerHTML = `
                 <div class="message assistant">
-                    <div class="avatar shiro-avatar">${avatarHtml}</div>
+                    <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
                     <div class="bubble">
                         Halo Kakak! Sesi obrolan baru siap. Mau bahas atau tanyakan apa sekarang?
                     </div>
@@ -1002,13 +960,9 @@ async function switchSession(sessionId) {
                     );
                 });
             } else {
-                const avatarHtml = aiProfile && aiProfile.image ? 
-                    `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
-                    (aiProfile?.name?.[0]?.toUpperCase() || 'S');
-
                 chatMessages.innerHTML = `
                     <div class="message assistant">
-                        <div class="avatar shiro-avatar">${avatarHtml}</div>
+                        <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
                         <div class="bubble">
                             Halo Kakak. Ada yang bisa Shiro bantu?
                         </div>
@@ -1034,7 +988,7 @@ async function deleteSessionById(sessionId, title) {
     if (isGenerating) return;
 
     const sessionName = title || 'percakapan ini';
-    const confirmDelete = confirm(`Hapus "${sessionName}"?\n\nCatatan:\n• Percakapan di sesi ini akan dihapus.\n• Seluruh data pelatihan (training dataset) dan fakta ingatan Shiro tetap tersimpan aman!`);
+    const confirmDelete = confirm(`Hapus "${sessionName}"?\n\nCatatan:\n- Percakapan di sesi ini akan dihapus.\n- Seluruh data pelatihan (training dataset) dan fakta ingatan Shiro tetap tersimpan aman.`);
     if (!confirmDelete) return;
 
     try {
@@ -1063,13 +1017,9 @@ async function deleteSessionById(sessionId, title) {
                     );
                 });
             } else {
-                const avatarHtml = aiProfile && aiProfile.image ? 
-                    `<img src="data:${aiProfile.image_mime};base64,${aiProfile.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : 
-                    (aiProfile?.name?.[0]?.toUpperCase() || 'S');
-
                 chatMessages.innerHTML = `
                     <div class="message assistant">
-                        <div class="avatar shiro-avatar">${avatarHtml}</div>
+                        <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
                         <div class="bubble">
                             Halo Kakak. Ada yang bisa Shiro bantu hari ini?
                         </div>
@@ -1083,7 +1033,7 @@ async function deleteSessionById(sessionId, title) {
 
             await loadSessions();
             updateMemoryCount();
-            status.textContent = 'Chat dihapus. Data training tetap tersimpan aman!';
+            status.textContent = 'Chat dihapus. Data training tetap tersimpan aman.';
         } else {
             status.textContent = 'Gagal menghapus chat';
         }
@@ -1097,7 +1047,7 @@ async function deleteCurrentSession() {
     deleteSessionById(activeSessionId);
 }
 
-// Sidebar Controls & State Management
+// Sidebar Controls
 function isSidebarCollapsed() {
     if (!chatSidebar) return false;
     return chatSidebar.classList.contains('collapsed');
@@ -1161,7 +1111,7 @@ function initSidebarState() {
     }
 }
 
-// Event Listeners for Chat, Sidebar & Sessions
+// Event Listeners
 sendBtn.addEventListener('click', sendMessage);
 stopBtn.addEventListener('click', stopGeneration);
 if (newChatBtn) newChatBtn.addEventListener('click', createNewSession);
@@ -1191,7 +1141,6 @@ if (sidebarSettingsBtn) {
 if (sessionSelect) sessionSelect.addEventListener('change', (e) => switchSession(e.target.value));
 if (deleteChatBtn) deleteChatBtn.addEventListener('click', deleteCurrentSession);
 
-// Auto-resize input textarea saat mengetik atau menekan Shift+Enter
 function adjustInputHeight() {
     if (!userInput) return;
     userInput.style.height = 'auto';
@@ -1202,12 +1151,10 @@ function adjustInputHeight() {
 
 userInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-        // Shift+Enter = baris baru (auto-expand tinggi input)
         if (e.shiftKey) {
             setTimeout(adjustInputHeight, 0);
             return;
         }
-        // Enter saja = kirim
         if (!isGenerating) {
             e.preventDefault();
             sendMessage();
@@ -1217,14 +1164,12 @@ userInput.addEventListener('keydown', (e) => {
 
 userInput.addEventListener('input', () => {
     adjustInputHeight();
-    // Reset timer jika Kakak sedang aktif mengetik agar tidak diganggu
     clearTimeout(triggerTimer);
     startTriggerTimer();
 });
 
 resetBtn.addEventListener('click', resetMemory);
 
-// Decode HTML entities
 function decodeHtmlEntities(text) {
     const textarea = document.createElement('textarea');
     textarea.innerHTML = text;
@@ -1239,24 +1184,21 @@ const closeSettingsBtn = document.getElementById('close-settings');
 function openSettings() {
     settingsModal.classList.remove('hidden');
     loadProfiles();
-    loadModels();  // Load models saat settings dibuka
+    loadModels();
 }
 
 function closeSettings() {
     settingsModal.classList.add('hidden');
 }
 
-// Load existing profiles (untuk settings modal & chat display)
 async function loadProfiles() {
     try {
         const response = await fetch('/api/profile');
         const data = await response.json();
         
-        // Store globally
         userProfile = data.user;
         aiProfile = data.ai;
         
-        // Update form if in settings modal
         if (data.user) {
             const userNameInput = document.getElementById('user-name');
             if (userNameInput) {
@@ -1269,7 +1211,7 @@ async function loadProfiles() {
             if (data.user.image) {
                 const preview = document.getElementById('user-preview');
                 if (preview) {
-                    preview.innerHTML = `<img src="data:${data.user.image_mime};base64,${data.user.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+                    preview.innerHTML = `<img src="data:${data.user.image_mime};base64,${data.user.image}" alt="Profil Pengguna">`;
                 }
             }
         }
@@ -1286,7 +1228,7 @@ async function loadProfiles() {
             if (data.ai.image) {
                 const preview = document.getElementById('ai-preview');
                 if (preview) {
-                    preview.innerHTML = `<img src="data:${data.ai.image_mime};base64,${data.ai.image}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+                    preview.innerHTML = `<img src="data:${data.ai.image_mime};base64,${data.ai.image}" alt="Profil Shiro">`;
                 }
             }
         }
@@ -1296,7 +1238,6 @@ async function loadProfiles() {
     }
 }
 
-// Save profile
 async function saveProfile(type) {
     const formData = new FormData();
     formData.append('type', type);
@@ -1327,26 +1268,22 @@ async function saveProfile(type) {
         
         const data = await response.json();
         if (data.success) {
-            showToast(`${type} profile saved!`);
-            // Reload preview
+            showToast(`Profil ${type === 'user' ? 'Anda' : 'Shiro'} disimpan.`);
             loadProfiles();
         }
     } catch (error) {
         console.error('Error saving profile:', error);
-        showToast('Error saving profile');
+        showToast('Gagal menyimpan profil');
     }
 }
 
-// Tab switching
 document.querySelectorAll('#settings-modal .tab-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
         const tab = e.target.closest('.tab-btn').dataset.tab;
         
-        // Update active tab button
         document.querySelectorAll('#settings-modal .tab-btn').forEach(b => b.classList.remove('active'));
         e.target.closest('.tab-btn').classList.add('active');
         
-        // Update active tab content
         document.querySelectorAll('#settings-modal .tab-content').forEach(c => c.classList.remove('active'));
         document.getElementById(`${tab}-tab`).classList.add('active');
 
@@ -1381,18 +1318,18 @@ function copyApiKey() {
     const input = document.getElementById('active-api-key-input');
     if (!input || !input.value) return;
     navigator.clipboard.writeText(input.value).then(() => {
-        showToast('API Key berhasil disalin!');
+        showToast('API Key berhasil disalin');
     }).catch(() => {
         input.select();
         document.execCommand('copy');
-        showToast('API Key berhasil disalin!');
+        showToast('API Key berhasil disalin');
     });
 }
 
 function copyEndpointUrl(path) {
     const fullUrl = window.location.origin + path;
     navigator.clipboard.writeText(fullUrl).then(() => {
-        showToast(`URL ${fullUrl} berhasil disalin!`);
+        showToast(`URL ${fullUrl} berhasil disalin`);
     }).catch(() => {
         prompt('Salin URL:', fullUrl);
     });
@@ -1407,9 +1344,9 @@ async function regenerateApiKey() {
         if (res.ok) {
             const data = await res.json();
             if (input) input.value = data.api_key;
-            showToast('API Key baru berhasil di-generate!');
+            showToast('API Key baru berhasil dibuat');
         } else {
-            showToast('Gagal generate API Key');
+            showToast('Gagal membuat API Key');
         }
     } catch (e) {
         console.error('Error regenerating API key:', e);
@@ -1419,14 +1356,13 @@ async function regenerateApiKey() {
     }
 }
 
-// Image preview on select
 document.getElementById('user-image').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
         const reader = new FileReader();
         reader.onload = (event) => {
             const preview = document.getElementById('user-preview');
-            preview.innerHTML = `<img src="${event.target.result}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+            preview.innerHTML = `<img src="${event.target.result}" alt="Pratinjau Profil">`;
         };
         reader.readAsDataURL(file);
     }
@@ -1438,7 +1374,7 @@ document.getElementById('ai-image').addEventListener('change', (e) => {
         const reader = new FileReader();
         reader.onload = (event) => {
             const preview = document.getElementById('ai-preview');
-            preview.innerHTML = `<img src="${event.target.result}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+            preview.innerHTML = `<img src="${event.target.result}" alt="Pratinjau Avatar">`;
         };
         reader.readAsDataURL(file);
     }
@@ -1453,7 +1389,6 @@ const imagePreviewThumb = document.getElementById('image-preview-thumb');
 const imagePreviewName = document.getElementById('image-preview-name');
 const removeImageBtn = document.getElementById('remove-image-btn');
 
-// Camera Elements
 const cameraModal = document.getElementById('camera-modal');
 const closeCameraModalBtn = document.getElementById('close-camera-modal');
 const cameraVideo = document.getElementById('camera-video');
@@ -1463,7 +1398,7 @@ const switchCameraBtn = document.getElementById('switch-camera-btn');
 const cameraPlaceholder = document.getElementById('camera-placeholder');
 
 let cameraStream = null;
-let currentCameraFacing = 'user'; // 'user' atau 'environment'
+let currentCameraFacing = 'user';
 
 function setAttachedImage(dataUrl, name = 'visual_input.jpg') {
     attachedImage = { dataUrl, name };
@@ -1489,7 +1424,7 @@ function setAttachedDocument(docData) {
     if (docPreviewName) docPreviewName.textContent = docData.filename;
     if (docPreviewSub) {
         const chars = docData.char_count || docData.text.length;
-        docPreviewSub.textContent = `${docData.file_type ? docData.file_type.toUpperCase() : 'Dokumen'} • ${chars} karakter • Siap dirangkum/diperbaiki`;
+        docPreviewSub.textContent = `${docData.file_type ? docData.file_type.toUpperCase() : 'Dokumen'} · ${chars} karakter · Siap dirangkum/diperbaiki`;
     }
     if (docPreviewBar) docPreviewBar.classList.remove('hidden');
     if (userInput && !userInput.value.trim()) {
@@ -1501,7 +1436,7 @@ function clearAttachedDocument() {
     attachedDocument = null;
     if (docPreviewBar) docPreviewBar.classList.add('hidden');
     if (docFileInput) docFileInput.value = '';
-    if (userInput) userInput.placeholder = "Ketik pesan...";
+    if (userInput) userInput.placeholder = "Tulis pesan";
 }
 
 async function uploadDocumentFile(file) {
@@ -1555,50 +1490,41 @@ if (removeDocBtn) {
     removeDocBtn.addEventListener('click', clearAttachedDocument);
 }
 
-// --- Claude-Style Auto-Convert Pasted Code/Text to Document Attachment & Clipboard Image Paste ---
+// --- Auto-Convert Pasted Code/Text to Document Attachment & Clipboard Image Paste ---
 function detectPastedSnippetMeta(text) {
     const trimmed = text.trim();
     const lower = trimmed.toLowerCase();
     
-    // HTML detection
     if (lower.startsWith('<!doctype html') || lower.startsWith('<html') || 
         (lower.includes('<div') && lower.includes('</div>')) || 
         (lower.includes('<body') && lower.includes('</body>')) ||
         (lower.includes('<head') && lower.includes('</head>'))) {
         return { filename: 'snippet.html', ext: 'html' };
     }
-    // SVG detection
     if (lower.startsWith('<svg') || (lower.includes('<svg') && lower.includes('</svg>'))) {
         return { filename: 'image.svg', ext: 'svg' };
     }
-    // JSON detection
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
         try {
             JSON.parse(trimmed);
             return { filename: 'data.json', ext: 'json' };
         } catch (_) {}
     }
-    // Python detection
     if (/^\s*(import\s+\w+|from\s+\w+\s+import|def\s+\w+\s*\(|class\s+\w+[\s:(]|if\s+__name__\s*==\s*['"]__main__['"])/m.test(trimmed)) {
         return { filename: 'script.py', ext: 'py' };
     }
-    // CSS detection
     if (/^\s*([.#][\w-]+\s*\{|@media|@keyframes|:root\s*\{)/m.test(trimmed) && trimmed.includes('{') && trimmed.includes('}')) {
         return { filename: 'style.css', ext: 'css' };
     }
-    // JavaScript / TypeScript detection
     if (/^\s*(const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|function\s+\w*\s*\(|console\.(log|error|warn)\(|export\s+(default\s+)?(function|class|const))/m.test(trimmed) || /=>\s*\{/.test(trimmed)) {
         return { filename: 'script.js', ext: 'js' };
     }
-    // SQL detection
     if (/^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE|ALTER\s+TABLE)\s+/i.test(trimmed)) {
         return { filename: 'query.sql', ext: 'sql' };
     }
-    // Markdown detection
     if (/^#+\s+.+/m.test(trimmed) || (trimmed.includes('```') && trimmed.includes('\n'))) {
         return { filename: 'document.md', ext: 'md' };
     }
-    // Default plain text
     return { filename: 'pasted-text.txt', ext: 'txt' };
 }
 
@@ -1625,7 +1551,6 @@ function handleLongPaste(text) {
 
 if (userInput) {
     userInput.addEventListener('paste', (e) => {
-        // 1. Cek apakah ada file gambar dari clipboard (misal tangkapan layar / Win+Shift+S)
         const items = (e.clipboardData || window.clipboardData)?.items;
         if (items) {
             for (let i = 0; i < items.length; i++) {
@@ -1645,7 +1570,6 @@ if (userInput) {
             }
         }
 
-        // 2. Claude-style auto-convert: Jika paste teks panjang (>= 1200 karakter atau >= 25 baris dengan panjang >= 400 karakter)
         const pastedText = (e.clipboardData || window.clipboardData)?.getData('text');
         if (pastedText) {
             const lineCount = pastedText.split('\n').length;
@@ -1721,13 +1645,8 @@ function closeCamera() {
     if (cameraModal) cameraModal.classList.add('hidden');
 }
 
-if (openCameraBtn) {
-    openCameraBtn.addEventListener('click', startCamera);
-}
-
-if (closeCameraModalBtn) {
-    closeCameraModalBtn.addEventListener('click', closeCamera);
-}
+if (openCameraBtn) openCameraBtn.addEventListener('click', startCamera);
+if (closeCameraModalBtn) closeCameraModalBtn.addEventListener('click', closeCamera);
 
 if (switchCameraBtn) {
     switchCameraBtn.addEventListener('click', () => {
@@ -1758,13 +1677,10 @@ async function loadModels() {
         const response = await fetch('/api/models');
         const data = await response.json();
         
-        console.log('Models loaded:', data);
-        
         const getModelName = (path) => {
             return path.split('/').pop().replace('.gguf', '');
         };
         
-        // Update current model badge & topbar pill
         const badge = document.getElementById('current-model-badge');
         const navPill = document.querySelector('.model-pill');
         if (data.current_model) {
@@ -1773,7 +1689,6 @@ async function loadModels() {
             if (navPill) navPill.textContent = modelName;
         }
         
-        // Populate dropdown & description
         const select = document.getElementById('model-select');
         const modelDescText = document.getElementById('model-desc-text');
         
@@ -1816,7 +1731,7 @@ async function loadModels() {
         console.error('Error loading models:', error);
         const badge = document.getElementById('current-model-badge');
         if (badge) {
-            badge.textContent = 'Error loading';
+            badge.textContent = 'Gagal memuat';
         }
     }
 }
@@ -1834,7 +1749,7 @@ async function loadMoeSettings() {
         if (desc) {
             const expertName = data.vision_expert_path ? data.vision_expert_path.split('/').pop().replace('.gguf', '') : 'Belum terdeteksi di folder model/';
             const loadedBadge = data.vision_expert_loaded ? ' (Dimuat di VRAM)' : ' (Standby)';
-            desc.innerHTML = `<strong>Mode:</strong> <code>${data.mode}</code> • Visual Expert: <strong>${expertName}</strong>${data.vision_expert_loaded ? loadedBadge : ''}`;
+            desc.innerHTML = `<strong>Mode:</strong> <code>${data.mode}</code> · Visual Expert: <strong>${expertName}</strong>${data.vision_expert_loaded ? loadedBadge : ''}`;
         }
     } catch (e) {
         console.error('Error loading MoE settings:', e);
@@ -1863,7 +1778,6 @@ async function saveMoeSettings() {
     }
 }
 
-// Switch model function
 async function switchModel() {
     const select = document.getElementById('model-select');
     const selectedModel = select.value;
@@ -1895,9 +1809,8 @@ async function switchModel() {
         if (data.success) {
             const visionTag = data.has_vision ? ' (Vision Aktif)' : '';
             showToast(`Model berhasil dialihkan ke ${modelName}${visionTag}`);
-            status.textContent = 'Model berhasil dialihkan!';
+            status.textContent = 'Model berhasil dialihkan';
             
-            // Reload models to update UI
             setTimeout(() => {
                 loadModels();
                 status.textContent = 'Siap';
@@ -1913,14 +1826,13 @@ async function switchModel() {
     }
 }
 
-// Settings event listeners
 settingsBtn.addEventListener('click', openSettings);
 closeSettingsBtn.addEventListener('click', closeSettings);
 settingsModal.addEventListener('click', (e) => {
     if (e.target === settingsModal) closeSettings();
 });
 
-// --- Neural Workflow Modal (n8n Real-Time Pipeline Inspector) ---
+// --- Neural Workflow Modal (Real-Time Pipeline Inspector) ---
 const pipelineBtn = document.getElementById('pipeline-btn');
 const pipelineModal = document.getElementById('pipeline-modal');
 const closePipelineModalBtn = document.getElementById('close-pipeline-modal');
@@ -1932,8 +1844,6 @@ let activePipelineTrace = null;
 let pipelineFrameReady = false;
 let pipelineSimTimers = [];
 
-// Kirim trace terbaru ke editor kanvas (iframe). Editor hanya memperbarui
-// status node, posisi dan sambungan yang diatur pengguna tidak disentuh.
 function postTraceToFrame() {
     if (!pipelineFrame || !pipelineFrameReady || !activePipelineTrace) return;
     try {
@@ -1961,23 +1871,22 @@ function clearPipelineSimulation() {
 function startPipelineAnimation(userInputText) {
     clearPipelineSimulation();
     
-    // Create an initial active simulated trace
+    // Palet warna node kalem dan bebas warna ungu terang
     activePipelineTrace = {
         total_duration_ms: 0,
         nodes: [
-            { id: "node_input", name: "Input Ingestion", type: "trigger", icon: "ph-chat-circle-dots", color: "#3b82f6", status: "running", duration_ms: 0, summary: "Menerima input chat...", data_in: { message: userInputText }, data_out: {} },
-            { id: "node_emotion", name: "Emotion & Tone Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#ec4899", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-            { id: "node_memory", name: "Cognitive Memory & RDF Retrieval", type: "database", icon: "ph-brain", color: "#8b5cf6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-            { id: "node_prompt", name: "Dynamic Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#06b6d4", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-            { id: "node_llm", name: "Neural Inference Engine", type: "ai_model", icon: "ph-cpu", color: "#f59e0b", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-            { id: "node_filter", name: "Anti-Hallucination & CoT Filter", type: "filter", icon: "ph-shield-check", color: "#10b981", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-            { id: "node_state", name: "State & Persistence Sync", type: "persistence", icon: "ph-database", color: "#6366f1", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
-            { id: "node_output", name: "Response Delivery Stream", type: "output", icon: "ph-paper-plane-right", color: "#3b82f6", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} }
+            { id: "node_input", name: "Input Ingestion", type: "trigger", icon: "ph-chat-circle-dots", color: "#6488a8", status: "running", duration_ms: 0, summary: "Menerima input chat...", data_in: { message: userInputText }, data_out: {} },
+            { id: "node_emotion", name: "Emotion & Tone Classifier", type: "analyzer", icon: "ph-heartbeat", color: "#b87366", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_memory", name: "Cognitive Memory & RDF Retrieval", type: "database", icon: "ph-brain", color: "#788896", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_prompt", name: "Dynamic Prompt Synthesizer", type: "transform", icon: "ph-brackets-curly", color: "#569499", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_llm", name: "Neural Inference Engine", type: "ai_model", icon: "ph-cpu", color: "#c8913b", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_filter", name: "Anti-Hallucination & CoT Filter", type: "filter", icon: "ph-shield-check", color: "#4d9e78", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_state", name: "State & Persistence Sync", type: "persistence", icon: "ph-database", color: "#6e7f91", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} },
+            { id: "node_output", name: "Response Delivery Stream", type: "output", icon: "ph-paper-plane-right", color: "#6488a8", status: "idle", duration_ms: 0, summary: "Menunggu...", data_in: {}, data_out: {} }
         ]
     };
     renderModalPipeline(activePipelineTrace);
 
-    // Step 1: Input ingestion finishes
     pipelineSimTimers.push(setTimeout(() => {
         if (!activePipelineTrace || !activePipelineTrace.nodes) return;
         activePipelineTrace.nodes[0].status = 'success';
@@ -1988,7 +1897,6 @@ function startPipelineAnimation(userInputText) {
         renderModalPipeline(activePipelineTrace);
     }, 120));
 
-    // Step 2: Emotion finishes
     pipelineSimTimers.push(setTimeout(() => {
         if (!activePipelineTrace || !activePipelineTrace.nodes) return;
         activePipelineTrace.nodes[1].status = 'success';
@@ -1999,7 +1907,6 @@ function startPipelineAnimation(userInputText) {
         renderModalPipeline(activePipelineTrace);
     }, 280));
 
-    // Step 3: Memory finishes
     pipelineSimTimers.push(setTimeout(() => {
         if (!activePipelineTrace || !activePipelineTrace.nodes) return;
         activePipelineTrace.nodes[2].status = 'success';
@@ -2010,7 +1917,6 @@ function startPipelineAnimation(userInputText) {
         renderModalPipeline(activePipelineTrace);
     }, 480));
 
-    // Step 4: Prompt finishes, LLM begins running
     pipelineSimTimers.push(setTimeout(() => {
         if (!activePipelineTrace || !activePipelineTrace.nodes) return;
         activePipelineTrace.nodes[3].status = 'success';
@@ -2026,7 +1932,7 @@ function openPipelineModal() {
     if (!pipelineModal) return;
     pipelineModal.classList.remove('hidden');
     if (pipelineFrame && !pipelineFrame.getAttribute('src')) {
-        pipelineFrame.src = '/pipeline?embed=1';   // dimuat sekali, state kanvas tetap hidup
+        pipelineFrame.src = '/pipeline?embed=1';
     } else {
         postTraceToFrame();
     }
@@ -2058,7 +1964,6 @@ function renderModalPipeline(trace) {
     postTraceToFrame();
 }
 
-// Pipeline modal event listeners
 if (pipelineBtn) pipelineBtn.addEventListener('click', openPipelineModal);
 if (closePipelineModalBtn) closePipelineModalBtn.addEventListener('click', closePipelineModal);
 if (pipelineModal) {
@@ -2172,14 +2077,13 @@ async function openDocModal(filename, url, ext = "") {
         docModalTextDisplay.textContent = "Sedang membaca isi berkas...";
     }
 
-    // Jika berkas adalah lampiran yang teksnya tersimpan langsung di memori (misal dari hasil Paste kode Claude-style)
     if (attachedDocument && attachedDocument.filename === filename && attachedDocument.text) {
         currentDocModalContent = attachedDocument.text;
         if (docModalTextDisplay) {
             docModalTextDisplay.textContent = currentDocModalContent;
         }
         if (docModalSub) {
-            docModalSub.textContent = `${ext.toUpperCase()} • ${currentDocModalContent.length.toLocaleString()} karakter • Teks Terlampir`;
+            docModalSub.textContent = `${ext.toUpperCase()} · ${currentDocModalContent.length.toLocaleString()} karakter · Teks Terlampir`;
         }
         docViewerModal.classList.remove('hidden');
         return;
@@ -2195,11 +2099,11 @@ async function openDocModal(filename, url, ext = "") {
             }
             if (docModalSub) {
                 const chars = data.char_count || currentDocModalContent.length;
-                docModalSub.textContent = `${ext.toUpperCase()} • ${chars.toLocaleString()} karakter • ${data.page_count ? data.page_count + ' halaman' : 'Teks terurai'}`;
+                docModalSub.textContent = `${ext.toUpperCase()} · ${chars.toLocaleString()} karakter · ${data.page_count ? data.page_count + ' halaman' : 'Teks terurai'}`;
             }
         } else {
             if (docModalTextDisplay) {
-                docModalTextDisplay.textContent = `Dokumen '${filename}' siap diunduh atau dibuka langsung.\nKlik 'Buka Asli' untuk membuka file lengkap.`;
+                docModalTextDisplay.textContent = `Dokumen '${filename}' siap diunduh atau dibuka langsung.\nKlik 'Buka asli' untuk membuka berkas lengkap.`;
             }
         }
     } catch (err) {
@@ -2245,7 +2149,7 @@ async function copyDocModalContent() {
         const copyBtn = document.getElementById('doc-modal-copy-btn');
         if (copyBtn) {
             const oldHtml = copyBtn.innerHTML;
-            copyBtn.innerHTML = '<i class="ph ph-check"></i> Tersalin!';
+            copyBtn.innerHTML = '<i class="ph ph-check"></i> Tersalin';
             setTimeout(() => { copyBtn.innerHTML = oldHtml; }, 2000);
         }
     } catch (err) {
@@ -2255,7 +2159,7 @@ async function copyDocModalContent() {
 
 if (closeDocModalBtn) closeDocModalBtn.addEventListener('click', closeDocModal);
 
-// Global Keyboard Shortcuts (Escape to close any open modal)
+// Global Keyboard Shortcuts
 window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         if (imageLightboxModal && !imageLightboxModal.classList.contains('hidden')) {
@@ -2270,7 +2174,6 @@ window.addEventListener('keydown', (e) => {
     }
 });
 
-// Click listener on image preview thumbnail before sending
 if (imagePreviewThumb) {
     imagePreviewThumb.style.cursor = 'pointer';
     imagePreviewThumb.title = 'Klik untuk melihat pratinjau gambar';
@@ -2281,7 +2184,6 @@ if (imagePreviewThumb) {
     });
 }
 
-// Click listener on doc preview card before sending
 const docPreviewCardEl = document.querySelector('.doc-preview-card');
 if (docPreviewCardEl) {
     docPreviewCardEl.style.cursor = 'pointer';
@@ -2299,13 +2201,13 @@ document.addEventListener('DOMContentLoaded', () => {
     initSidebarState();
     loadProfiles().then(() => {
         loadChatHistory();
-        loadSessions(); // Load daftar sesi percakapan
-        loadModels(); // Load model awal agar badge dan model pill terisi
+        loadSessions();
+        loadModels();
         userInput.focus();
     });
 });
 
-// --- Pengaturan tema (tab "Tema") ---
+// --- Pengaturan Tema ---
 (function initThemeUi() {
     const ST = window.ShiroTheme;
     const grid = document.getElementById('theme-grid');

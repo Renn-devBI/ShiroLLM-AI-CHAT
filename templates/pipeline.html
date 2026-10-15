@@ -3,20 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shiro · Alur eksekusi</title>
+    <title>Alur eksekusi - Shiro</title>
+    <meta name="theme-color" content="#121315">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f2125'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%23ececef'%3ES%3C/text%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
     <script>
 (function () {
     // Mesin tema bersama (index.html dan pipeline.html). Tema "default" tidak
     // menimpa apa pun, jadi tampilan awal persis seperti di style.css.
     var KEY = 'shiro_theme_v1';
     var PRESETS = [
-        { id: 'default',  name: 'Grafit',       bg: '#161719', fg: '#e8e8ea', accent: '#aab7ff' },
-        { id: 'shiro',    name: 'Shiro',        bg: '#f4f4f2', fg: '#1d1e21', accent: '#4b5bd1' },
-        { id: 'midnight', name: 'Tengah malam', bg: '#10151d', fg: '#e4e8ef', accent: '#7da3f5' },
+        { id: 'default',  name: 'Grafit',       bg: '#121315', fg: '#ececef', accent: '#94a3b8' },
+        { id: 'shiro',    name: 'Shiro',        bg: '#f4f4f2', fg: '#1d1e21', accent: '#3d6a8c' },
+        { id: 'midnight', name: 'Tengah malam', bg: '#10151d', fg: '#e4e8ef', accent: '#6f9cc4' },
         { id: 'forest',   name: 'Hutan',        bg: '#121713', fg: '#e4eae3', accent: '#8fce9e' },
         { id: 'dusk',     name: 'Senja',        bg: '#191615', fg: '#ece5e0', accent: '#d9a066' },
         { id: 'sakura',   name: 'Sakura',       bg: '#191416', fg: '#eee5e9', accent: '#e596b2' }
@@ -113,33 +115,41 @@
         if (new URLSearchParams(location.search).has('embed')) document.documentElement.classList.add('embed');
     </script>
     <style>
+        /* ==========================================================================
+           Shiro — Editor & Inspektur Alur Eksekusi
+           Desain: Matte presisi, garis 1px tegas, bebas warna neon/ungu & bebas glow.
+           ========================================================================== */
         :root {
-            --bg-base: #161719;
-            --bg-surface: #1b1c1f;
-            --bg-elevated: #232428;
-            --bg-code: #121315;
-            --border-subtle: #26282c;
-            --border-default: #34363b;
-            --border-hover: #4a4d54;
-            --text-primary: #e8e8ea;
-            --text-secondary: #a3a5ab;
-            --text-muted: #70727a;
-            --accent: #aab7ff;
-            --accent-soft: rgba(170, 183, 255, 0.16);
-            --ok: #5fbf8f;
-            --warn: #e0a84a;
-            --danger: #e5736f;
-            --wire: #3d4047;
-            --wire-done: #4f8f72;
-            --grid-dot: #2f3238;
-            --grid-line: #202226;
-            --code-fg: #e8e8ea;
-            --code-secondary: #a3a5ab;
-            --code-muted: #70727a;
-            --code-border: #26282c;
-            --code-hover: #232428;
-            --font-ui: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif;
-            --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+            --bg-base: #121315;
+            --bg-surface: #17181b;
+            --bg-elevated: #1f2125;
+            --bg-code: #0e0f11;
+            --border-subtle: #23252a;
+            --border-default: #2e3138;
+            --border-hover: #434750;
+            --text-primary: #ececef;
+            --text-secondary: #9ea2ad;
+            --text-muted: #686c77;
+            --accent: #94a3b8;
+            --accent-soft: rgba(148, 163, 184, 0.12);
+            --ok: #4d9e78;
+            --warn: #c8913b;
+            --danger: #cf5c58;
+            --danger-soft: rgba(207, 92, 88, 0.12);
+            --wire: #3a3d44;
+            --wire-done: #4d9e78;
+            --grid-dot: #262930;
+            --grid-line: #1b1d22;
+            --code-fg: #e6e7ea;
+            --code-secondary: #9ea2ad;
+            --code-muted: #686c77;
+            --code-border: #23252a;
+            --code-hover: #1f2125;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --font-ui: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -147,41 +157,146 @@
         body { font-family: var(--font-ui); font-size: 14px; background: var(--bg-base); color: var(--text-primary); overflow: hidden; -webkit-font-smoothing: antialiased; }
         .hidden { display: none !important; }
         button, input, select { font-family: inherit; }
-        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        :focus-visible { outline: 1.5px solid var(--border-hover); outline-offset: 1px; border-radius: var(--radius-sm); }
         .ph-spin { animation: spin 0.9s linear infinite; display: inline-block; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
         .app { display: flex; flex-direction: column; width: 100vw; height: 100vh; height: 100dvh; }
 
-        /* ---------- Bilah atas ---------- */
-        .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 52px; padding: 0 16px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
-        .tb-left, .tb-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
-        .tb-back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); text-decoration: none; font-size: 13px; padding: 6px 8px; border-radius: 8px; }
-        .tb-back:hover { background: var(--bg-elevated); color: var(--text-primary); }
-        .tb-title { font-weight: 700; font-size: 15px; }
+        /* ---------- Bilah Atas (Topbar) ---------- */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            height: 52px;
+            padding: 0 16px;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }
+        .tb-left, .tb-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .tb-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 12.5px;
+            font-weight: 600;
+            height: 32px;
+            padding: 0 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            transition: background 0.12s, border-color 0.12s, color 0.12s;
+        }
+        .tb-back:hover { background: var(--bg-elevated); border-color: var(--border-hover); color: var(--text-primary); }
+        .tb-sep { width: 1px; height: 16px; background: var(--border-subtle); }
+        .tb-title-wrap { display: flex; align-items: center; gap: 8px; }
+        .tb-title { font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }
+        .tb-badge {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            padding: 2px 7px;
+            border-radius: var(--radius-sm);
+        }
 
-        .test-bar { display: flex; align-items: center; gap: 6px; flex: 0 1 420px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 10px; padding: 3px 3px 3px 12px; }
+        .test-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 0 1 440px;
+            height: 34px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            padding: 0 4px 0 10px;
+            transition: border-color 0.12s;
+        }
         .test-bar:focus-within { border-color: var(--border-hover); }
-        .test-bar input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--text-primary); font-size: 13px; }
+        .test-bar-icon { color: var(--text-muted); font-size: 14px; flex-shrink: 0; }
+        .test-bar input {
+            flex: 1;
+            min-width: 0;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-primary);
+            font-size: 12.5px;
+        }
         .test-bar input::placeholder { color: var(--text-muted); }
-        .btn-run { display: inline-flex; align-items: center; gap: 6px; background: var(--text-primary); color: var(--bg-base); border: none; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+        .btn-run {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            height: 26px;
+            background: var(--text-primary);
+            color: var(--bg-base);
+            border: none;
+            border-radius: 4px;
+            padding: 0 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.12s;
+        }
         .btn-run:hover { opacity: 0.88; }
-        .btn-run:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-run:disabled { opacity: 0.4; cursor: not-allowed; }
 
-        .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-secondary); }
-        .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+        .conn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            height: 28px;
+            padding: 0 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
         .conn[data-state="on"] .conn-dot { background: var(--ok); }
         .conn[data-state="retry"] .conn-dot { background: var(--warn); }
-        .total { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
+        .total {
+            display: inline-flex;
+            align-items: center;
+            height: 28px;
+            padding: 0 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+        }
 
-        /* ---------- Area kerja ---------- */
+        /* ---------- Area Kerja & Kanvas ---------- */
         .workspace { flex: 1; display: flex; min-height: 0; }
 
-        .viewport { flex: 1; position: relative; overflow: hidden; min-width: 0; outline: none; user-select: none; touch-action: none;
+        .viewport {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            min-width: 0;
+            outline: none;
+            user-select: none;
+            touch-action: none;
             background-color: var(--bg-base);
-            background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.3px);
-            background-size: 24px 24px; }
-        .viewport.grid-lines { background-image: linear-gradient(to right, var(--grid-line) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px); }
+            background-image: radial-gradient(circle, var(--grid-dot) 1px, transparent 1.2px);
+            background-size: 24px 24px;
+        }
+        .viewport.grid-lines {
+            background-image:
+                linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+        }
         .viewport.grid-none { background-image: none; }
         .viewport.panning, .viewport.pan-ready.panning { cursor: grabbing; }
         .viewport.pan-ready { cursor: grab; }
@@ -191,98 +306,465 @@
         .wires { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; z-index: 1; }
         #nodes-layer { position: absolute; left: 0; top: 0; z-index: 2; }
 
-        /* ---------- Garis ---------- */
+        /* ---------- Garis Koneksi ---------- */
         .wire-hit { fill: none; stroke: transparent; stroke-width: 16px; pointer-events: stroke; cursor: pointer; }
-        .wire-line { fill: none; stroke: var(--wire); stroke-width: 2px; stroke-linecap: round; pointer-events: none; transition: stroke 0.15s; }
+        .wire-line { fill: none; stroke: var(--wire); stroke-width: 1.75px; stroke-linecap: round; pointer-events: none; transition: stroke 0.15s; }
         .wire:hover .wire-line { stroke: var(--border-hover); }
         .wire.done .wire-line { stroke: var(--wire-done); }
-        .wire.selected .wire-line { stroke: var(--accent); stroke-width: 2.5px; }
+        .wire.selected .wire-line { stroke: var(--text-primary); stroke-width: 2.25px; }
         .wire-flow { fill: none; stroke: var(--warn); stroke-width: 2px; stroke-linecap: round; stroke-dasharray: 5 9; pointer-events: none; opacity: 0; }
         .wire.live .wire-flow { opacity: 1; animation: flow 0.6s linear infinite; }
         @keyframes flow { to { stroke-dashoffset: -14; } }
-        .wire-draft { fill: none; stroke: var(--accent); stroke-width: 2px; stroke-dasharray: 5 6; stroke-linecap: round; pointer-events: none; }
+        .wire-draft { fill: none; stroke: var(--text-secondary); stroke-width: 1.75px; stroke-dasharray: 5 6; stroke-linecap: round; pointer-events: none; }
 
-        .wire-tools { position: absolute; z-index: 5; display: flex; align-items: center; gap: 4px; padding: 3px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 9px; transform: translate(-50%, -50%) scale(calc(1 / var(--z, 1))); transform-origin: center; }
-        .wire-handle { width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); cursor: ns-resize; font-size: 14px; }
+        .wire-tools {
+            position: absolute;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 3px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            transform: translate(-50%, -50%) scale(calc(1 / var(--z, 1)));
+            transform-origin: center;
+        }
+        .wire-handle {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            cursor: ns-resize;
+            font-size: 13px;
+        }
         .wire-handle:hover { background: var(--bg-elevated); color: var(--text-primary); }
-        .wire-tools button { width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px; color: var(--text-secondary); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
-        .wire-tools button:hover { background: rgba(229, 115, 111, 0.14); color: var(--danger); }
+        .wire-tools button {
+            width: 24px;
+            height: 24px;
+            border: none;
+            background: transparent;
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .wire-tools button:hover { background: var(--danger-soft); color: var(--danger); }
 
-        /* ---------- Node ---------- */
-        .node { position: absolute; width: 240px; height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 10px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 12px; cursor: grab; touch-action: none; transition: border-color 0.15s, box-shadow 0.15s; }
+        /* ---------- Kartu Node (Matte, Tanpa Glow) ---------- */
+        .node {
+            position: absolute;
+            width: 240px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 12px 0 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            cursor: grab;
+            touch-action: none;
+            transition: border-color 0.12s, background 0.12s;
+        }
         .node:hover { border-color: var(--border-hover); }
-        .node.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+        .node.selected {
+            border-color: var(--text-primary);
+            background: var(--bg-elevated);
+        }
         .node[data-status="running"] { border-color: var(--warn); }
         .node[data-status="error"] { border-color: var(--danger); }
-        .node.dragging { cursor: grabbing; z-index: 20; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); transition: none; }
+        .node.dragging {
+            cursor: grabbing;
+            z-index: 20;
+            border-color: var(--text-primary);
+            transition: none;
+        }
 
-        .node-icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; background: var(--bg-elevated); background: color-mix(in srgb, var(--c, #8b93a7) 16%, var(--bg-elevated)); color: var(--c, var(--text-secondary)); }
-        .node-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-        .node-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .node-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
-        .node-sub { flex: 1; min-width: 0; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .node-state { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+        .node-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 17px;
+            flex-shrink: 0;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            color: var(--c, var(--text-secondary));
+        }
+        .node.selected .node-icon {
+            background: var(--bg-base);
+            border-color: var(--border-default);
+        }
+        .node-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .node-title-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+        .node-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); }
+        .node-step-num { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+        .node-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+        .node-sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .node-state {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
         .node[data-status="success"] .node-state { color: var(--ok); }
         .node[data-status="running"] .node-state { color: var(--warn); }
         .node[data-status="error"] .node-state { color: var(--danger); }
 
-        .port { position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: var(--bg-base); border: 2px solid var(--border-hover); cursor: crosshair; z-index: 3; transition: transform 0.12s, background 0.12s, border-color 0.12s; }
-        .port.in { left: -7px; }
-        .port.out { right: -7px; }
-        .port:hover { transform: scale(1.3); border-color: var(--accent); background: var(--accent); }
+        .port {
+            position: absolute;
+            top: 50%;
+            width: 10px;
+            height: 10px;
+            margin-top: -5px;
+            border-radius: 50%;
+            background: var(--bg-base);
+            border: 1.5px solid var(--border-hover);
+            cursor: crosshair;
+            z-index: 3;
+            transition: transform 0.12s, background 0.12s, border-color 0.12s;
+        }
+        .port.in { left: -6px; }
+        .port.out { right: -6px; }
+        .port:hover { transform: scale(1.25); border-color: var(--text-primary); background: var(--text-primary); }
         .connecting .node.can-drop .port { border-color: var(--ok); }
-        .connecting .node.drop-target { border-color: var(--ok); box-shadow: 0 0 0 3px rgba(95, 191, 143, 0.18); }
+        .connecting .node.drop-target { border-color: var(--ok); background: var(--bg-elevated); }
 
-        .marquee { position: absolute; z-index: 6; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 4px; pointer-events: none; }
+        .marquee {
+            position: absolute;
+            z-index: 6;
+            border: 1px solid var(--border-hover);
+            background: var(--accent-soft);
+            border-radius: 4px;
+            pointer-events: none;
+        }
 
-        /* ---------- Elemen melayang di kanvas ---------- */
-        .hint-chip { position: absolute; top: 12px; left: 12px; z-index: 10; display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 9px; font-size: 12px; color: var(--text-muted); max-width: calc(100% - 24px); }
-        .hint-chip i { font-size: 14px; flex-shrink: 0; }
+        /* ---------- Elemen Melayang di Kanvas ---------- */
+        .hint-chip {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 10;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            color: var(--text-secondary);
+            max-width: calc(100% - 24px);
+        }
+        .hint-chip i { font-size: 14px; color: var(--text-muted); flex-shrink: 0; }
 
-        .canvas-status { position: absolute; top: 12px; right: 12px; z-index: 10; display: none; align-items: center; gap: 10px; padding: 6px 10px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 9px; }
+        .canvas-status {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 10;
+            display: none;
+            align-items: center;
+            gap: 10px;
+        }
         .embed .canvas-status { display: inline-flex; }
         .embed .topbar { display: none; }
 
-        .toolbar { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 12px; max-width: calc(100% - 24px); overflow-x: auto; }
-        .tool-btn { width: 32px; height: 32px; flex-shrink: 0; background: transparent; border: none; border-radius: 8px; color: var(--text-secondary); font-size: 17px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s, color 0.12s; }
+        .toolbar {
+            position: absolute;
+            bottom: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 4px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            max-width: calc(100% - 24px);
+            overflow-x: auto;
+        }
+        .tool-btn {
+            width: 30px;
+            height: 30px;
+            flex-shrink: 0;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.12s, color 0.12s, border-color 0.12s;
+        }
         .tool-btn:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text-primary); }
         .tool-btn:disabled { opacity: 0.35; cursor: default; }
-        .tool-btn.active { background: var(--bg-elevated); color: var(--accent); }
-        .tool-sep { width: 1px; height: 18px; background: var(--border-default); margin: 0 4px; flex-shrink: 0; }
-        .zoom-text { min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
-        .tool-select { background: var(--bg-base); border: 1px solid var(--border-default); color: var(--text-secondary); font-size: 12px; border-radius: 8px; padding: 5px 6px; cursor: pointer; flex-shrink: 0; }
+        .tool-btn.active {
+            background: var(--bg-elevated);
+            border-color: var(--border-default);
+            color: var(--text-primary);
+        }
+        .tool-sep { width: 1px; height: 18px; background: var(--border-subtle); margin: 0 4px; flex-shrink: 0; }
+        .zoom-text {
+            min-width: 44px;
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .tool-select {
+            height: 30px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: var(--radius-sm);
+            padding: 0 8px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .tool-select:hover { border-color: var(--border-hover); color: var(--text-primary); }
 
-        /* ---------- Inspektur ---------- */
-        .inspector { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--bg-surface); border-left: 1px solid var(--border-subtle); min-height: 0; }
-        .insp-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+        /* ---------- Panel Inspektur Kanan ---------- */
+        .inspector {
+            width: 350px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-surface);
+            border-left: 1px solid var(--border-subtle);
+            min-height: 0;
+        }
+        .insp-empty {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px;
+            color: var(--text-muted);
+            font-size: 12.5px;
+            line-height: 1.55;
+            overflow-y: auto;
+        }
+        .insp-section-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .insp-empty-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .insp-empty-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        /* Daftar Ringkasan Tahap di Panel Kosong */
+        .stage-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .stage-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 7px 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            text-align: left;
+            color: var(--text-secondary);
+            transition: border-color 0.12s, background 0.12s, color 0.12s;
+        }
+        .stage-item:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+        .stage-item-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+        .stage-item-num {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--text-muted);
+        }
+        .stage-item-name {
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .stage-item-meta {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .stage-item[data-status="success"] .stage-item-meta { color: var(--ok); }
+        .stage-item[data-status="running"] .stage-item-meta { color: var(--warn); }
+        .stage-item[data-status="error"] .stage-item-meta { color: var(--danger); }
+
+        .shortcuts { border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+        .shortcuts-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
+        .shortcut { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12px; }
+        .shortcut dt { color: var(--text-secondary); }
+        .shortcut dd {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        /* Panel Detail Node Terpilih */
         .insp-main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-        .insp-head { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border-subtle); }
-        .insp-head .node-icon { width: 40px; height: 40px; font-size: 20px; }
-        .insp-name { font-size: 14px; font-weight: 700; line-height: 1.3; word-break: break-word; }
-        .insp-status { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
-        .insp-extra { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-        .insp-summary { padding: 12px 16px; font-size: 13px; color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); line-height: 1.55; }
+        .insp-nav-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+        }
+        .insp-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .insp-head .node-icon { width: 38px; height: 38px; font-size: 19px; }
+        .insp-head-info { flex: 1; min-width: 0; }
+        .insp-name { font-size: 13.5px; font-weight: 700; line-height: 1.3; word-break: break-word; }
+        .insp-status { font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); margin-top: 2px; }
+        .insp-extra { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+        .insp-summary {
+            padding: 10px 16px;
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            background: var(--bg-base);
+            border-bottom: 1px solid var(--border-subtle);
+            line-height: 1.5;
+        }
         .insp-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 10px 16px; }
-        .seg { display: flex; padding: 3px; background: var(--bg-base); border-radius: 9px; }
-        .seg button { background: transparent; border: none; color: var(--text-muted); font-size: 12.5px; font-weight: 600; padding: 4px 12px; border-radius: 7px; cursor: pointer; }
+        .seg {
+            display: flex;
+            padding: 2px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+        .seg button {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s;
+        }
+        .seg button:hover { color: var(--text-primary); }
         .seg button.active { background: var(--bg-elevated); color: var(--text-primary); }
-        .btn-ghost { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; color: var(--text-secondary); font-size: 12.5px; font-weight: 600; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
-        .btn-ghost:hover { background: var(--bg-elevated); color: var(--text-primary); }
+        .btn-ghost {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 8px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s, border-color 0.12s;
+        }
+        .btn-ghost:hover { background: var(--bg-elevated); border-color: var(--border-subtle); color: var(--text-primary); }
         .insp-body { flex: 1; overflow: auto; padding: 0 12px 12px; min-height: 0; }
-        .json-view { --text-primary: var(--code-fg); --text-secondary: var(--code-secondary); --text-muted: var(--code-muted); --border-subtle: var(--code-border);
-            font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--text-secondary); background: var(--bg-code); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 12px; white-space: pre-wrap; word-break: break-all; margin: 0; }
+        .insp-body::-webkit-scrollbar { width: 6px; height: 6px; }
+        .insp-body::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 999px; }
+        .json-view {
+            --text-primary: var(--code-fg);
+            --text-secondary: var(--code-secondary);
+            --text-muted: var(--code-muted);
+            --border-subtle: var(--code-border);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            background: var(--bg-code);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 0;
+        }
         .j-key { color: var(--text-primary); }
-        .j-str { color: #9bc7a9; }
-        .j-num { color: #d6b27a; }
+        .j-str { color: #8ab89a; }
+        .j-num { color: #cf9f63; }
         .j-bool, .j-null { color: var(--accent); }
-        .json-note { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+        .json-note { margin-top: 8px; font-size: 11.5px; color: var(--text-muted); }
 
-        .toast { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 100; background: var(--text-primary); color: var(--bg-base); padding: 7px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
+        .toast {
+            position: fixed;
+            bottom: 66px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-hover);
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 12.5px;
+            font-weight: 600;
+        }
 
         @media (max-width: 860px) {
             .workspace { flex-direction: column; }
-            .inspector { width: 100%; height: 40%; border-left: none; border-top: 1px solid var(--border-subtle); }
+            .inspector { width: 100%; height: 42%; border-left: none; border-top: 1px solid var(--border-subtle); }
             .test-bar { display: none; }
+            .hint-chip { display: none; }
+            .shortcuts { display: none; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -296,18 +778,23 @@
 <div class="app">
     <header class="topbar">
         <div class="tb-left">
-            <a href="/" class="tb-back" title="Kembali ke chat"><i class="ph ph-arrow-left"></i><span>Chat</span></a>
-            <span class="tb-title">Alur eksekusi</span>
+            <a href="/" class="tb-back" title="Kembali ke percakapan"><i class="ph ph-arrow-left"></i><span>Chat</span></a>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <div class="tb-title-wrap">
+                <span class="tb-title">Alur eksekusi</span>
+                <span class="tb-badge">8 tahap</span>
+            </div>
         </div>
 
         <form id="test-run-form" class="test-bar" autocomplete="off">
-            <input type="text" id="test-input" placeholder="Kirim pesan uji untuk menjalankan alur">
+            <i class="ph ph-terminal-window test-bar-icon" aria-hidden="true"></i>
+            <input type="text" id="test-input" placeholder="Kirim pesan uji untuk menginspeksi alur...">
             <button type="submit" id="test-submit-btn" class="btn-run"><i class="ph ph-play"></i> Jalankan</button>
         </form>
 
         <div class="tb-right">
-            <span class="conn" id="conn" data-state="off"><span class="conn-dot"></span><span id="sse-status-text">Menyambung</span></span>
-            <span class="total" id="total-time-badge">0 ms</span>
+            <span class="conn" id="conn" data-state="off" role="status"><span class="conn-dot"></span><span id="sse-status-text">Menyambung</span></span>
+            <span class="total" id="total-time-badge" title="Total durasi eksekusi">0 ms</span>
         </div>
     </header>
 
@@ -325,9 +812,9 @@
                 <div id="selection-marquee" class="marquee hidden"></div>
             </div>
 
-            <div class="hint-chip" title="Geser node untuk memindah. Tarik dari titik kanan node ke node lain untuk menyambung. Scroll untuk menggeser kanvas, Ctrl + scroll untuk zoom, Spasi + seret untuk pan.">
+            <div class="hint-chip">
                 <i class="ph ph-info"></i>
-                <span>Tata letak hanya mengubah tampilan. Eksekusi pipeline tidak terpengaruh.</span>
+                <span>Tata letak hanya mengubah tampilan kanvas, urutan eksekusi tetap sama.</span>
             </div>
 
             <div class="canvas-status">
@@ -338,31 +825,59 @@
                 <button type="button" class="tool-btn" id="tb-undo" title="Urungkan (Ctrl+Z)" aria-label="Urungkan"><i class="ph ph-arrow-counter-clockwise"></i></button>
                 <button type="button" class="tool-btn" id="tb-redo" title="Ulangi (Ctrl+Shift+Z)" aria-label="Ulangi"><i class="ph ph-arrow-clockwise"></i></button>
                 <span class="tool-sep"></span>
-                <button type="button" class="tool-btn" id="tb-zoom-out" title="Perkecil" aria-label="Perkecil"><i class="ph ph-minus"></i></button>
+                <button type="button" class="tool-btn" id="tb-zoom-out" title="Perkecil (-)" aria-label="Perkecil"><i class="ph ph-minus"></i></button>
                 <span class="zoom-text" id="zoom-level-text">100%</span>
-                <button type="button" class="tool-btn" id="tb-zoom-in" title="Perbesar" aria-label="Perbesar"><i class="ph ph-plus"></i></button>
+                <button type="button" class="tool-btn" id="tb-zoom-in" title="Perbesar (+)" aria-label="Perbesar"><i class="ph ph-plus"></i></button>
                 <button type="button" class="tool-btn" id="tb-fit" title="Sesuaikan ke layar (Shift+1)" aria-label="Sesuaikan ke layar"><i class="ph ph-corners-out"></i></button>
                 <span class="tool-sep"></span>
                 <button type="button" class="tool-btn active" id="tb-tool-select" title="Pilih dan seret node" aria-label="Mode pilih"><i class="ph ph-cursor"></i></button>
                 <button type="button" class="tool-btn" id="tb-tool-pan" title="Geser kanvas (atau tahan Spasi)" aria-label="Mode geser"><i class="ph ph-hand"></i></button>
                 <span class="tool-sep"></span>
-                <button type="button" class="tool-btn" id="tb-tidy" title="Kembalikan tata letak bawaan" aria-label="Kembalikan tata letak bawaan"><i class="ph ph-magic-wand"></i></button>
-                <button type="button" class="tool-btn" id="tb-reset-wires" title="Kembalikan garis bawaan" aria-label="Kembalikan garis bawaan"><i class="ph ph-flow-arrow"></i></button>
-                <select id="wire-style-select" class="tool-select" title="Bentuk garis" aria-label="Bentuk garis">
+                <button type="button" class="tool-btn" id="tb-tidy" title="Kembalikan posisi node bawaan" aria-label="Kembalikan posisi node bawaan"><i class="ph ph-squares-four"></i></button>
+                <button type="button" class="tool-btn" id="tb-reset-wires" title="Kembalikan sambungan garis bawaan" aria-label="Kembalikan sambungan garis bawaan"><i class="ph ph-flow-arrow"></i></button>
+                <select id="wire-style-select" class="tool-select" title="Gaya garis penghubung" aria-label="Gaya garis penghubung">
                     <option value="curved">Melengkung</option>
                     <option value="step">Siku</option>
                     <option value="straight">Lurus</option>
                 </select>
-                <button type="button" class="tool-btn" id="tb-grid" title="Ganti latar: titik, garis, polos" aria-label="Ganti latar"><i class="ph ph-grid-four"></i></button>
+                <button type="button" class="tool-btn" id="tb-grid" title="Ganti latar kanvas: titik, garis, polos" aria-label="Ganti latar"><i class="ph ph-grid-four"></i></button>
             </div>
         </div>
 
-        <aside class="inspector" aria-label="Data node">
-            <div class="insp-empty" id="insp-empty">Pilih node di kanvas untuk melihat data input dan outputnya.</div>
+        <aside class="inspector" aria-label="Inspektur data node">
+            <div class="insp-empty" id="insp-empty">
+                <div>
+                    <div class="insp-section-head">
+                        <div class="insp-empty-title">Tahap eksekusi</div>
+                    </div>
+                    <p class="insp-empty-sub">Pilih node pada kanvas atau daftar di bawah untuk memeriksa muatan JSON input dan output.</p>
+                    <div class="stage-list" id="insp-stage-list"></div>
+                </div>
+                <div class="shortcuts">
+                    <div class="shortcuts-title">Pintasan kanvas</div>
+                    <dl>
+                        <div class="shortcut"><dt>Geser kanvas</dt><dd>Scroll / Spasi + seret</dd></div>
+                        <div class="shortcut"><dt>Perbesar / perkecil</dt><dd>Ctrl + Scroll</dd></div>
+                        <div class="shortcut"><dt>Multi-pilihan</dt><dd>Shift + Klik</dd></div>
+                        <div class="shortcut"><dt>Sambungkan node</dt><dd>Tarik titik kanan</dd></div>
+                        <div class="shortcut"><dt>Hapus garis</dt><dd>Delete</dd></div>
+                        <div class="shortcut"><dt>Urungkan</dt><dd>Ctrl + Z</dd></div>
+                        <div class="shortcut"><dt>Sesuaikan layar</dt><dd>Shift + 1</dd></div>
+                    </dl>
+                </div>
+            </div>
             <div class="insp-main hidden" id="insp-main">
+                <div class="insp-nav-bar">
+                    <button type="button" class="btn-ghost" id="insp-back-btn" title="Kembali ke daftar tahap">
+                        <i class="ph ph-arrow-left"></i> Semua tahap
+                    </button>
+                    <button type="button" class="btn-ghost" id="insp-focus-btn" title="Pusatkan node di kanvas">
+                        <i class="ph ph-crosshair"></i> Fokus node
+                    </button>
+                </div>
                 <div class="insp-head">
                     <div class="node-icon" id="insp-icon"><i class="ph ph-gear"></i></div>
-                    <div>
+                    <div class="insp-head-info">
                         <div class="insp-name" id="side-node-name">-</div>
                         <div class="insp-status" id="side-node-meta"></div>
                         <div class="insp-extra hidden" id="insp-extra"></div>
@@ -374,9 +889,9 @@
                         <button type="button" id="tab-out-btn" class="active">Output</button>
                         <button type="button" id="tab-in-btn">Input</button>
                     </div>
-                    <button type="button" class="btn-ghost" id="insp-copy" title="Salin JSON"><i class="ph ph-copy"></i> Salin</button>
+                    <button type="button" class="btn-ghost" id="insp-copy" title="Salin muatan JSON"><i class="ph ph-copy"></i> Salin JSON</button>
                 </div>
-                <div class="insp-body" id="insp-body">
+                <div class="insp-body" id="insp-body" aria-live="polite">
                     <pre class="json-view"><code id="side-code-view"></code></pre>
                     <div class="json-note hidden" id="json-note"></div>
                 </div>
@@ -384,7 +899,7 @@
         </aside>
     </div>
 </div>
-<div class="toast hidden" id="toast"></div>
+<div class="toast hidden" id="toast" role="status"></div>
 
 <script>
 (() => {
@@ -412,18 +927,19 @@
     const nodesLayer = $('nodes-layer');
     const marquee = $('selection-marquee');
     const tools = $('wire-tools');
+    const stageListEl = $('insp-stage-list');
 
-    /* ---------------- Definisi node bawaan ---------------- */
+    /* ---------------- Definisi node bawaan (selaras dengan script.js) ---------------- */
     const NODE_ORDER = ['node_input', 'node_emotion', 'node_memory', 'node_prompt', 'node_llm', 'node_filter', 'node_state', 'node_output'];
     const NODE_META = {
-        node_input:   { name: 'Input Ingestion',     icon: 'ph-chat-circle-dots', color: '#7ea6f0' },
-        node_emotion: { name: 'Emotion Classifier',  icon: 'ph-heartbeat',        color: '#e58fb0' },
-        node_memory:  { name: 'Cognitive Memory',    icon: 'ph-brain',            color: '#a98fe6' },
-        node_prompt:  { name: 'Prompt Synthesizer',  icon: 'ph-brackets-curly',   color: '#5fc3d0' },
-        node_llm:     { name: 'Neural Inference',    icon: 'ph-cpu',              color: '#e0a84a' },
-        node_filter:  { name: 'Safety Filter',       icon: 'ph-shield-check',     color: '#5fbf8f' },
-        node_state:   { name: 'State & Persistence', icon: 'ph-database',         color: '#8e97e8' },
-        node_output:  { name: 'Response Stream',     icon: 'ph-paper-plane-right', color: '#7ea6f0' }
+        node_input:   { step: '01', name: 'Input Ingestion',                icon: 'ph-chat-circle-dots',  color: '#6488a8' },
+        node_emotion: { step: '02', name: 'Emotion & Tone Classifier',      icon: 'ph-heartbeat',         color: '#b87366' },
+        node_memory:  { step: '03', name: 'Cognitive Memory & RDF Retrieval', icon: 'ph-brain',           color: '#788896' },
+        node_prompt:  { step: '04', name: 'Dynamic Prompt Synthesizer',     icon: 'ph-brackets-curly',    color: '#569499' },
+        node_llm:     { step: '05', name: 'Neural Inference Engine',        icon: 'ph-cpu',               color: '#c8913b' },
+        node_filter:  { step: '06', name: 'Anti-Hallucination & CoT Filter', icon: 'ph-shield-check',     color: '#4d9e78' },
+        node_state:   { step: '07', name: 'State & Persistence Sync',       icon: 'ph-database',          color: '#6e7f91' },
+        node_output:  { step: '08', name: 'Response Delivery Stream',       icon: 'ph-paper-plane-right', color: '#6488a8' }
     };
 
     // Dua baris, kiri ke kanan; semua kelipatan GRID agar rapi saat snap
@@ -467,7 +983,6 @@
                     grid: [0, 1, 2].includes(s.grid) ? s.grid : 0
                 };
             }
-            // Migrasi dari versi lama bila pengguna pernah mengubah tata letak
             const lp = JSON.parse(localStorage.getItem('shiro_flowchart_layout_v3') || 'null');
             if (lp && Object.keys(OLD_DEFAULT).some((k) => !lp[k] || lp[k].x !== OLD_DEFAULT[k].x || lp[k].y !== OLD_DEFAULT[k].y)) {
                 base.pos = { ...base.pos, ...lp };
@@ -497,6 +1012,7 @@
     let nodesById = new Map();
     const nodeEls = new Map();
     const wireEls = new Map();
+    const stageEls = new Map();
 
     let selected = new Set();
     let selectedWire = null;
@@ -561,7 +1077,6 @@
         style = style || wireStyle;
         if (style === 'straight') return `M${x1} ${y1}L${x2} ${y2}`;
         if (isBackEdge(x1, x2)) {
-            // Sambungan mundur: keluar ke kanan, lewat celah antar baris, masuk dari kiri
             const out = x1 + 28, inn = x2 - 28;
             let midY = (y1 + y2) / 2 + curv;
             if (Math.abs(y2 - y1) < NODE_H) midY = Math.min(y1, y2) - 56 + curv;
@@ -578,7 +1093,7 @@
     const outPoint = (id) => ({ x: pos[id].x + NODE_W, y: pos[id].y + NODE_H / 2 });
     const inPoint = (id) => ({ x: pos[id].x, y: pos[id].y + NODE_H / 2 });
 
-    /* ---------------- Node ---------------- */
+    /* ---------------- Node & Daftar Tahap ---------------- */
     function freeSlot() {
         for (let i = 0; i < 40; i++) {
             const p = { x: 64 + (i % 4) * 320, y: 96 + Math.floor(i / 4) * 160 };
@@ -597,10 +1112,44 @@
         nodeEls.forEach((rec, id) => { if (pos[id]) placeNode(rec.el, id); });
     }
 
+    function ensureStageItem(id) {
+        let srec = stageEls.get(id);
+        if (srec || !stageListEl) return srec;
+        const meta = NODE_META[id] || {};
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'stage-item';
+        btn.dataset.id = id;
+        btn.innerHTML =
+            '<span class="stage-item-left">' +
+                '<span class="stage-item-num">' + (meta.step || '--') + '</span>' +
+                '<span class="stage-item-name"></span>' +
+            '</span>' +
+            '<span class="stage-item-meta">Menunggu</span>';
+        btn.addEventListener('click', () => {
+            selected = new Set([id]);
+            selectedWire = null;
+            paintWireStates();
+            refreshTools();
+            updateSelectionUi();
+        });
+        stageListEl.appendChild(btn);
+        srec = {
+            el: btn,
+            name: btn.querySelector('.stage-item-name'),
+            meta: btn.querySelector('.stage-item-meta')
+        };
+        stageEls.set(id, srec);
+        return srec;
+    }
+
     function ensureNode(id) {
         let rec = nodeEls.get(id);
         if (rec) return rec;
         if (!pos[id]) pos[id] = freeSlot();
+        const meta = NODE_META[id] || {};
+        const idx = NODE_ORDER.indexOf(id);
+        const stepStr = meta.step || (idx >= 0 ? String(idx + 1).padStart(2, '0') : '');
         const el = document.createElement('div');
         el.className = 'node';
         el.id = id;
@@ -611,8 +1160,10 @@
             '<div class="port in" data-port="in" title="Masuk"></div>' +
             '<div class="port out" data-port="out" title="Tarik ke node lain untuk menyambung"></div>' +
             '<div class="node-icon"><i class="ph"></i></div>' +
-            '<div class="node-body"><div class="node-title"></div>' +
-            '<div class="node-meta"><span class="node-sub"></span><span class="node-state"></span></div></div>';
+            '<div class="node-body">' +
+                '<div class="node-title-row"><span class="node-title"></span><span class="node-step-num">' + stepStr + '</span></div>' +
+                '<div class="node-meta"><span class="node-sub"></span><span class="node-state"></span></div>' +
+            '</div>';
         placeNode(el, id);
         nodesLayer.appendChild(el);
         rec = {
@@ -624,6 +1175,7 @@
             key: ''
         };
         nodeEls.set(id, rec);
+        ensureStageItem(id);
         return rec;
     }
 
@@ -634,6 +1186,13 @@
         return '';
     }
 
+    function stageMetaText(status, ms) {
+        if (status === 'running') return 'Berjalan...';
+        if (status === 'success') return Math.round(ms || 0) + ' ms';
+        if (status === 'error') return 'Gagal';
+        return 'Menunggu';
+    }
+
     // Memperbarui isi node yang sudah ada. Tidak pernah membuat ulang elemen.
     function paintNode(id, n) {
         n = n || {};
@@ -641,7 +1200,7 @@
         const meta = NODE_META[id] || {};
         const name = n.name || meta.name || id;
         const icon = n.icon || meta.icon || 'ph-gear';
-        const color = n.color || meta.color || '#8b93a7';
+        const color = n.color || meta.color || '#6488a8';
         const status = n.status || 'idle';
         const summary = n.summary || (status === 'idle' ? 'Menunggu' : '');
         const key = [name, icon, color, status, n.duration_ms, summary].join('|');
@@ -655,6 +1214,13 @@
         rec.sub.textContent = summary;
         rec.state.innerHTML = stateHtml(status, n.duration_ms);
         rec.el.setAttribute('aria-label', name + ', ' + (status === 'idle' ? 'menunggu' : status));
+
+        const srec = ensureStageItem(id);
+        if (srec) {
+            srec.el.dataset.status = status;
+            srec.name.textContent = name;
+            srec.meta.textContent = stageMetaText(status, n.duration_ms);
+        }
     }
 
     function nodeData(id) {
@@ -752,7 +1318,7 @@
         return true;
     }
 
-    /* ---------------- Seleksi & inspektur ---------------- */
+    /* ---------------- Seleksi & Inspektur ---------------- */
     function updateSelectionUi() {
         nodeEls.forEach((rec, id) => rec.el.classList.toggle('selected', selected.has(id)));
         updateInspector(false);
@@ -786,7 +1352,7 @@
         if (!force && key === lastInspectKey) return;
         lastInspectKey = key;
 
-        const color = n.color || (NODE_META[id] || {}).color || '#8b93a7';
+        const color = n.color || (NODE_META[id] || {}).color || '#6488a8';
         const iconWrap = $('insp-icon');
         iconWrap.style.setProperty('--c', color);
         iconWrap.firstElementChild.className = 'ph ' + (n.icon || (NODE_META[id] || {}).icon || 'ph-gear');
@@ -809,7 +1375,7 @@
         const note = $('json-note');
         if (text.length > JSON_LIMIT) {
             text = text.slice(0, JSON_LIMIT);
-            note.textContent = 'Data panjang, hanya sebagian ditampilkan. Gunakan Salin untuk mengambil seluruhnya.';
+            note.textContent = 'Data panjang, hanya sebagian ditampilkan. Gunakan Salin JSON untuk mengambil seluruhnya.';
             note.classList.remove('hidden');
         } else {
             note.classList.add('hidden');
@@ -822,6 +1388,16 @@
         $('tab-out-btn').classList.toggle('active', tab === 'output');
         $('tab-in-btn').classList.toggle('active', tab === 'input');
         updateInspector(true);
+    }
+
+    function focusSelectedNode() {
+        const id = [...selected][0];
+        if (!id || !pos[id]) return;
+        const vw = viewport.clientWidth, vh = viewport.clientHeight;
+        pan.x = vw / 2 - (pos[id].x + NODE_W / 2) * zoom;
+        pan.y = vh / 2 - (pos[id].y + NODE_H / 2) * zoom;
+        viewTouched = true;
+        applyView();
     }
 
     function toast(msg) {
@@ -955,7 +1531,6 @@
 
         if (wireEl) { selectWire(wireEl.getAttribute('data-id')); return; }
 
-        // Latar kanvas: pilih area (marquee)
         const additive = e.shiftKey || e.ctrlKey || e.metaKey;
         const start = toCanvas(e.clientX, e.clientY);
         gesture = { type: 'marquee', sx: e.clientX, sy: e.clientY, x0: start.x, y0: start.y, base: additive ? new Set(selected) : new Set(), moved: false };
@@ -1137,7 +1712,6 @@
 
     window.addEventListener('blur', () => { spaceDown = false; if (tool !== 'pan') viewport.classList.remove('pan-ready'); });
 
-    // Node dapat difokus dengan Tab, Enter memilihnya
     nodesLayer.addEventListener('keydown', (e) => {
         const nodeEl = e.target.closest('.node');
         if (nodeEl && (e.key === 'Enter')) {
@@ -1147,7 +1721,7 @@
         }
     });
 
-    /* ---------------- Toolbar ---------------- */
+    /* ---------------- Toolbar & Tombol Inspektur ---------------- */
     function setTool(next) {
         tool = next;
         $('tb-tool-select').classList.toggle('active', next === 'select');
@@ -1195,6 +1769,14 @@
 
     $('tab-out-btn').addEventListener('click', () => setTab('output'));
     $('tab-in-btn').addEventListener('click', () => setTab('input'));
+    $('insp-back-btn').addEventListener('click', () => {
+        selected = new Set();
+        selectedWire = null;
+        paintWireStates();
+        refreshTools();
+        updateSelectionUi();
+    });
+    $('insp-focus-btn').addEventListener('click', focusSelectedNode);
     $('insp-copy').addEventListener('click', () => {
         if (!currentJsonText) return;
         navigator.clipboard.writeText(currentJsonText).then(() => toast('JSON tersalin'), () => toast('Gagal menyalin'));
@@ -1228,7 +1810,6 @@
         } catch (err) { console.error('Gagal memuat trace terakhir:', err); }
     }
 
-    // Trace dari halaman chat (saat dibuka di dalam modal)
     window.addEventListener('message', (e) => {
         if (e.origin !== window.location.origin) return;
         const m = e.data;
@@ -1284,7 +1865,6 @@
         }
     });
 
-    // Tema diubah dari halaman chat (tab/iframe lain, penyimpanan yang sama)
     window.addEventListener('storage', (e) => {
         if (window.ShiroTheme && e.key === window.ShiroTheme.key) window.ShiroTheme.apply(window.ShiroTheme.get());
     });
@@ -1294,7 +1874,6 @@
         $('wire-style-select').value = wireStyle;
         applyGrid();
         updateHistoryUi();
-        // Tampilkan node bawaan segera agar kanvas tidak kosong sebelum data pertama tiba
         NODE_ORDER.forEach((id) => paintNode(id, {}));
         rebuildWires();
         fitView();

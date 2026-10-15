@@ -1,9 +1,10 @@
 # ShiroLLM-AI-CHAT
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Renn-devBI/ShiroLLM-AI-CHAT/blob/main/Shiro_LLMA_Colab.ipynb)
+[![Open AI in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Renn-devBI/ShiroLLM-AI-CHAT/blob/main/Shiro_LLMA_Colab.ipynb)
+[![Open Voice Changer in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Renn-devBI/ShiroLLM-AI-CHAT/blob/main/Shiro_VoiceChanger_Colab.ipynb)
 ![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11-blue)
 ![Architecture](https://img.shields.io/badge/Architecture-Modular%20v2.5-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-14%20Passed-success)
+![Tests](https://img.shields.io/badge/Tests-88%20Passed-success)
 
 Asisten AI percakapan cerdas dengan persona adik manja, cerdas, dan setia (**Shiro**), dilengkapi arsitektur memori kognitif berjangka panjang, pemahaman multimodal vision, integrasi web browsing cerdas, normalisasi typo bahasa gaul, serta ekspor dataset continuous learning otomatis.
 
@@ -33,10 +34,12 @@ Asisten AI percakapan cerdas dengan persona adik manja, cerdas, dan setia (**Shi
 ## 🚀 Cara Menjalankan
 
 ### Opsi 1: Google Colab (Paling Mudah & Gratis GPU)
-1. Buka [`Shiro_LLMA_Colab.ipynb`](Shiro_LLMA_Colab.ipynb) dengan mengklik tombol **Open In Colab** di atas.
-2. Pastikan Runtime menggunakan GPU (**Runtime** -> **Change runtime type** -> **T4 GPU**).
-3. Jalankan semua cell secara berurutan.
-4. Buka URL publik Cloudflare Tunnel yang ditampilkan di terminal output.
+Tersedia 2 Google Colab resmi yang dapat dibuka dan dijalankan pada tab terpisah:
+1. 🧠 [**Shiro_LLMA_Colab.ipynb**](Shiro_LLMA_Colab.ipynb) — Menjalankan Server Utama AI Chatting, Multimodal Vision, Memori Google Drive, dan Web UI Shiro.
+2. 🎙️ [**Shiro_VoiceChanger_Colab.ipynb**](Shiro_VoiceChanger_Colab.ipynb) — Menjalankan Real-Time Voice Changer (RVC MMVCServerSIO) dengan tunneling Cloudflare / Ngrok.
+
+> [!TIP]
+> Pastikan masing-masing runtime menggunakan GPU (**Runtime** -> **Change runtime type** -> **T4 GPU**). Jalankan semua cell secara berurutan.
 
 ---
 

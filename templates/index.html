@@ -4,21 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shiro</title>
+    <meta name="theme-color" content="#121315">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f2125'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%23ececef'%3ES%3C/text%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
     <script>
 (function () {
     // Mesin tema bersama (index.html dan pipeline.html). Tema "default" tidak
     // menimpa apa pun, jadi tampilan awal persis seperti di style.css.
     var KEY = 'shiro_theme_v1';
     var PRESETS = [
-        { id: 'default',  name: 'Grafit',       bg: '#161719', fg: '#e8e8ea', accent: '#aab7ff' },
-        { id: 'shiro',    name: 'Shiro',        bg: '#f4f4f2', fg: '#1d1e21', accent: '#4b5bd1' },
-        { id: 'midnight', name: 'Tengah malam', bg: '#10151d', fg: '#e4e8ef', accent: '#7da3f5' },
+        { id: 'default',  name: 'Grafit',       bg: '#121315', fg: '#ececef', accent: '#94a3b8' },
+        { id: 'shiro',    name: 'Shiro',        bg: '#f4f4f2', fg: '#1d1e21', accent: '#3d6a8c' },
+        { id: 'midnight', name: 'Tengah malam', bg: '#10151d', fg: '#e4e8ef', accent: '#6f9cc4' },
         { id: 'forest',   name: 'Hutan',        bg: '#121713', fg: '#e4eae3', accent: '#8fce9e' },
         { id: 'dusk',     name: 'Senja',        bg: '#191615', fg: '#ece5e0', accent: '#d9a066' },
         { id: 'sakura',   name: 'Sakura',       bg: '#191416', fg: '#eee5e9', accent: '#e596b2' }
@@ -110,11 +112,475 @@
     apply(get());
 })();
     </script>
+    <style>
+        /* ==========================================================================
+           Peningkatan UI/UX Presisi (Matte, Terstruktur, Bebas Glow & Bebas Emoji)
+           Tetap mempertahankan seluruh variabel dan kontrak class dari style.css
+           ========================================================================== */
+
+        /* Sidebar: Label bagian & perapihan navigasi bawah */
+        .sidebar-section-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            user-select: none;
+        }
+
+        .sidebar-footer {
+            padding: 10px 8px;
+            gap: 4px;
+            background: var(--bg-surface);
+        }
+
+        .sidebar-footer-stat {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 8px 10px;
+            margin-bottom: 4px;
+        }
+
+        .btn-sidebar-footer {
+            justify-content: space-between;
+            font-weight: 500;
+        }
+
+        .btn-sidebar-footer-left {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-sidebar-footer-Left i {
+            font-size: 15px;
+            color: var(--text-muted);
+        }
+
+        .sidebar-item-hint {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+        }
+
+        /* Navbar: Pemisah & tata letak indikator */
+        .brand-sep {
+            width: 1px;
+            height: 14px;
+            background: var(--border-default);
+            flex-shrink: 0;
+        }
+
+        .nav-divider {
+            width: 1px;
+            height: 16px;
+            background: var(--border-subtle);
+            margin: 0 2px;
+        }
+
+        .memory-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            height: 26px;
+            padding: 0 8px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-size: 11.5px;
+            color: var(--text-secondary);
+        }
+
+        /* Area Chat & Tombol Gulir ke Bawah */
+        .main-content {
+            position: relative;
+        }
+
+        .scroll-bottom-btn {
+            position: absolute;
+            bottom: 118px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 30;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 30px;
+            padding: 0 12px;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-full);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+        }
+
+        .scroll-bottom-btn:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-surface);
+        }
+
+        /* Composer & Footer Meta */
+        .composer-bar {
+            padding-top: 4px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .media-btn-label {
+            font-size: 11.5px;
+            font-weight: 500;
+            margin-left: 5px;
+            color: var(--text-secondary);
+        }
+
+        .btn-media-labeled {
+            width: auto;
+            padding: 0 8px;
+            height: 28px;
+        }
+
+        .btn-media-labeled:hover .media-btn-label {
+            color: var(--text-primary);
+        }
+
+        .footer-meta {
+            padding: 2px 4px 0;
+        }
+
+        .footer-status-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .footer-status-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .footer-shortcuts {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .kbd-inline {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            padding: 1px 5px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        /* Modal Pengaturan & Dialog */
+        #settings-modal .modal-dialog {
+            max-width: 540px;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .settings-modal-top {
+            padding: 16px 20px 0;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }
+
+        .settings-modal-top .modal-header {
+            margin-bottom: 12px;
+        }
+
+        .modal-title-group {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .modal-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .settings-modal-top .modal-tabs {
+            margin-bottom: 12px;
+        }
+
+        .settings-modal-body {
+            padding: 18px 20px 20px;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .settings-modal-body::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .settings-modal-body::-webkit-scrollbar-thumb {
+            background: var(--border-default);
+            border-radius: var(--radius-full);
+        }
+
+        .tab-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 7px 8px;
+        }
+
+        .tab-btn i {
+            font-size: 14px;
+        }
+
+        /* Kartu Identitas Profil (Anda & Shiro) */
+        .profile-identity-card {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 14px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            margin-bottom: 16px;
+        }
+
+        .profile-identity-card .profile-preview-box {
+            margin-bottom: 0;
+            flex-shrink: 0;
+        }
+
+        .profile-identity-card .avatar-preview {
+            width: 60px;
+            height: 60px;
+            font-size: 22px;
+        }
+
+        .profile-upload-meta {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .profile-upload-meta label {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .profile-upload-meta input[type="file"] {
+            font-size: 12px;
+            color: var(--text-muted);
+            width: 100%;
+        }
+
+        .profile-upload-meta input[type="file"]::file-selector-button {
+            font-family: var(--font-ui);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            padding: 5px 10px;
+            margin-right: 10px;
+            cursor: pointer;
+            transition: background 0.12s, border-color 0.12s;
+        }
+
+        .profile-upload-meta input[type="file"]::file-selector-button:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-surface);
+        }
+
+        /* Kartu Panel pada Tab Model, Tema, & API */
+        .settings-panel {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .settings-panel + .settings-panel {
+            margin-top: 14px;
+        }
+
+        .settings-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .settings-panel-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .settings-panel-title i {
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+
+        .settings-panel .form-field {
+            margin-bottom: 0;
+        }
+
+        .settings-panel .info-box {
+            background: var(--bg-surface);
+        }
+
+        .badge-active {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+
+        .badge-active::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--ok);
+        }
+
+        /* Endpoint Cards di Tab API */
+        .endpoint-list {
+            gap: 10px;
+            border-top: none;
+            margin-top: 2px;
+        }
+
+        .endpoint-item {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
+        }
+
+        .endpoint-route-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .endpoint-method-badge {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            padding: 2px 6px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: 4px;
+            color: var(--text-primary);
+        }
+
+        .endpoint-url {
+            display: inline-block;
+            margin-top: 2px;
+            padding: 3px 7px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+        }
+
+        /* Tab Tema: Pemilih Warna Kustom */
+        .theme-section-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .theme-custom {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
+            margin-bottom: 14px;
+        }
+
+        .color-row {
+            padding: 7px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .color-row:last-of-type {
+            border-bottom: none;
+        }
+
+        .color-hex {
+            width: auto;
+            padding: 2px 7px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .theme-contrast {
+            padding: 8px 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            margin-top: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .footer-shortcuts,
+            .media-btn-label {
+                display: none;
+            }
+            .btn-media-labeled {
+                width: 30px;
+                padding: 0;
+            }
+            .tab-btn span {
+                font-size: 11.5px;
+            }
+            .tab-btn i {
+                display: none;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="app-layout">
         <!-- Sidebar riwayat -->
-        <aside class="chat-sidebar" id="chat-sidebar">
+        <aside class="chat-sidebar" id="chat-sidebar" aria-label="Navigasi riwayat percakapan">
             <div class="sidebar-header">
                 <button id="sidebar-new-chat-btn" class="btn-sidebar-new-chat" type="button">
                     <i class="ph ph-plus"></i>
@@ -125,6 +591,10 @@
                 </button>
             </div>
 
+            <div class="sidebar-section-head">
+                <span>Riwayat percakapan</span>
+            </div>
+
             <div class="sidebar-session-list" id="sidebar-session-list">
                 <!-- Sesi percakapan di-render lewat script.js -->
             </div>
@@ -133,18 +603,24 @@
                 <div class="sidebar-footer-stat" title="Jumlah fakta yang diingat Shiro">
                     <div class="stat-icon"><i class="ph ph-brain"></i></div>
                     <div class="stat-info">
-                        <span class="stat-label">Ingatan</span>
+                        <span class="stat-label">Basis ingatan</span>
                         <span class="stat-val" id="sidebar-memory-count">0 fakta</span>
                     </div>
                 </div>
                 <div class="sidebar-footer-actions">
                     <button id="sidebar-pipeline-btn" class="btn-sidebar-footer" type="button">
-                        <i class="ph ph-tree-structure"></i>
-                        <span>Alur eksekusi</span>
+                        <span class="btn-sidebar-footer-left">
+                            <i class="ph ph-tree-structure"></i>
+                            <span>Alur eksekusi</span>
+                        </span>
+                        <span class="sidebar-item-hint">Inspektur</span>
                     </button>
                     <button id="sidebar-settings-btn" class="btn-sidebar-footer" type="button">
-                        <i class="ph ph-gear"></i>
-                        <span>Pengaturan</span>
+                        <span class="btn-sidebar-footer-left">
+                            <i class="ph ph-gear"></i>
+                            <span>Pengaturan</span>
+                        </span>
+                        <span class="sidebar-item-hint">Konfigurasi</span>
                     </button>
                 </div>
             </div>
@@ -159,16 +635,18 @@
                         <i class="ph ph-sidebar-simple"></i>
                     </button>
                     <div class="brand">
-                        <span class="status-dot" title="Terhubung"></span>
+                        <span class="status-dot" title="Terhubung" role="img" aria-label="Terhubung"></span>
                         <div class="brand-text">
                             <span class="brand-title">Shiro</span>
-                            <span class="model-pill">Qwen3-32B</span>
+                            <span class="brand-sep" aria-hidden="true"></span>
+                            <span class="model-pill" title="Model aktif saat ini">Qwen3-32B</span>
                         </div>
                     </div>
                 </div>
 
                 <div class="nav-actions">
                     <div class="memory-badge btn-duplicate-nav" title="Jumlah ingatan aktif">
+                        <i class="ph ph-brain"></i>
                         <span class="badge-label">Ingatan:</span>
                         <span id="memory-count">0</span>
                     </div>
@@ -183,6 +661,7 @@
                     <button id="settings-btn" class="btn-icon btn-duplicate-nav" title="Pengaturan" aria-label="Pengaturan" type="button">
                         <i class="ph ph-gear"></i>
                     </button>
+                    <span class="nav-divider btn-duplicate-nav" aria-hidden="true"></span>
                     <button id="reset-btn" class="btn-icon btn-danger-hover" title="Hapus percakapan sesi ini" aria-label="Hapus percakapan sesi ini" type="button">
                         <i class="ph ph-trash"></i>
                     </button>
@@ -192,7 +671,7 @@
             </header>
 
             <main class="chat-viewport" id="chat-viewport">
-                <div id="chat-messages" class="messages-list">
+                <div id="chat-messages" class="messages-list" role="log" aria-live="polite" aria-label="Percakapan">
                     <div class="message assistant">
                         <div class="avatar shiro-avatar">S</div>
                         <div class="bubble">Halo Kakak. Ada yang bisa Shiro bantu hari ini?</div>
@@ -208,6 +687,11 @@
                     </div>
                 </div>
             </main>
+
+            <button type="button" id="scroll-bottom-btn" class="scroll-bottom-btn hidden" title="Gulir ke pesan terbaru" aria-label="Gulir ke pesan terbaru">
+                <i class="ph ph-arrow-down"></i>
+                <span>Pesan terbaru</span>
+            </button>
 
             <footer class="input-section">
                 <div id="document-preview-bar" class="image-preview-bar hidden">
@@ -240,26 +724,30 @@
                     <textarea
                         id="user-input"
                         class="chat-input"
-                        placeholder="Tulis pesan"
+                        placeholder="Tulis pesan..."
+                        aria-label="Pesan untuk Shiro"
                         autocomplete="off"
                         rows="1"
                     ></textarea>
                     <div class="composer-bar">
                         <div class="media-input-buttons">
-                            <button id="upload-doc-btn" class="btn-media" title="Lampirkan dokumen (PDF, Word, TXT, CSV, MD)" aria-label="Lampirkan dokumen" type="button">
+                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan dokumen (PDF, Word, TXT, CSV, MD)" aria-label="Lampirkan dokumen" type="button">
                                 <i class="ph ph-paperclip"></i>
+                                <span class="media-btn-label">Berkas</span>
                             </button>
                             <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.json,.csv,.py,.log,.html,.xml,.yaml,.yml" class="hidden">
-                            <button id="upload-image-btn" class="btn-media" title="Lampirkan gambar" aria-label="Lampirkan gambar" type="button">
+                            <button id="upload-image-btn" class="btn-media btn-media-labeled" title="Lampirkan gambar" aria-label="Lampirkan gambar" type="button">
                                 <i class="ph ph-image"></i>
+                                <span class="media-btn-label">Gambar</span>
                             </button>
-                            <button id="open-camera-btn" class="btn-media" title="Ambil foto dengan kamera" aria-label="Buka kamera" type="button">
+                            <button id="open-camera-btn" class="btn-media btn-media-labeled" title="Ambil foto dengan kamera" aria-label="Buka kamera" type="button">
                                 <i class="ph ph-camera"></i>
+                                <span class="media-btn-label">Kamera</span>
                             </button>
                             <input type="file" id="image-file-input" accept="image/*" class="hidden">
                         </div>
                         <div class="input-actions">
-                            <button id="send-btn" class="btn-send" title="Kirim (Enter)" aria-label="Kirim pesan" type="button">
+                            <button id="send-btn" class="btn-send" title="Kirim pesan (Enter)" aria-label="Kirim pesan" type="button">
                                 <i class="ph ph-arrow-up"></i>
                             </button>
                             <button id="stop-btn" class="btn-send btn-stop hidden" title="Hentikan respons" aria-label="Hentikan respons" type="button">
@@ -269,7 +757,14 @@
                     </div>
                 </div>
                 <div class="footer-meta">
-                    <span id="status">Siap</span>
+                    <div class="footer-status-wrap">
+                        <span class="footer-status-dot" aria-hidden="true"></span>
+                        <span id="status" role="status">Siap</span>
+                    </div>
+                    <div class="footer-shortcuts" aria-hidden="true">
+                        <span><kbd class="kbd-inline">Enter</kbd> kirim</span>
+                        <span><kbd class="kbd-inline">Shift + Enter</kbd> baris baru</span>
+                    </div>
                 </div>
             </footer>
         </div>
@@ -279,11 +774,11 @@
 
     <!-- Kamera -->
     <div id="camera-modal" class="modal-backdrop hidden">
-        <div class="modal-dialog camera-dialog">
+        <div class="modal-dialog camera-dialog" role="dialog" aria-modal="true" aria-labelledby="camera-title">
             <div class="modal-header">
                 <div class="camera-header-title">
                     <i class="ph ph-camera"></i>
-                    <h2>Kamera</h2>
+                    <h2 id="camera-title">Kamera</h2>
                 </div>
                 <button id="close-camera-modal" class="btn-icon" type="button" title="Tutup" aria-label="Tutup kamera">
                     <i class="ph ph-x"></i>
@@ -312,11 +807,11 @@
 
     <!-- Alur eksekusi: editor kanvas yang sama dengan halaman /pipeline -->
     <div id="pipeline-modal" class="modal-backdrop hidden">
-        <div class="modal-dialog pipeline-dialog">
+        <div class="modal-dialog pipeline-dialog" role="dialog" aria-modal="true" aria-labelledby="pipeline-title">
             <div class="modal-header">
                 <div class="pipeline-header-title">
-                    <h2>Alur eksekusi</h2>
-                    <span class="pipeline-modal-sub">Geser node untuk menata ulang. Tampilan saja, eksekusi tidak berubah.</span>
+                    <h2 id="pipeline-title">Alur eksekusi</h2>
+                    <span class="pipeline-modal-sub">Geser node untuk menata ulang. Hanya mengubah tampilan, eksekusi tetap sama.</span>
                 </div>
                 <div class="pipeline-modal-actions">
                     <span id="pipeline-total-time" class="badge-time">0 ms</span>
@@ -334,173 +829,236 @@
 
     <!-- Pengaturan -->
     <div id="settings-modal" class="modal-backdrop hidden">
-        <div class="modal-dialog">
-            <div class="modal-header">
-                <h2>Pengaturan</h2>
-                <button id="close-settings" class="btn-icon" type="button" title="Tutup" aria-label="Tutup pengaturan">
-                    <i class="ph ph-x"></i>
-                </button>
-            </div>
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div class="settings-modal-top">
+                <div class="modal-header">
+                    <div class="modal-title-group">
+                        <h2 id="settings-title">Pengaturan</h2>
+                        <span class="modal-subtitle">Konfigurasi profil, model inferensi, integrasi API, dan tampilan</span>
+                    </div>
+                    <button id="close-settings" class="btn-icon" type="button" title="Tutup (Esc)" aria-label="Tutup pengaturan">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
 
-            <div class="modal-tabs">
-                <button class="tab-btn active" data-tab="user" type="button">Anda</button>
-                <button class="tab-btn" data-tab="ai" type="button">Shiro</button>
-                <button class="tab-btn" data-tab="model" type="button">Model</button>
-                <button class="tab-btn" data-tab="api" type="button">API</button>
-                <button class="tab-btn" data-tab="theme" type="button">Tema</button>
-            </div>
-
-            <div id="user-tab" class="tab-content active">
-                <form id="user-form" enctype="multipart/form-data">
-                    <div class="profile-preview-box">
-                        <div id="user-preview" class="avatar-preview"><i class="ph ph-user"></i></div>
-                    </div>
-                    <div class="form-field">
-                        <label for="user-name">Nama panggilan</label>
-                        <input type="text" id="user-name" placeholder="Nama Anda" value="Kakak">
-                    </div>
-                    <div class="form-field">
-                        <label for="user-desc">Catatan tentang Anda</label>
-                        <textarea id="user-desc" placeholder="Hal yang perlu Shiro ketahui tentang Kakak"></textarea>
-                    </div>
-                    <div class="form-field">
-                        <label for="user-image">Foto profil</label>
-                        <input type="file" id="user-image" accept="image/*">
-                    </div>
-                    <button type="button" onclick="saveProfile('user')" class="btn-primary">Simpan profil</button>
-                </form>
-            </div>
-
-            <div id="ai-tab" class="tab-content">
-                <form id="ai-form" enctype="multipart/form-data">
-                    <div class="profile-preview-box">
-                        <div id="ai-preview" class="avatar-preview ai"><i class="ph ph-robot"></i></div>
-                    </div>
-                    <div class="form-field">
-                        <label for="ai-name">Nama</label>
-                        <input type="text" id="ai-name" placeholder="Nama AI" value="Shiro">
-                    </div>
-                    <div class="form-field">
-                        <label for="ai-desc">Kepribadian</label>
-                        <textarea id="ai-desc" placeholder="Sifat dan gaya bicara Shiro"></textarea>
-                    </div>
-                    <div class="form-field">
-                        <label for="ai-image">Foto avatar</label>
-                        <input type="file" id="ai-image" accept="image/*">
-                    </div>
-                    <button type="button" onclick="saveProfile('ai')" class="btn-primary">Simpan profil</button>
-                </form>
-            </div>
-
-            <div id="model-tab" class="tab-content">
-                <div class="model-card">
-                    <div class="model-row">
-                        <span class="field-title">Model aktif</span>
-                        <span id="current-model-badge" class="badge-active">Memuat...</span>
-                    </div>
-                    <div class="form-field">
-                        <label for="model-select">Pilih model</label>
-                        <select id="model-select" class="form-select">
-                            <option disabled selected>Memuat daftar model...</option>
-                        </select>
-                        <span class="field-help">File .gguf di folder model/ terdeteksi otomatis.</span>
-                    </div>
-                    <div id="model-info" class="info-box">
-                        <p id="model-desc-text">Memuat detail model...</p>
-                    </div>
-                    <div class="model-hint-box">
-                        <span class="model-hint-text"><i class="ph ph-info"></i> Untuk menambah model, salin file <code>.gguf</code> ke folder <code>model/</code>, lalu buka menu ini lagi.</span>
-                    </div>
-                    <button type="button" onclick="switchModel()" class="btn-primary">Terapkan model</button>
-
-                    <hr style="margin: 1.25rem 0; border: none; border-top: 1px solid var(--border-color, rgba(255,255,255,0.1));">
-
-                    <div class="form-field">
-                        <label for="moe-mode-select">Mode MoE Dual-Brain (Vision + Chat)</label>
-                        <select id="moe-mode-select" class="form-select">
-                            <option value="auto">Otomatis (Visual Expert jika model chat buta visual)</option>
-                            <option value="concurrent">Berdampingan (A100 GPU — Expert tetap di VRAM)</option>
-                            <option value="swap">Bergantian / Swap (T4 GPU / 16GB VRAM)</option>
-                            <option value="off">Nonaktif (Hanya gunakan OCR lokal bila model teks)</option>
-                        </select>
-                        <span class="field-help" id="moe-status-help">Menghubungkan Qwen2.5-VL (Mata Visual) dengan Qwen3.8-27B (Otak Chatting).</span>
-                    </div>
-                    <div id="moe-info-box" class="info-box" style="margin-bottom: 0.75rem;">
-                        <p id="moe-desc-text" style="font-size: 0.85rem; color: var(--color-text-dim, #94a3b8);">Status MoE: Memuat...</p>
-                    </div>
-                    <button type="button" onclick="saveMoeSettings()" class="btn-secondary" style="width: 100%;">Simpan Pengaturan MoE</button>
+                <div class="modal-tabs" role="group" aria-label="Bagian pengaturan">
+                    <button class="tab-btn active" data-tab="user" type="button">
+                        <i class="ph ph-user"></i>
+                        <span>Anda</span>
+                    </button>
+                    <button class="tab-btn" data-tab="ai" type="button">
+                        <i class="ph ph-robot"></i>
+                        <span>Shiro</span>
+                    </button>
+                    <button class="tab-btn" data-tab="model" type="button">
+                        <i class="ph ph-cpu"></i>
+                        <span>Model</span>
+                    </button>
+                    <button class="tab-btn" data-tab="api" type="button">
+                        <i class="ph ph-key"></i>
+                        <span>API</span>
+                    </button>
+                    <button class="tab-btn" data-tab="theme" type="button">
+                        <i class="ph ph-palette"></i>
+                        <span>Tema</span>
+                    </button>
                 </div>
             </div>
 
-            <div id="theme-tab" class="tab-content">
-                <div class="theme-grid" id="theme-grid"></div>
-
-                <div class="theme-custom">
-                    <div class="theme-custom-title">Warna kustom</div>
-                    <div class="color-row">
-                        <label for="theme-bg">Latar</label>
-                        <span class="color-hex" id="theme-bg-hex"></span>
-                        <input type="color" id="theme-bg">
-                    </div>
-                    <div class="color-row">
-                        <label for="theme-fg">Teks</label>
-                        <span class="color-hex" id="theme-fg-hex"></span>
-                        <input type="color" id="theme-fg">
-                    </div>
-                    <div class="color-row">
-                        <label for="theme-accent">Aksen (tautan dan fokus)</label>
-                        <span class="color-hex" id="theme-accent-hex"></span>
-                        <input type="color" id="theme-accent">
-                    </div>
-                    <div class="theme-contrast" id="theme-contrast"></div>
+            <div class="settings-modal-body">
+                <div id="user-tab" class="tab-content active">
+                    <form id="user-form" enctype="multipart/form-data">
+                        <div class="profile-identity-card">
+                            <div class="profile-preview-box">
+                                <div id="user-preview" class="avatar-preview"><i class="ph ph-user"></i></div>
+                            </div>
+                            <div class="profile-upload-meta">
+                                <label for="user-image">Foto profil Anda</label>
+                                <input type="file" id="user-image" accept="image/*">
+                                <span class="field-help">Format gambar persegi (JPG, PNG, WEBP) disarankan.</span>
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label for="user-name">Nama panggilan</label>
+                            <input type="text" id="user-name" placeholder="Nama Anda" value="Kakak">
+                            <span class="field-help">Digunakan Shiro saat menyapa Anda dalam percakapan.</span>
+                        </div>
+                        <div class="form-field">
+                            <label for="user-desc">Catatan konteks tentang Anda</label>
+                            <textarea id="user-desc" placeholder="Misalnya bidang pekerjaan, bahasa pemrograman favorit, atau gaya penjelasan yang disukai"></textarea>
+                        </div>
+                        <button type="button" onclick="saveProfile('user')" class="btn-primary">
+                            <i class="ph ph-floppy-disk"></i> Simpan profil Anda
+                        </button>
+                    </form>
                 </div>
 
-                <button type="button" id="theme-reset" class="btn-secondary">
-                    <i class="ph ph-arrow-counter-clockwise"></i> Kembalikan ke default
-                </button>
-            </div>
+                <div id="ai-tab" class="tab-content">
+                    <form id="ai-form" enctype="multipart/form-data">
+                        <div class="profile-identity-card">
+                            <div class="profile-preview-box">
+                                <div id="ai-preview" class="avatar-preview ai"><i class="ph ph-robot"></i></div>
+                            </div>
+                            <div class="profile-upload-meta">
+                                <label for="ai-image">Foto avatar asisten</label>
+                                <input type="file" id="ai-image" accept="image/*">
+                                <span class="field-help">Ditampilkan pada setiap pesan balasan asisten.</span>
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label for="ai-name">Nama asisten</label>
+                            <input type="text" id="ai-name" placeholder="Nama AI" value="Shiro">
+                        </div>
+                        <div class="form-field">
+                            <label for="ai-desc">Karakter dan instruksi gaya bicara</label>
+                            <textarea id="ai-desc" placeholder="Tentukan karakter, nada bicara, dan batasan perilaku asisten"></textarea>
+                        </div>
+                        <button type="button" onclick="saveProfile('ai')" class="btn-primary">
+                            <i class="ph ph-floppy-disk"></i> Simpan profil asisten
+                        </button>
+                    </form>
+                </div>
 
-            <div id="api-tab" class="tab-content">
-                <div class="model-card">
-                    <div class="form-field">
-                        <label for="active-api-key-input">API key aktif</label>
-                        <div class="key-row">
-                            <input type="text" id="active-api-key-input" readonly value="Memuat key...">
-                            <button type="button" class="btn-secondary" onclick="copyApiKey()" title="Salin API key" aria-label="Salin API key">
-                                <i class="ph ph-copy"></i>
+                <div id="model-tab" class="tab-content">
+                    <div class="model-card">
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-cpu"></i> Model bahasa utama</span>
+                                <span id="current-model-badge" class="badge-active">Memuat...</span>
+                            </div>
+                            <div class="form-field">
+                                <label for="model-select">Pilih berkas model (.gguf)</label>
+                                <select id="model-select" class="form-select">
+                                    <option disabled selected>Memuat daftar model...</option>
+                                </select>
+                                <span class="field-help">Berkas <code>.gguf</code> di dalam direktori <code>model/</code> dipindai secara otomatis.</span>
+                            </div>
+                            <div id="model-info" class="info-box">
+                                <p id="model-desc-text">Memuat detail model...</p>
+                            </div>
+                            <div class="model-hint-box">
+                                <span class="model-hint-text"><i class="ph ph-info"></i> Salin berkas <code>.gguf</code> baru ke folder <code>model/</code> lalu buka kembali jendela ini untuk memuatnya.</span>
+                            </div>
+                            <button type="button" onclick="switchModel()" class="btn-primary">
+                                <i class="ph ph-check"></i> Terapkan model
                             </button>
                         </div>
-                        <span class="field-help">Kirim lewat header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code>. Key yang sama berlaku untuk v1, v2, dan v3.</span>
+
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-eye"></i> Orkestrasi visi (MoE)</span>
+                            </div>
+                            <div class="form-field">
+                                <label for="moe-mode-select">Strategi pemrosesan gambar</label>
+                                <select id="moe-mode-select" class="form-select">
+                                    <option value="auto">Otomatis: gunakan model visi jika model utama berbasis teks</option>
+                                    <option value="concurrent">Berdampingan: model visi tetap di VRAM (GPU kapasitas besar)</option>
+                                    <option value="swap">Bergantian: muat model secara bergilir (hemat VRAM)</option>
+                                    <option value="off">Nonaktif: hanya ekstraksi OCR lokal</option>
+                                </select>
+                                <span class="field-help" id="moe-status-help">Memasangkan model visi Qwen2.5-VL dengan model percakapan untuk membaca lampiran visual.</span>
+                            </div>
+                            <div id="moe-info-box" class="info-box">
+                                <p id="moe-desc-text">Status MoE: memuat...</p>
+                            </div>
+                            <button type="button" onclick="saveMoeSettings()" class="btn-secondary btn-block">
+                                <i class="ph ph-sliders-horizontal"></i> Simpan mode visi
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="theme-tab" class="tab-content">
+                    <div class="theme-section-label">Preset skema warna</div>
+                    <div class="theme-grid" id="theme-grid"></div>
+
+                    <div class="theme-custom">
+                        <div class="theme-custom-title">Penyesuaian warna kustom</div>
+                        <div class="color-row">
+                            <label for="theme-bg">Permukaan latar</label>
+                            <span class="color-hex" id="theme-bg-hex"></span>
+                            <input type="color" id="theme-bg">
+                        </div>
+                        <div class="color-row">
+                            <label for="theme-fg">Teks utama</label>
+                            <span class="color-hex" id="theme-fg-hex"></span>
+                            <input type="color" id="theme-fg">
+                        </div>
+                        <div class="color-row">
+                            <label for="theme-accent">Aksen fokus &amp; tautan</label>
+                            <span class="color-hex" id="theme-accent-hex"></span>
+                            <input type="color" id="theme-accent">
+                        </div>
+                        <div class="theme-contrast" id="theme-contrast"></div>
                     </div>
 
-                    <button type="button" onclick="regenerateApiKey()" class="btn-secondary" id="btn-regen-key">
-                        <i class="ph ph-arrows-clockwise"></i> Buat key baru
+                    <button type="button" id="theme-reset" class="btn-secondary btn-block">
+                        <i class="ph ph-arrow-counter-clockwise"></i> Kembalikan ke tema bawaan
                     </button>
+                </div>
 
-                    <div class="endpoint-list">
-                        <div class="endpoint-item">
-                            <div class="endpoint-head">
-                                <span class="endpoint-name">v1, Bahasa Indonesia</span>
-                                <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v1')">Salin URL</button>
+                <div id="api-tab" class="tab-content">
+                    <div class="model-card">
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-key"></i> Kunci autentikasi (API Key)</span>
                             </div>
-                            <div class="endpoint-url" id="endpoint-v1-url">/v1</div>
-                            <div class="endpoint-desc">Persona Shiro dalam bahasa Indonesia penuh. Cocok untuk WhatsApp, Telegram, dan chatbot.</div>
+                            <div class="form-field">
+                                <label for="active-api-key-input">Kunci aktif</label>
+                                <div class="key-row">
+                                    <input type="text" id="active-api-key-input" readonly value="Memuat key...">
+                                    <button type="button" class="btn-secondary" onclick="copyApiKey()" title="Salin API key" aria-label="Salin API key">
+                                        <i class="ph ph-copy"></i> Salin
+                                    </button>
+                                </div>
+                                <span class="field-help">Sertakan pada header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code> untuk seluruh endpoint di bawah.</span>
+                            </div>
+
+                            <button type="button" onclick="regenerateApiKey()" class="btn-secondary btn-block" id="btn-regen-key">
+                                <i class="ph ph-arrows-clockwise"></i> Buat ulang API key
+                            </button>
                         </div>
-                        <div class="endpoint-item">
-                            <div class="endpoint-head">
-                                <span class="endpoint-name">v2, VTuber (VoiceVox)</span>
-                                <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v2')">Salin URL</button>
+
+                        <div class="endpoint-list">
+                            <div class="endpoint-item">
+                                <div class="endpoint-head">
+                                    <div class="endpoint-route-group">
+                                        <span class="endpoint-method-badge">V1</span>
+                                        <span class="endpoint-name">Persona Bahasa Indonesia</span>
+                                    </div>
+                                    <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v1')">
+                                        <i class="ph ph-copy"></i> Salin URL
+                                    </button>
+                                </div>
+                                <div class="endpoint-url" id="endpoint-v1-url">/v1</div>
+                                <div class="endpoint-desc">Persona Shiro berbahasa Indonesia penuh. Siap dihubungkan ke integrasi WhatsApp, Telegram, atau klien eksternal.</div>
                             </div>
-                            <div class="endpoint-url" id="endpoint-v2-url">/v2</div>
-                            <div class="endpoint-desc">Untuk aplikasi VTuber dan VoiceVox. Output wajib bahasa Jepang dengan format tag <code>[Tag] "..."</code>.</div>
-                        </div>
-                        <div class="endpoint-item">
-                            <div class="endpoint-head">
-                                <span class="endpoint-name">v3, prompt kustom</span>
-                                <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v3')">Salin URL</button>
+                            <div class="endpoint-item">
+                                <div class="endpoint-head">
+                                    <div class="endpoint-route-group">
+                                        <span class="endpoint-method-badge">V2</span>
+                                        <span class="endpoint-name">VTuber &amp; VoiceVox</span>
+                                    </div>
+                                    <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v2')">
+                                        <i class="ph ph-copy"></i> Salin URL
+                                    </button>
+                                </div>
+                                <div class="endpoint-url" id="endpoint-v2-url">/v2</div>
+                                <div class="endpoint-desc">Keluaran bahasa Jepang terformat <code>[Tag] "..."</code> khusus sintesis suara VoiceVox dan pipeline VTuber.</div>
                             </div>
-                            <div class="endpoint-url" id="endpoint-v3-url">/v3</div>
-                            <div class="endpoint-desc">Mengikuti system prompt dari klien tanpa paksaan bahasa. Fleksibel untuk coding, riset, atau asisten umum.</div>
+                            <div class="endpoint-item">
+                                <div class="endpoint-head">
+                                    <div class="endpoint-route-group">
+                                        <span class="endpoint-method-badge">V3</span>
+                                        <span class="endpoint-name">System Prompt Kustom</span>
+                                    </div>
+                                    <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v3')">
+                                        <i class="ph ph-copy"></i> Salin URL
+                                    </button>
+                                </div>
+                                <div class="endpoint-url" id="endpoint-v3-url">/v3</div>
+                                <div class="endpoint-desc">Mengikuti instruksi sistem dari klien sepenuhnya tanpa batasan persona bawaan. Cocok untuk otomasi kode dan riset.</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -510,7 +1068,7 @@
 
     <!-- Lightbox gambar -->
     <div id="image-lightbox-modal" class="image-lightbox-backdrop hidden" onclick="handleLightboxBackdropClick(event)">
-        <div class="lightbox-container" onclick="event.stopPropagation()">
+        <div class="lightbox-container" role="dialog" aria-modal="true" aria-labelledby="lightbox-title" onclick="event.stopPropagation()">
             <div class="lightbox-toolbar">
                 <div class="lightbox-title-wrap">
                     <i class="ph ph-image"></i>
@@ -536,7 +1094,7 @@
 
     <!-- Viewer dokumen -->
     <div id="doc-viewer-modal" class="modal-backdrop hidden" onclick="handleDocModalBackdropClick(event)">
-        <div class="modal-dialog doc-dialog" onclick="event.stopPropagation()">
+        <div class="modal-dialog doc-dialog" role="dialog" aria-modal="true" aria-labelledby="doc-modal-filename" onclick="event.stopPropagation()">
             <div class="modal-header">
                 <div class="doc-modal-title">
                     <div class="doc-icon-badge" id="doc-modal-icon-badge">
@@ -561,14 +1119,20 @@
             </div>
 
             <div class="modal-tabs" id="doc-modal-tabs">
-                <button class="tab-btn active" id="tab-btn-doc-frame" type="button" onclick="switchDocViewMode('frame')">Dokumen</button>
-                <button class="tab-btn" id="tab-btn-doc-text" type="button" onclick="switchDocViewMode('text')">Teks hasil ekstraksi</button>
+                <button class="tab-btn active" id="tab-btn-doc-frame" type="button" onclick="switchDocViewMode('frame')">
+                    <i class="ph ph-file"></i>
+                    <span>Dokumen</span>
+                </button>
+                <button class="tab-btn" id="tab-btn-doc-text" type="button" onclick="switchDocViewMode('text')">
+                    <i class="ph ph-text-align-left"></i>
+                    <span>Teks hasil ekstraksi</span>
+                </button>
             </div>
 
             <div class="doc-modal-body">
-                <iframe id="doc-modal-iframe" class="doc-iframe" src="" frameborder="0"></iframe>
+                <iframe id="doc-modal-iframe" class="doc-iframe" src="" title="Pratinjau dokumen"></iframe>
                 <div id="doc-modal-text-wrapper" class="doc-text-wrapper hidden">
-                    <pre><code id="doc-modal-text-display">// Memuat isi teks dokumen...</code></pre>
+                    <pre><code id="doc-modal-text-display">Memuat isi teks dokumen...</code></pre>
                 </div>
             </div>
         </div>
@@ -578,5 +1142,20 @@
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
     <script src="/static/script.js"></script>
+    <script>
+        // Perilaku tambahan non-intrusif: tombol gulir cepat saat membaca riwayat panjang
+        (function () {
+            var vp = document.getElementById('chat-viewport');
+            var btn = document.getElementById('scroll-bottom-btn');
+            if (!vp || !btn) return;
+            vp.addEventListener('scroll', function () {
+                var dist = vp.scrollHeight - vp.scrollTop - vp.clientHeight;
+                btn.classList.toggle('hidden', dist < 180);
+            }, { passive: true });
+            btn.addEventListener('click', function () {
+                vp.scrollTo({ top: vp.scrollHeight, behavior: 'smooth' });
+            });
+        })();
+    </script>
 </body>
 </html>
