@@ -121,6 +121,12 @@ const SHIRO_I18N = {
         status_stopped: 'Dihentikan',
         status_extracting: 'Mengekstrak berkas...',
         status_doc_ready: 'Berkas siap',
+        download_code: 'Unduh',
+        download_code_tooltip: 'Unduh kode sebagai berkas',
+        downloaded_code: 'Tersimpan',
+        copy_code: 'Salin',
+        copy_code_tooltip: 'Salin kode ke papan klip',
+        copied_code: 'Tersalin',
         shortcut_send: 'kirim',
         shortcut_newline: 'baris baru',
         camera_inactive: 'Kamera tidak aktif',
@@ -291,6 +297,12 @@ const SHIRO_I18N = {
         status_stopped: 'Stopped',
         status_extracting: 'Extracting file...',
         status_doc_ready: 'File ready',
+        download_code: 'Download',
+        download_code_tooltip: 'Download code as file',
+        downloaded_code: 'Downloaded',
+        copy_code: 'Copy',
+        copy_code_tooltip: 'Copy code to clipboard',
+        copied_code: 'Copied',
         shortcut_send: 'send',
         shortcut_newline: 'new line',
         camera_inactive: 'Camera inactive',
@@ -639,12 +651,17 @@ function parseMessageContent(text) {
             const displayLang = cleanLang || 'kode';
             const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
             codeBlocks.push(`
-                <div class="code-block-wrapper">
+                <div class="code-block-wrapper" data-lang="${cleanLang || 'txt'}">
                     <div class="code-block-header">
                         <span class="code-lang-label">${displayLang}</span>
-                        <button type="button" class="btn-copy-code" onclick="copyCodeSnippet(this)" title="Salin Kode">
-                            <i class="ph ph-copy"></i> <span>Salin</span>
-                        </button>
+                        <div class="code-block-actions">
+                            <button type="button" class="btn-code-action btn-download-code" onclick="downloadCodeSnippet(this)" title="${t('download_code_tooltip')}" aria-label="Unduh Berkas Kode">
+                                <i class="ph ph-download-simple"></i> <span>${t('download_code')}</span>
+                            </button>
+                            <button type="button" class="btn-code-action btn-copy-code" onclick="copyCodeSnippet(this)" title="${t('copy_code_tooltip')}" aria-label="Salin Kode">
+                                <i class="ph ph-copy"></i> <span>${t('copy_code')}</span>
+                            </button>
+                        </div>
                     </div>
                     <pre><code class="${langClass}">${escapedCode}</code></pre>
                 </div>
@@ -725,6 +742,187 @@ function renderAvatarContent(profile, fallbackChar) {
     return profile?.name?.[0]?.toUpperCase() || fallbackChar;
 }
 
+const CODE_LANG_EXT_MAP = {
+    'html': 'html',
+    'htm': 'html',
+    'xhtml': 'html',
+    'css': 'css',
+    'scss': 'scss',
+    'sass': 'sass',
+    'less': 'less',
+    'js': 'js',
+    'javascript': 'js',
+    'jsx': 'jsx',
+    'ts': 'ts',
+    'typescript': 'ts',
+    'tsx': 'tsx',
+    'vue': 'vue',
+    'svelte': 'svelte',
+    'astro': 'astro',
+    'py': 'py',
+    'python': 'py',
+    'pyw': 'py',
+    'ipynb': 'ipynb',
+    'json': 'json',
+    'jsonl': 'jsonl',
+    'json5': 'json5',
+    'xml': 'xml',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'toml': 'toml',
+    'sql': 'sql',
+    'prisma': 'prisma',
+    'graphql': 'graphql',
+    'gql': 'graphql',
+    'c': 'c',
+    'cpp': 'cpp',
+    'c++': 'cpp',
+    'cc': 'cpp',
+    'cxx': 'cpp',
+    'h': 'h',
+    'hpp': 'hpp',
+    'hh': 'hpp',
+    'cs': 'cs',
+    'csharp': 'cs',
+    'java': 'java',
+    'kt': 'kt',
+    'kotlin': 'kt',
+    'kts': 'kts',
+    'rs': 'rs',
+    'rust': 'rs',
+    'go': 'go',
+    'golang': 'go',
+    'php': 'php',
+    'rb': 'rb',
+    'ruby': 'rb',
+    'sh': 'sh',
+    'bash': 'sh',
+    'zsh': 'sh',
+    'ps1': 'ps1',
+    'powershell': 'ps1',
+    'bat': 'bat',
+    'cmd': 'cmd',
+    'r': 'r',
+    'dart': 'dart',
+    'swift': 'swift',
+    'lua': 'lua',
+    'pl': 'pl',
+    'pm': 'pm',
+    'dockerfile': 'dockerfile',
+    'docker': 'dockerfile',
+    'makefile': 'mk',
+    'make': 'mk',
+    'cmake': 'cmake',
+    'proto': 'proto',
+    'ini': 'ini',
+    'cfg': 'cfg',
+    'conf': 'conf',
+    'properties': 'properties',
+    'env': 'env',
+    'markdown': 'md',
+    'md': 'md',
+    'txt': 'txt',
+    'text': 'txt'
+};
+
+function downloadCodeSnippet(btn) {
+    const wrapper = btn.closest('.code-block-wrapper');
+    if (!wrapper) return;
+    const codeEl = wrapper.querySelector('code');
+    if (!codeEl) return;
+    const text = codeEl.innerText || codeEl.textContent;
+    if (!text) return;
+
+    const rawLang = (wrapper.dataset.lang || '').trim().toLowerCase();
+    const ext = CODE_LANG_EXT_MAP[rawLang] || (rawLang && /^[a-z0-9]+$/.test(rawLang) ? rawLang : 'txt');
+
+    // 1. Deteksi nama berkas dari komentar baris pertama (misal: // index.html atau <!-- file: App.vue -->)
+    let filename = '';
+    const firstLines = text.split('\n').slice(0, 4).join('\n');
+    const fnMatch = firstLines.match(/(?:filename|file|nama berkas|name)\s*[:=]\s*([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)/i)
+                 || firstLines.match(/^(?:(?:\/\/|#|<!--|\/\*)\s*)([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)/m);
+
+    if (fnMatch && fnMatch[1]) {
+        filename = fnMatch[1].split(/[\/\\]/).pop().trim();
+    }
+
+    // 2. Default nama file ala ChatGPT
+    if (!filename) {
+        if (ext === 'html') filename = 'index.html';
+        else if (ext === 'css') filename = 'style.css';
+        else if (ext === 'js') filename = 'script.js';
+        else if (ext === 'ts') filename = 'main.ts';
+        else if (ext === 'jsx') filename = 'App.jsx';
+        else if (ext === 'tsx') filename = 'App.tsx';
+        else if (ext === 'vue') filename = 'App.vue';
+        else if (ext === 'py') filename = 'main.py';
+        else if (ext === 'json') filename = 'data.json';
+        else if (ext === 'sql') filename = 'query.sql';
+        else if (ext === 'sh') filename = 'script.sh';
+        else if (ext === 'ps1') filename = 'script.ps1';
+        else if (ext === 'cpp' || ext === 'c' || ext === 'cs' || ext === 'java' || ext === 'go' || ext === 'rs') filename = `main.${ext}`;
+        else if (ext === 'dockerfile') filename = 'Dockerfile';
+        else filename = `shiro_${rawLang || 'code'}.${ext}`;
+    }
+
+    // 3. Tentukan MIME Type
+    const mimeTypes = {
+        'html': 'text/html;charset=utf-8',
+        'css': 'text/css;charset=utf-8',
+        'js': 'text/javascript;charset=utf-8',
+        'ts': 'text/typescript;charset=utf-8',
+        'py': 'text/x-python;charset=utf-8',
+        'json': 'application/json;charset=utf-8',
+        'xml': 'application/xml;charset=utf-8',
+        'md': 'text/markdown;charset=utf-8',
+        'sql': 'text/plain;charset=utf-8',
+        'sh': 'application/x-sh;charset=utf-8',
+        'ps1': 'text/plain;charset=utf-8',
+        'txt': 'text/plain;charset=utf-8'
+    };
+    const mimeType = mimeTypes[ext] || 'text/plain;charset=utf-8';
+
+    // 4. Unduh berkas langsung di browser via Blob
+    try {
+        const blob = new Blob([text], { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+
+        // Feedback visual tombol
+        const span = btn.querySelector('span');
+        const icon = btn.querySelector('i');
+        const oldText = span ? span.textContent : '';
+        if (span) span.textContent = t('downloaded_code') || 'Tersimpan';
+        if (icon) icon.className = 'ph ph-check';
+        btn.classList.add('download-success');
+
+        setTimeout(() => {
+            if (span) span.textContent = oldText || t('download_code') || 'Unduh';
+            if (icon) icon.className = 'ph ph-download-simple';
+            btn.classList.remove('download-success');
+        }, 2000);
+
+        if (typeof showToast === 'function') {
+            const toastMsg = currentLang === 'en'
+                ? `File "${filename}" downloaded`
+                : `Berkas "${filename}" berhasil diunduh`;
+            showToast(toastMsg);
+        }
+    } catch (err) {
+        console.error('Error downloading code snippet:', err);
+        if (typeof showToast === 'function') {
+            showToast(currentLang === 'en' ? 'Download failed' : 'Gagal mengunduh berkas');
+        }
+    }
+}
+
 function copyCodeSnippet(btn) {
     const wrapper = btn.closest('.code-block-wrapper');
     if (!wrapper) return;
@@ -735,11 +933,13 @@ function copyCodeSnippet(btn) {
         const span = btn.querySelector('span');
         const icon = btn.querySelector('i');
         const oldText = span ? span.textContent : '';
-        if (span) span.textContent = 'Tersalin';
+        if (span) span.textContent = t('copied_code') || 'Tersalin';
         if (icon) icon.className = 'ph ph-check';
+        btn.classList.add('copy-success');
         setTimeout(() => {
-            if (span) span.textContent = oldText || 'Salin';
+            if (span) span.textContent = oldText || t('copy_code') || 'Salin';
             if (icon) icon.className = 'ph ph-copy';
+            btn.classList.remove('copy-success');
         }, 2000);
     });
 }
