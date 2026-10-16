@@ -18,10 +18,15 @@ def list_sessions():
     try:
         memory = state.init_memory()
         with memory.lock:
+            active_id = getattr(memory, "active_session_id", "default")
+            if hasattr(memory, "sessions_store") and active_id in memory.sessions_store:
+                sess_msgs = memory.sessions_store[active_id].get("messages", [])
+                if sess_msgs and len(sess_msgs) > len(memory.short_term_history):
+                    memory.short_term_history = list(sess_msgs)
             memory._ensure_message_ids(memory.short_term_history)
             return jsonify({
                 "sessions": memory.get_sessions_list(),
-                "active_session_id": getattr(memory, "active_session_id", "default"),
+                "active_session_id": active_id,
                 "messages": [_format_message_for_api(m) for m in memory.short_term_history]
             })
     except Exception as e:

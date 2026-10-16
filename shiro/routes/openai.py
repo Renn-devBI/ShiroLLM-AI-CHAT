@@ -129,31 +129,33 @@ def handle_openai_chat_completions(api_version="v1"):
                 print(f"[Completions] Warning saving image: {e_img}")
 
         memory = state.init_memory()
-        with memory.lock:
-            log_msg = user_message if user_message else ("[Visual Sent]" if primary_image else "")
-            if log_msg:
+        log_msg = user_message if user_message else ("[Visual Sent]" if primary_image else "")
+        if log_msg:
+            with memory.lock:
                 memory.add_message("user", log_msg, image_path=saved_img_rel)
+                memory.save_memory()
 
-            reply_result = get_shiro_reply(
-                user_message,
-                image_base64=primary_image,
-                images_base64=incoming_images if len(incoming_images) > 1 else None,
-                api_version=effective_version,
-                custom_system_prompt=client_system_prompt,
-                incoming_messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                reasoning_effort=reasoning_effort,
-                include_reasoning=include_reasoning,
-                max_tokens=client_max_tokens,
-                return_details=True
-            )
-            if isinstance(reply_result, tuple):
-                reply, details = reply_result
-            else:
-                reply = reply_result
-                details = {}
+        reply_result = get_shiro_reply(
+            user_message,
+            image_base64=primary_image,
+            images_base64=incoming_images if len(incoming_images) > 1 else None,
+            api_version=effective_version,
+            custom_system_prompt=client_system_prompt,
+            incoming_messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            reasoning_effort=reasoning_effort,
+            include_reasoning=include_reasoning,
+            max_tokens=client_max_tokens,
+            return_details=True
+        )
+        if isinstance(reply_result, tuple):
+            reply, details = reply_result
+        else:
+            reply = reply_result
+            details = {}
 
+        with memory.lock:
             memory.add_message("assistant", reply)
             if effective_version == "v1" and (not primary_image or "poster tersebut" not in reply.lower()):
                 memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)

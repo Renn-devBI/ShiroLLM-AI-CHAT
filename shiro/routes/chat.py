@@ -8,13 +8,13 @@ import os
 import uuid
 import base64
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 
 from shiro.auth import verify_api_key
 from shiro.server_state import state
 from shiro.nlp.emotion import detect_emotion_category
 from shiro.memory.optimization import compress_old_messages
-from shiro.pipeline.inference import get_shiro_reply
+from shiro.pipeline.inference import get_shiro_reply, stream_shiro_reply
 
 chat_bp = Blueprint("chat_bp", __name__)
 
@@ -113,13 +113,14 @@ def auto_trigger():
             if state.serial_questions >= 1:
                 return jsonify({"status": "idle", "reason": "already_initiated"})
 
-            trigger_prompt = (
-                "Kakak sudah lama tidak bersuara. Sebagai Shiro (adik perempuan), berikan SATU sapaan santai atau perhatian kecil "
-                "dengan maksimal 1-2 kalimat pendek sudut pandang Shiro."
-            )
-            
-            reply = get_shiro_reply(trigger_prompt)
-            
+        trigger_prompt = (
+            "Kakak sudah lama tidak bersuara. Sebagai Shiro (adik perempuan), berikan SATU sapaan santai atau perhatian kecil "
+            "dengan maksimal 1-2 kalimat pendek sudut pandang Shiro."
+        )
+        
+        reply = get_shiro_reply(trigger_prompt)
+        
+        with memory.lock:
             msg_id = memory.add_message("assistant", reply)
             if len(memory.short_term_history) > 500:
                 compress_old_messages(memory, keep_count=500)
@@ -200,6 +201,9 @@ def chat():
             except Exception as e_img:
                 print(f"[Chat] Warning saving image: {e_img}")
 
+        stream_mode = data.get('stream', True)
+
+        # 1. Catat giliran pesan user dalam lock singkat (< 1ms)
         with memory.lock:
             state.serial_questions = 0
             user_emotion = detect_emotion_category(user_message) if user_message else "neutral"
@@ -225,8 +229,14 @@ def chat():
                 document_type=doc_type,
                 document_text=document_text
             )
-            
-            # Eksekusi balasan neural AI (tanpa penimpaan fallback buatan)
+            active_sess_id = getattr(memory, "active_session_id", "default")
+            if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
+                memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
+                memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
+            memory.save_memory()
+
+        # 2. NON-STREAMING FALLBACK (Jika client eksplisit meminta stream: false)
+        if not stream_mode:
             reply, trace = get_shiro_reply(
                 user_message,
                 image_base64=image_base64,
@@ -235,32 +245,34 @@ def chat():
                 return_trace=True
             )
             
-            # Deteksi jika agent action menghasilkan output gambar (misal web screenshot)
             assistant_img_url = None
             if trace and isinstance(trace.get("agent_action"), dict):
                 assistant_img_url = trace["agent_action"].get("image_url")
 
-            assistant_msg_id = memory.add_message("assistant", reply, image_path=assistant_img_url)
-            memory.update_emotional_state_from_response(reply)
-            memory.update_mood_from_emotions()
-            
-            if training_enabled and (not image_base64 or "poster tersebut" not in reply.lower()):
-                memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
-            
-            # Auto-update session title with smart contextual topic name if currently generic
-            session_title = None
-            if hasattr(memory, "auto_update_session_title"):
-                session_title = memory.auto_update_session_title(
-                    session_id=getattr(memory, "active_session_id", "default"),
-                    user_message=user_message,
-                    document_name=document_name
-                )
+            with memory.lock:
+                assistant_msg_id = memory.add_message("assistant", reply, image_path=assistant_img_url)
+                memory.update_emotional_state_from_response(reply)
+                memory.update_mood_from_emotions()
+                
+                if training_enabled and (not image_base64 or "poster tersebut" not in reply.lower()):
+                    memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
+                
+                session_title = None
+                if hasattr(memory, "auto_update_session_title"):
+                    session_title = memory.auto_update_session_title(
+                        session_id=active_sess_id,
+                        user_message=user_message,
+                        document_name=document_name
+                    )
 
-            # Menjaga seluruh riwayat percakapan tetap tersimpan utuh
-            if len(memory.short_term_history) > 500:
-                compress_old_messages(memory, keep_count=500)
-            memory.save_memory()
-            
+                if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
+                    memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
+                    memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
+
+                if len(memory.short_term_history) > 500:
+                    compress_old_messages(memory, keep_count=500)
+                memory.save_memory()
+                
             return jsonify({
                 "reply": reply,
                 "user_message_id": user_msg_id,
@@ -276,11 +288,108 @@ def chat():
                 "document_name": document_name,
                 "document_url": doc_url,
                 "document_type": doc_type,
-                "active_session_id": getattr(memory, "active_session_id", "default"),
+                "active_session_id": active_sess_id,
                 "session_title": session_title,
                 "pipeline_trace": trace,
                 "agent_action": trace.get("agent_action")
             })
+
+        # 3. STREAMING REAL-TIME SSE (text/event-stream)
+        import json as py_json
+        def generate_chat_stream():
+            full_reply = ""
+            trace = None
+            assistant_img_url = None
+            agent_action = None
+
+            # Kirim metadata awal segera agar UI mendapatkan user_msg_id
+            init_payload = {
+                "type": "init",
+                "user_message_id": user_msg_id,
+                "active_session_id": active_sess_id,
+                "image_url": img_url,
+                "document_name": document_name
+            }
+            yield f"data: {py_json.dumps(init_payload)}\n\n"
+
+            try:
+                for event in stream_shiro_reply(
+                    user_message,
+                    image_base64=image_base64,
+                    document_info=document_info,
+                    max_tokens=user_max_tokens
+                ):
+                    ev_type = event.get("type")
+                    if ev_type == "ping":
+                        yield ": ping\n\n"
+                    elif ev_type == "token":
+                        token = event.get("token", "")
+                        full_reply += token
+                        yield f"data: {py_json.dumps({'type': 'token', 'token': token})}\n\n"
+                    elif ev_type == "agent_action":
+                        agent_action = event.get("agent_action")
+                        if agent_action and agent_action.get("image_url"):
+                            assistant_img_url = agent_action.get("image_url")
+                        yield f"data: {py_json.dumps({'type': 'agent_action', 'agent_action': agent_action})}\n\n"
+                    elif ev_type == "done":
+                        full_reply = event.get("reply", full_reply)
+                        trace = event.get("trace")
+                        if trace and isinstance(trace.get("agent_action"), dict):
+                            assistant_img_url = trace["agent_action"].get("image_url")
+            except (GeneratorExit, BrokenPipeError, ConnectionResetError):
+                print("[Stream] Client disconnected or aborted by user.")
+            except Exception as e_stream:
+                print(f"[Stream Error]: {e_stream}")
+                if not full_reply:
+                    full_reply = f"*menatap cemas* Maaf Kakak, ada kendala: {str(e_stream)[:60]}"
+                yield f"data: {py_json.dumps({'type': 'error', 'error': str(e_stream)})}\n\n"
+            finally:
+                # Simpan jawaban ke memori bahkan jika koneksi terputus di tengah jalan
+                try:
+                    if full_reply:
+                        with memory.lock:
+                            assistant_msg_id = memory.add_message("assistant", full_reply, image_path=assistant_img_url)
+                            memory.update_emotional_state_from_response(full_reply)
+                            memory.update_mood_from_emotions()
+                            
+                            if training_enabled and (not image_base64 or "poster tersebut" not in full_reply.lower()):
+                                memory.record_learned_pattern(log_msg, full_reply, image_path=saved_img_rel)
+                            
+                            session_title = None
+                            if hasattr(memory, "auto_update_session_title"):
+                                session_title = memory.auto_update_session_title(
+                                    session_id=active_sess_id,
+                                    user_message=user_message,
+                                    document_name=document_name
+                                )
+
+                            if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
+                                memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
+                                memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
+
+                            if len(memory.short_term_history) > 500:
+                                compress_old_messages(memory, keep_count=500)
+                            memory.save_memory()
+
+                            done_payload = {
+                                "type": "done",
+                                "reply": full_reply,
+                                "assistant_message_id": assistant_msg_id,
+                                "assistant_image_url": assistant_img_url,
+                                "session_title": session_title,
+                                "pipeline_trace": trace,
+                                "agent_action": agent_action or (trace.get("agent_action") if trace else None),
+                                "count": memory.system_metadata["total_turns"],
+                                "mood": memory.agent_persona.get("current_mood", "Neutral")
+                            }
+                            yield f"data: {py_json.dumps(done_payload)}\n\n"
+                except Exception as e_fin:
+                    print(f"[Stream Finalize Error]: {e_fin}")
+
+        stream_resp = Response(generate_chat_stream(), mimetype="text/event-stream")
+        stream_resp.headers["Cache-Control"] = "no-cache"
+        stream_resp.headers["X-Accel-Buffering"] = "no"
+        return stream_resp
     
     except Exception as e:
         print(f"Error in chat endpoint: {e}")

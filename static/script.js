@@ -117,6 +117,7 @@ const SHIRO_I18N = {
         stop_resp_tooltip: 'Hentikan respons',
         status_ready: 'Siap',
         status_thinking: 'Shiro sedang berpikir...',
+        status_typing: 'Shiro sedang mengetik...',
         status_stopped: 'Dihentikan',
         status_extracting: 'Mengekstrak berkas...',
         status_doc_ready: 'Berkas siap',
@@ -286,6 +287,7 @@ const SHIRO_I18N = {
         stop_resp_tooltip: 'Stop response',
         status_ready: 'Ready',
         status_thinking: 'Shiro is thinking...',
+        status_typing: 'Shiro is typing...',
         status_stopped: 'Stopped',
         status_extracting: 'Extracting file...',
         status_doc_ready: 'File ready',
@@ -1320,7 +1322,10 @@ async function sendMessage() {
     abortController = new AbortController();
 
     try {
-        const payload = { message: message };
+        const payload = { 
+            message: message,
+            stream: true 
+        };
         if (currentImgUrl) {
             payload.image = currentImgUrl;
         }
@@ -1333,6 +1338,7 @@ async function sendMessage() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Accept': 'text/event-stream, application/json'
             },
             body: JSON.stringify(payload),
             signal: abortController.signal
@@ -1353,47 +1359,223 @@ async function sendMessage() {
             throw new Error(errorMsg);
         }
 
-        const data = await response.json();
-        if (userMsgEl && data.user_message_id) {
-            userMsgEl.dataset.msgId = data.user_message_id;
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/event-stream')) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            let streamText = '';
+            let assistantMsgEl = null;
+            let assistantBubble = null;
+            let assistantTextEl = null;
+            let finalData = null;
+            let lastRenderTime = 0;
+
+            const updateAssistantUI = (text, isDone = false) => {
+                if (!assistantMsgEl) {
+                    showTyping(false);
+                    assistantMsgEl = addMessage(
+                        'assistant',
+                        text || '...',
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false
+                    );
+                    assistantBubble = assistantMsgEl ? assistantMsgEl.querySelector('.bubble') : null;
+                    assistantTextEl = assistantMsgEl ? assistantMsgEl.querySelector('.msg-text') : null;
+                }
+                if (assistantTextEl) {
+                    let displayContent = text;
+                    if (!isDone) {
+                        const codeBlockCount = (displayContent.match(/```/g) || []).length;
+                        if (codeBlockCount % 2 === 1) {
+                            displayContent += '\n```';
+                        }
+                    }
+                    assistantTextEl.innerHTML = parseMessageContent(displayContent);
+                    if (assistantBubble) {
+                        assistantBubble.setAttribute('data-original-text', text);
+                    }
+                    scrollToBottom();
+                }
+            };
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // pertahankan baris parsial dalam buffer
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed.startsWith(':')) {
+                        // Heartbeat ping SSE (: ping) atau komentar, abaikan
+                        continue;
+                    }
+                    if (trimmed.startsWith('data:')) {
+                        const jsonStr = trimmed.slice(5).trim();
+                        if (!jsonStr) continue;
+                        try {
+                            const evData = JSON.parse(jsonStr);
+                            if (evData.type === 'init') {
+                                if (userMsgEl && evData.user_message_id) {
+                                    userMsgEl.dataset.msgId = evData.user_message_id;
+                                }
+                                if (evData.active_session_id) {
+                                    activeSessionId = evData.active_session_id;
+                                    try {
+                                        if (window.location.pathname !== '/chat/' + evData.active_session_id) {
+                                            window.history.pushState(null, '', '/chat/' + evData.active_session_id);
+                                        }
+                                    } catch (_) {}
+                                }
+                            } else if (evData.type === 'token') {
+                                if (!streamText) {
+                                    status.textContent = t('status_typing');
+                                }
+                                streamText += evData.token || '';
+                                const now = Date.now();
+                                if (now - lastRenderTime > 35) {
+                                    lastRenderTime = now;
+                                    updateAssistantUI(streamText, false);
+                                }
+                            } else if (evData.type === 'agent_action') {
+                                // Eksekusi tool/agent action
+                            } else if (evData.type === 'error') {
+                                console.warn('[Stream Error Event]:', evData.error);
+                            } else if (evData.type === 'done') {
+                                finalData = evData;
+                                if (evData.reply) {
+                                    streamText = evData.reply;
+                                }
+                            }
+                        } catch (errParse) {
+                            console.warn('[Stream JSON Parse Error]:', errParse, jsonStr);
+                        }
+                    }
+                }
+            }
+
+            // Render final setelah pembacaan stream tuntas
+            showTyping(false);
+            if (streamText || finalData) {
+                updateAssistantUI(streamText, true);
+                if (assistantMsgEl) {
+                    if (finalData && finalData.assistant_message_id) {
+                        assistantMsgEl.dataset.msgId = finalData.assistant_message_id;
+                    }
+                    if (finalData && finalData.assistant_image_url) {
+                        let bubble = assistantMsgEl.querySelector('.bubble');
+                        if (bubble && !bubble.querySelector('.chat-img-wrapper')) {
+                            const jsImgUrl = finalData.assistant_image_url.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                            const imgWrap = document.createElement('div');
+                            imgWrap.className = 'chat-img-wrapper';
+                            imgWrap.onclick = () => openImageLightbox(jsImgUrl, 'Foto Lampiran Chat');
+                            imgWrap.innerHTML = `<img src="${finalData.assistant_image_url}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">`;
+                            bubble.prepend(imgWrap);
+                        }
+                    }
+                    if (typeof hljs !== 'undefined') {
+                        assistantMsgEl.querySelectorAll('pre code[class*="language-"]').forEach(block => {
+                            try { hljs.highlightElement(block); } catch (_) {}
+                        });
+                    }
+                    if (typeof mermaid !== 'undefined') {
+                        assistantMsgEl.querySelectorAll('.mermaid-container').forEach(async (container) => {
+                            const rawSource = container.querySelector('.mermaid-raw-source');
+                            const renderTarget = container.querySelector('.mermaid-diagram-render');
+                            if (rawSource && renderTarget) {
+                                const code = rawSource.textContent.trim();
+                                const renderId = `diag_${Date.now()}_${Math.floor(Math.random()*10000)}`;
+                                try {
+                                    const { svg } = await mermaid.render(renderId, code);
+                                    renderTarget.innerHTML = svg;
+                                } catch (_) {
+                                    renderTarget.innerHTML = `<div class="mermaid-error"><i class="ph ph-warning"></i> Diagram tidak valid. Pilih "Lihat kode" untuk melihat sintaks aslinya.</div>`;
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+
+            clearPipelineSimulation();
+
+            if (finalData && finalData.pipeline_trace) {
+                activePipelineTrace = finalData.pipeline_trace;
+                renderModalPipeline(activePipelineTrace);
+            }
+            if (finalData && finalData.session_title) {
+                const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
+                if (currentSession) currentSession.title = finalData.session_title;
+            }
+
+            updateMemoryCount();
+            await loadSessions();
+            status.textContent = t('status_ready');
+            startTriggerTimer();
+
+        } else {
+            // Non-streaming fallback
+            const data = await response.json();
+            if (userMsgEl && data.user_message_id) {
+                userMsgEl.dataset.msgId = data.user_message_id;
+            }
+            
+            showTyping(false);
+            const assistantImg = data.assistant_image_url || null;
+            addMessage(
+                'assistant',
+                data.reply,
+                assistantImg,
+                null,
+                null,
+                null,
+                null,
+                data.agent_action,
+                data.assistant_message_id || null,
+                false
+            );
+            clearPipelineSimulation();
+            
+            if (data.pipeline_trace) {
+                activePipelineTrace = data.pipeline_trace;
+                renderModalPipeline(activePipelineTrace);
+            }
+            
+            if (data.session_title) {
+                const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
+                if (currentSession) currentSession.title = data.session_title;
+            }
+            updateMemoryCount(); 
+            await loadSessions();
+            status.textContent = t('status_ready');
+            startTriggerTimer(); 
         }
-        
-        showTyping(false);
-        const assistantImg = data.assistant_image_url || null;
-        addMessage(
-            'assistant',
-            data.reply,
-            assistantImg,
-            null,
-            null,
-            null,
-            null,
-            data.agent_action,
-            data.assistant_message_id || null,
-            false
-        );
-        clearPipelineSimulation();
-        
-        if (data.pipeline_trace) {
-            activePipelineTrace = data.pipeline_trace;
-            renderModalPipeline(activePipelineTrace);
-        }
-        
-        if (data.session_title) {
-            const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
-            if (currentSession) currentSession.title = data.session_title;
-        }
-        updateMemoryCount(); 
-        await loadSessions();
-        status.textContent = t('status_ready');
-        startTriggerTimer(); 
-        
+
     } catch (error) {
         clearPipelineSimulation();
         if (error.name === 'AbortError') {
             console.log('Request stopped by user');
             showTyping(false);
             status.textContent = t('status_stopped');
+            const lastAssistantMsg = chatMessages ? chatMessages.querySelector('.message.assistant:last-child') : null;
+            if (lastAssistantMsg && typeof hljs !== 'undefined') {
+                lastAssistantMsg.querySelectorAll('pre code[class*="language-"]').forEach(block => {
+                    try { hljs.highlightElement(block); } catch (_) {}
+                });
+            }
+            try {
+                updateMemoryCount();
+                loadSessions();
+            } catch (_) {}
         } else {
             console.error('Error:', error);
             showTyping(false);
@@ -1562,6 +1744,46 @@ async function resetMemory() {
     }
 }
 
+function renderMessagesList(messages) {
+    if (!chatMessages) return;
+    chatMessages.innerHTML = '';
+    if (messages && messages.length > 0) {
+        messages.forEach(msg => {
+            addMessage(
+                msg.role, 
+                msg.content, 
+                msg.image || null, 
+                msg.document_name || null,
+                msg.document_url || null,
+                msg.document_type || null,
+                msg.document_text || null,
+                null,
+                msg.id || null,
+                Boolean(msg.pinned)
+            );
+        });
+    } else {
+        chatMessages.innerHTML = `
+            <div class="message assistant">
+                <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
+                <div class="bubble" data-i18n="welcome_greeting">
+                    ${t('welcome_greeting')}
+                </div>
+            </div>
+        `;
+    }
+    
+    if (typingIndicator && chatMessages) {
+        chatMessages.appendChild(typingIndicator);
+    }
+    
+    renderPinnedDrawer();
+    const drawer = document.getElementById('chat-files-drawer');
+    if (drawer && !drawer.classList.contains('hidden')) {
+        renderChatFilesList();
+    }
+}
+
 async function loadChatHistory() {
     try {
         const response = await fetch('/api/history');
@@ -1571,39 +1793,7 @@ async function loadChatHistory() {
             updateTrainingBannerUI(data.enable_training_logging);
         }
 
-        chatMessages.innerHTML = '';
-        
-        if (data.history && data.history.length > 0) {
-            data.history.forEach(msg => {
-                addMessage(
-                    msg.role, 
-                    msg.content, 
-                    msg.image || null, 
-                    msg.document_name || null,
-                    msg.document_url || null,
-                    msg.document_type || null,
-                    msg.document_text || null,
-                    null,
-                    msg.id || null,
-                    Boolean(msg.pinned)
-                );
-            });
-        } else {
-            chatMessages.innerHTML = `
-                <div class="message assistant">
-                    <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
-                    <div class="bubble" data-i18n="welcome_greeting">
-                        ${t('welcome_greeting')}
-                    </div>
-                </div>
-            `;
-        }
-        
-        if (typingIndicator && chatMessages) {
-            chatMessages.appendChild(typingIndicator);
-        }
-        
-        renderPinnedDrawer();
+        renderMessagesList(data.history || []);
         updateMemoryCount();
     } catch (error) {
         console.error('Error loading history:', error);
@@ -1628,6 +1818,15 @@ async function loadSessions() {
                 document.title = `${activeSession.title} · Shiro`;
             } else {
                 document.title = 'Shiro · AI Assistant';
+            }
+
+            // Segera render data.messages jika ada dan layar belum memiliki pesan obrolan aktif
+            if (Array.isArray(data.messages)) {
+                const existingMsgs = chatMessages ? chatMessages.querySelectorAll('.message:not(#typing-indicator)') : [];
+                const isOnlyGreeting = existingMsgs.length === 1 && existingMsgs[0].querySelector('[data-i18n="welcome_greeting"]');
+                if (existingMsgs.length === 0 || isOnlyGreeting) {
+                    renderMessagesList(data.messages);
+                }
             }
 
             if (sessionSelect) {
@@ -1756,8 +1955,8 @@ async function createNewSession() {
     }
 }
 
-async function switchSession(sessionId) {
-    if (!sessionId || sessionId === activeSessionId || isGenerating) return;
+async function switchSession(sessionId, force = false) {
+    if (!sessionId || (sessionId === activeSessionId && !force) || isGenerating) return;
     try {
         status.textContent = '...';
         const res = await fetch('/api/sessions/switch', {
@@ -1777,46 +1976,11 @@ async function switchSession(sessionId) {
             clearAttachedDocument();
             clearAttachedImage();
 
-            chatMessages.innerHTML = '';
-
-            if (data.messages && data.messages.length > 0) {
-                data.messages.forEach(msg => {
-                    addMessage(
-                        msg.role, 
-                        msg.content, 
-                        msg.image || null, 
-                        msg.document_name || null,
-                        msg.document_url || null,
-                        msg.document_type || null,
-                        msg.document_text || null,
-                        null,
-                        msg.id || null,
-                        Boolean(msg.pinned)
-                    );
-                });
-            } else {
-                chatMessages.innerHTML = `
-                    <div class="message assistant">
-                        <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
-                        <div class="bubble" data-i18n="welcome_greeting">
-                            ${t('welcome_greeting')}
-                        </div>
-                    </div>
-                `;
-            }
-
-            if (typingIndicator && chatMessages) {
-                chatMessages.appendChild(typingIndicator);
-            }
-
-            renderPinnedDrawer();
-            const drawer = document.getElementById('chat-files-drawer');
-            if (drawer && !drawer.classList.contains('hidden')) {
-                renderChatFilesList();
-            }
+            renderMessagesList(data.messages || []);
             await loadSessions();
             updateMemoryCount();
             status.textContent = t('status_ready');
+            if (userInput) userInput.focus();
         }
     } catch (e) {
         console.error("Error switching session:", e);
@@ -1876,39 +2040,7 @@ async function deleteSessionById(sessionId, title) {
             clearAttachedDocument();
             clearAttachedImage();
 
-            chatMessages.innerHTML = '';
-
-            if (data.messages && data.messages.length > 0) {
-                data.messages.forEach(msg => {
-                    addMessage(
-                        msg.role, 
-                        msg.content, 
-                        msg.image || null, 
-                        msg.document_name || null,
-                        msg.document_url || null,
-                        msg.document_type || null,
-                        msg.document_text || null,
-                        null,
-                        msg.id || null,
-                        Boolean(msg.pinned)
-                    );
-                });
-            } else {
-                chatMessages.innerHTML = `
-                    <div class="message assistant">
-                        <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
-                        <div class="bubble" data-i18n="welcome_greeting">
-                            ${t('welcome_greeting')}
-                        </div>
-                    </div>
-                `;
-            }
-
-            if (typingIndicator && chatMessages) {
-                chatMessages.appendChild(typingIndicator);
-            }
-
-            renderPinnedDrawer();
+            renderMessagesList(data.messages || []);
             await loadSessions();
             updateMemoryCount();
             status.textContent = t('status_ready');
@@ -3885,48 +4017,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('modal tabs scroll error:', e);
     }
 
-    // Detect Claude-style /chat/<session_id> or /share/<session_id> directly in URL
+    // 1. Muat profil, privasi, dan model terlebih dahulu agar avatar & nama sudah siap saat chat di-render
+    try {
+        await Promise.allSettled([
+            loadProfiles(),
+            loadPrivacySettings(),
+            loadModels()
+        ]);
+    } catch (e) {
+        console.error('Profiles/models error:', e);
+    }
+
+    // 2. Deteksi URL langsung ala Claude: /chat/<session_id> atau /share/<session_id>
     const pathParts = window.location.pathname.split('/');
     let targetSessionId = null;
     if ((pathParts[1] === 'chat' || pathParts[1] === 'share') && pathParts[2]) {
         targetSessionId = pathParts[2].trim();
     }
 
+    // 3. Muat sesi percakapan & pesan
     try {
         await loadSessions();
-        if (targetSessionId && targetSessionId !== activeSessionId) {
+        if (targetSessionId) {
             try {
-                await switchSession(targetSessionId);
+                await switchSession(targetSessionId, true);
             } catch (err) {
                 console.warn('Direct session switch fallback:', err);
                 await loadChatHistory();
             }
         } else {
-            await loadChatHistory();
+            // Periksa apakah pesan sudah dirender langsung oleh loadSessions()
+            const existingMsgs = chatMessages ? chatMessages.querySelectorAll('.message:not(#typing-indicator)') : [];
+            const isOnlyGreeting = existingMsgs.length === 1 && existingMsgs[0].querySelector('[data-i18n="welcome_greeting"]');
+            if (existingMsgs.length === 0 || isOnlyGreeting) {
+                await loadChatHistory();
+            }
         }
     } catch (e) {
         console.error('Session/Chat history init error:', e);
-        try { await loadChatHistory(); } catch (err) {}
+        try { await loadChatHistory(); } catch (_) {}
+    }
+
+    // 4. Retry pengaman jika server baru restart dan daftar sesi sempat belum termuat
+    if (!currentSessionsData || currentSessionsData.length === 0) {
+        setTimeout(async () => {
+            if (!currentSessionsData || currentSessionsData.length === 0) {
+                console.log('[Init] Retrying loadSessions after slight delay...');
+                await loadSessions();
+            }
+        }, 1200);
     }
 
     window.addEventListener('popstate', () => {
         const parts = window.location.pathname.split('/');
         if ((parts[1] === 'chat' || parts[1] === 'share') && parts[2]) {
             if (parts[2] !== activeSessionId) {
-                switchSession(parts[2]);
+                switchSession(parts[2], true);
             }
         }
     });
-
-    try {
-        await Promise.allSettled([
-            loadPrivacySettings(),
-            loadProfiles(),
-            loadModels()
-        ]);
-    } catch (e) {
-        console.error('Profiles/models error:', e);
-    }
 
     if (userInput) {
         userInput.focus();

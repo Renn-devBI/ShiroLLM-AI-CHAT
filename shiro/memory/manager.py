@@ -236,9 +236,10 @@ class AdvancedMemoryManager:
                             }
                         }
                     elif self.active_session_id in self.sessions_store:
-                        if not self.short_term_history and self.sessions_store[self.active_session_id].get("messages"):
-                            self.short_term_history = list(self.sessions_store[self.active_session_id]["messages"])
-                        else:
+                        sess_msgs = self.sessions_store[self.active_session_id].get("messages", [])
+                        if sess_msgs and (not self.short_term_history or len(sess_msgs) >= len(self.short_term_history)):
+                            self.short_term_history = list(sess_msgs)
+                        elif self.short_term_history:
                             self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
                 else:
                     # v1 format - migrate
