@@ -1,0 +1,2015 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ShiroAI-v2-Agent · Demo UI/UX Preview</title>
+    <meta name="theme-color" content="#121315">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f2125'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%23ececef'%3ES%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <style>
+        /* ==========================================================================
+           Shiro — Demo UI/UX Design System (Matte Dark Precision & Symmetrical)
+           ========================================================================== */
+        :root {
+            --bg-base: #121315;
+            --bg-surface: #17181b;
+            --bg-elevated: #1f2125;
+            --bg-input: #17181b;
+            --bg-code: #0e0f11;
+
+            --border-subtle: #23252a;
+            --border-default: #2e3138;
+            --border-hover: #434750;
+
+            --text-primary: #ececef;
+            --text-secondary: #9ea2ad;
+            --text-muted: #686c77;
+
+            --accent: #94a3b8;
+            --accent-soft: rgba(148, 163, 184, 0.12);
+
+            --ok: #4d9e78;
+            --warn: #c8913b;
+            --danger: #cf5c58;
+            --danger-soft: rgba(207, 92, 88, 0.12);
+
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --radius-full: 9999px;
+
+            --font-ui: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+
+            --col-width: 820px;
+            --sidebar-width: 270px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            font-family: var(--font-ui);
+            font-size: 14px;
+            line-height: 1.5;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        button, input, select, textarea {
+            font-family: inherit;
+        }
+
+        /* Scrollbar Halus */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-default);
+            border-radius: var(--radius-full);
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-hover);
+        }
+
+        /* --------------------------------------------------------------------------
+           App Shell Layout
+           -------------------------------------------------------------------------- */
+        .app-shell {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* --------------------------------------------------------------------------
+           Sidebar
+           -------------------------------------------------------------------------- */
+        .sidebar {
+            width: var(--sidebar-width);
+            min-width: 220px;
+            max-width: 480px;
+            height: 100%;
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            z-index: 40;
+            transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .sidebar.collapsed {
+            transform: translateX(-100%);
+            margin-right: calc(-1 * var(--sidebar-width));
+        }
+
+        .sidebar-header {
+            padding: 14px 12px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .btn-new-chat {
+            flex: 1;
+            height: 38px;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.14s ease;
+        }
+
+        .btn-new-chat:hover {
+            background: var(--bg-surface);
+            border-color: var(--border-hover);
+        }
+
+        .btn-icon {
+            width: 38px;
+            height: 38px;
+            border-radius: var(--radius-md);
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.14s ease;
+            flex-shrink: 0;
+        }
+
+        .btn-icon:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+
+        .sidebar-section-title {
+            padding: 14px 14px 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+        }
+
+        .sidebar-session-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .session-item {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 40px;
+            padding: 0 8px 0 12px;
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.12s ease;
+            user-select: none;
+        }
+
+        .session-item:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .session-item.active {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            font-weight: 600;
+            border-color: var(--border-subtle);
+        }
+
+        .session-item.is-pinned {
+            border-left: 3px solid var(--accent);
+        }
+
+        .session-item-content {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .session-item-icon {
+            font-size: 16px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .session-item.active .session-item-icon {
+            color: var(--accent);
+        }
+
+        .session-item-title {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 1;
+        }
+
+        .session-pin-badge {
+            font-size: 12px;
+            color: var(--accent);
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .session-item-actions {
+            display: none;
+            align-items: center;
+            gap: 2px;
+        }
+
+        .session-item:hover .session-item-actions {
+            display: flex;
+        }
+
+        .btn-session-subaction {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: all 0.1s;
+        }
+
+        .btn-session-subaction:hover {
+            color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        /* Sidebar Footer */
+        .sidebar-footer {
+            padding: 12px;
+            border-top: 1px solid var(--border-subtle);
+            background: var(--bg-surface);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .sidebar-memory-pill {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            font-size: 12px;
+        }
+
+        .sidebar-memory-pill .left {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            color: var(--text-secondary);
+        }
+
+        .sidebar-memory-pill .count {
+            font-weight: 700;
+            color: var(--ok);
+        }
+
+        .sidebar-footer-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+
+        .btn-sidebar-tool {
+            height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .btn-sidebar-tool:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border-color: var(--border-hover);
+        }
+
+        /* Sidebar Resizer */
+        .sidebar-resizer {
+            width: 4px;
+            cursor: col-resize;
+            background: transparent;
+            transition: background 0.15s ease;
+            position: relative;
+            z-index: 45;
+        }
+        .sidebar-resizer:hover, .sidebar-resizer.resizing {
+            background: var(--accent);
+        }
+
+        /* Backdrop Mobile */
+        .sidebar-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(2px);
+            z-index: 35;
+        }
+
+        /* --------------------------------------------------------------------------
+           Main Content Area
+           -------------------------------------------------------------------------- */
+        .main-content {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+            background: var(--bg-base);
+        }
+
+        /* Top Navbar */
+        .navbar {
+            height: 56px;
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-surface);
+            z-index: 30;
+        }
+
+        .nav-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-wrap {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--ok);
+            box-shadow: 0 0 8px rgba(77, 158, 120, 0.4);
+        }
+
+        .brand-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .brand-sep {
+            width: 1px;
+            height: 14px;
+            background: var(--border-default);
+        }
+
+        /* Active Model Pill */
+        .model-pill-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 10px;
+            border-radius: var(--radius-full);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .model-pill-badge:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .model-pill-badge i {
+            color: var(--ok);
+            font-size: 13px;
+        }
+
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            position: relative;
+        }
+
+        /* Gemini 3-Dots Menu */
+        .chat-menu-container {
+            position: relative;
+            display: inline-block;
+        }
+
+        .btn-chat-menu {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.12s ease;
+        }
+
+        .btn-chat-menu:hover {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-hover);
+        }
+
+        .chat-dropdown-menu {
+            position: absolute;
+            top: 44px;
+            right: 0;
+            width: 240px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            padding: 6px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .chat-dropdown-item {
+            width: 100%;
+            height: 36px;
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: transparent;
+            border: none;
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-size: 12.5px;
+            font-weight: 500;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.1s;
+        }
+
+        .chat-dropdown-item:hover {
+            background: var(--bg-surface);
+        }
+
+        .chat-dropdown-item i {
+            font-size: 16px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .chat-dropdown-item.item-danger {
+            color: var(--danger);
+        }
+
+        .chat-dropdown-item.item-danger i {
+            color: var(--danger);
+        }
+
+        .chat-dropdown-item.item-danger:hover {
+            background: var(--danger-soft);
+        }
+
+        .chat-dropdown-divider {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 4px 0;
+        }
+
+        /* --------------------------------------------------------------------------
+           Pinned Messages Drawer
+           -------------------------------------------------------------------------- */
+        .pinned-drawer {
+            position: absolute;
+            top: 56px;
+            right: 0;
+            width: 320px;
+            max-width: 90vw;
+            bottom: 0;
+            background: var(--bg-surface);
+            border-left: 1px solid var(--border-subtle);
+            z-index: 25;
+            display: flex;
+            flex-direction: column;
+            box-shadow: -6px 0 24px rgba(0,0,0,0.3);
+            animation: slideInRight 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideInRight {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
+
+        .pinned-drawer-header {
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 13.5px;
+            font-weight: 600;
+        }
+
+        .pinned-drawer-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .pinned-drawer-card {
+            padding: 10px 12px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .pinned-drawer-card:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-surface);
+        }
+
+        .pinned-card-meta {
+            font-size: 11px;
+            color: var(--accent);
+            font-weight: 600;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .pinned-card-text {
+            font-size: 12.5px;
+            color: var(--text-primary);
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            line-height: 1.4;
+        }
+
+        /* --------------------------------------------------------------------------
+           Chat Viewport & Messages
+           -------------------------------------------------------------------------- */
+        .chat-viewport {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 16px 120px;
+            scroll-behavior: smooth;
+        }
+
+        .messages-container {
+            max-width: var(--col-width);
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .message {
+            display: flex;
+            gap: 12px;
+            width: 100%;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-sm);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 13px;
+            flex-shrink: 0;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+            user-select: none;
+        }
+
+        .avatar.shiro-avatar {
+            background: #1e2430;
+            color: #8da4c4;
+            border-color: #2c384a;
+        }
+
+        .message-bubble-wrap {
+            max-width: calc(100% - 44px);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .message.user .message-bubble-wrap {
+            align-items: flex-end;
+        }
+
+        .bubble {
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            line-height: 1.6;
+            word-break: break-word;
+            position: relative;
+        }
+
+        .message.user .bubble {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            color: var(--text-primary);
+            border-top-right-radius: 2px;
+        }
+
+        .message.assistant .bubble {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-primary);
+            border-top-left-radius: 2px;
+        }
+
+        .message.is-pinned .bubble {
+            border-color: var(--accent);
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
+
+        .pin-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--accent);
+            background: var(--accent-soft);
+            padding: 2px 8px;
+            border-radius: var(--radius-full);
+            margin-bottom: 6px;
+        }
+
+        /* Actions Bar on Hover */
+        .msg-actions-bar {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            opacity: 0.85;
+            transition: opacity 0.14s;
+        }
+
+        .btn-msg-action {
+            width: 28px;
+            height: 28px;
+            border-radius: 4px;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.12s;
+        }
+
+        .btn-msg-action:hover {
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+            border-color: var(--border-subtle);
+        }
+
+        .btn-msg-action.pinned {
+            color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        /* --------------------------------------------------------------------------
+           Document Card & Tool Execution Status Cards
+           -------------------------------------------------------------------------- */
+        .doc-badge-card {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .doc-badge-card:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-surface);
+        }
+
+        .doc-badge-icon {
+            font-size: 20px;
+            color: #ef4444;
+        }
+
+        .doc-badge-info .name {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .doc-badge-info .sub {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Agent Tool Card */
+        .agent-status-card {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            margin-bottom: 10px;
+            overflow: hidden;
+        }
+
+        .status-card-header {
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            font-size: 12.5px;
+            background: rgba(255, 255, 255, 0.015);
+        }
+
+        .status-card-header:hover {
+            background: var(--bg-elevated);
+        }
+
+        .status-card-title-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+        }
+
+        .status-card-icon {
+            color: var(--accent);
+        }
+
+        .status-card-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 7px;
+            border-radius: var(--radius-full);
+            font-size: 11px;
+            font-weight: 600;
+            background: rgba(77, 158, 120, 0.12);
+            color: var(--ok);
+        }
+
+        .status-card-body {
+            padding: 10px 12px;
+            border-top: 1px solid var(--border-subtle);
+            background: var(--bg-code);
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            color: var(--text-secondary);
+        }
+
+        /* --------------------------------------------------------------------------
+           Markdown Code Block & ChatGPT-style Download Button
+           -------------------------------------------------------------------------- */
+        .code-block-wrapper {
+            margin: 12px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            background: var(--bg-code);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .code-block-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 36px;
+            padding: 0 10px 0 14px;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .code-lang-label {
+            font-size: 11.5px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            text-transform: lowercase;
+            font-weight: 600;
+        }
+
+        .code-block-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .btn-code-action {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 11.5px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 9px;
+            border-radius: var(--radius-sm);
+            transition: all 0.14s ease;
+            line-height: 1.4;
+        }
+
+        .btn-code-action:hover {
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+            border-color: var(--border-subtle);
+        }
+
+        .btn-code-action.btn-download-code:hover {
+            color: var(--accent);
+            background: var(--accent-soft);
+            border-color: rgba(148, 163, 184, 0.3);
+        }
+
+        .btn-code-action.download-success,
+        .btn-code-action.copy-success {
+            color: var(--ok) !important;
+            background: rgba(77, 158, 120, 0.15) !important;
+            border-color: rgba(77, 158, 120, 0.35) !important;
+        }
+
+        .code-block-wrapper pre {
+            margin: 0;
+            padding: 14px 16px;
+            overflow-x: auto;
+            background: transparent !important;
+        }
+
+        .code-block-wrapper code {
+            font-family: var(--font-mono);
+            font-size: 12.5px;
+            line-height: 1.6;
+            background: transparent !important;
+            padding: 0 !important;
+        }
+
+        /* --------------------------------------------------------------------------
+           Composer & Input Bar
+           -------------------------------------------------------------------------- */
+        .composer-container {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 0 16px 20px;
+            background: linear-gradient(to top, var(--bg-base) 80%, transparent);
+            z-index: 20;
+        }
+
+        .composer-box {
+            max-width: var(--col-width);
+            margin: 0 auto;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg);
+            padding: 10px 14px 8px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: border-color 0.14s ease;
+        }
+
+        .composer-box:focus-within {
+            border-color: var(--border-hover);
+        }
+
+        .composer-textarea {
+            width: 100%;
+            min-height: 48px;
+            max-height: 200px;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 14px;
+            line-height: 1.5;
+            resize: none;
+            outline: none;
+        }
+
+        .composer-textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .composer-actions-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-top: 4px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .composer-media-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .btn-composer-tool {
+            height: 30px;
+            padding: 0 10px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .btn-composer-tool:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .btn-send {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-sm);
+            background: var(--text-primary);
+            color: var(--bg-base);
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 700;
+            transition: all 0.12s;
+        }
+
+        .btn-send:hover {
+            opacity: 0.9;
+            transform: scale(1.04);
+        }
+
+        .btn-send.stop-mode {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        /* --------------------------------------------------------------------------
+           Modals
+           -------------------------------------------------------------------------- */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(4px);
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .modal-dialog {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 600px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+            animation: modalFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: scale(0.96); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-header {
+            padding: 16px 20px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .modal-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .modal-tabs {
+            display: flex;
+            gap: 4px;
+            padding: 8px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-subtle);
+            overflow-x: auto;
+        }
+
+        .modal-tab-btn {
+            height: 32px;
+            padding: 0 14px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.12s;
+            white-space: nowrap;
+        }
+
+        .modal-tab-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-tab-btn.active {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        /* Single Model Card in Settings */
+        .model-single-card {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .model-single-card.active {
+            border-color: rgba(77, 158, 120, 0.4);
+            box-shadow: inset 0 0 0 1px rgba(77, 158, 120, 0.25);
+        }
+
+        .model-single-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .model-active-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 9px;
+            border-radius: var(--radius-full);
+            background: rgba(77, 158, 120, 0.12);
+            color: var(--ok);
+            font-size: 11.5px;
+            font-weight: 700;
+        }
+
+        .model-chip-tag {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+            background: var(--bg-elevated);
+            padding: 2px 8px;
+            border-radius: var(--radius-sm);
+        }
+
+        .model-name-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .model-desc-text {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .model-specs-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 4px;
+        }
+
+        .model-spec-item {
+            padding: 8px 10px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            font-size: 12px;
+        }
+
+        .model-spec-item .k {
+            color: var(--text-muted);
+            display: block;
+            font-size: 10.5px;
+            margin-bottom: 2px;
+        }
+
+        .model-spec-item .v {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* Toast Container */
+        .toast-container {
+            position: fixed;
+            bottom: 84px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 300;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+
+        .toast-pill {
+            padding: 10px 18px;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-full);
+            font-size: 13px;
+            font-weight: 500;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            animation: toastPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        @keyframes toastPop {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Responsive Mobile Adjustments */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                bottom: 0;
+            }
+            .sidebar-resizer {
+                display: none;
+            }
+            .chat-viewport {
+                padding: 16px 12px 110px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <button type="button" class="btn-new-chat" id="btn-new-chat" onclick="createNewDemoSession()">
+                    <i class="ph ph-plus"></i>
+                    <span>Chat baru</span>
+                </button>
+                <button type="button" class="btn-icon" onclick="toggleSidebar()" title="Tutup sidebar">
+                    <i class="ph ph-sidebar-simple"></i>
+                </button>
+            </div>
+
+            <div class="sidebar-section-title">Riwayat percakapan</div>
+
+            <div class="sidebar-session-list" id="sidebar-session-list">
+                <!-- Sesi Percakapan Demo -->
+                <div class="session-item active is-pinned" data-id="sess-1" onclick="switchDemoSession('sess-1')">
+                    <div class="session-item-content">
+                        <i class="ph ph-chat-teardrop-text session-item-icon"></i>
+                        <span class="session-item-title">Pembuatan Komponen HTML & CSS</span>
+                        <span class="session-pin-badge"><i class="ph-fill ph-push-pin"></i></span>
+                    </div>
+                    <div class="session-item-actions">
+                        <button type="button" class="btn-session-subaction" onclick="deleteDemoSession(event, 'sess-1')" title="Hapus"><i class="ph ph-trash"></i></button>
+                    </div>
+                </div>
+
+                <div class="session-item" data-id="sess-2" onclick="switchDemoSession('sess-2')">
+                    <div class="session-item-content">
+                        <i class="ph ph-chat-teardrop-text session-item-icon"></i>
+                        <span class="session-item-title">Analisis Laporan Keuangan 2026</span>
+                    </div>
+                    <div class="session-item-actions">
+                        <button type="button" class="btn-session-subaction" onclick="deleteDemoSession(event, 'sess-2')" title="Hapus"><i class="ph ph-trash"></i></button>
+                    </div>
+                </div>
+
+                <div class="session-item" data-id="sess-3" onclick="switchDemoSession('sess-3')">
+                    <div class="session-item-content">
+                        <i class="ph ph-chat-teardrop-text session-item-icon"></i>
+                        <span class="session-item-title">Perancangan Arsitektur AI Agent</span>
+                    </div>
+                    <div class="session-item-actions">
+                        <button type="button" class="btn-session-subaction" onclick="deleteDemoSession(event, 'sess-3')" title="Hapus"><i class="ph ph-trash"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="sidebar-memory-pill" title="Ingatan aktif tersimpan">
+                    <div class="left">
+                        <i class="ph ph-brain"></i>
+                        <span>Basis ingatan</span>
+                    </div>
+                    <span class="count">18 fakta</span>
+                </div>
+                <div class="sidebar-footer-actions">
+                    <button type="button" class="btn-sidebar-tool" onclick="openPipelineModal()">
+                        <i class="ph ph-tree-structure"></i>
+                        <span>Alur kerja</span>
+                    </button>
+                    <button type="button" class="btn-sidebar-tool" onclick="openSettingsModal('model')">
+                        <i class="ph ph-gear"></i>
+                        <span>Pengaturan</span>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ChatGPT-style Draggable Resizer -->
+        <div class="sidebar-resizer" id="sidebar-resizer" title="Geser untuk mengubah lebar sidebar"></div>
+        <div class="sidebar-backdrop hidden" id="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
+
+        <!-- Main Workspace -->
+        <main class="main-content">
+            <!-- Navbar -->
+            <header class="navbar">
+                <div class="nav-left">
+                    <button type="button" class="btn-icon" onclick="toggleSidebar()" title="Buka/Tutup Sidebar">
+                        <i class="ph ph-sidebar-simple"></i>
+                    </button>
+                    <div class="brand-wrap">
+                        <div class="brand-dot"></div>
+                        <span class="brand-title">Shiro</span>
+                        <span class="brand-sep"></span>
+                        <div class="model-pill-badge" onclick="openSettingsModal('model')" title="Model AI Aktif: ShiroAI-v2-Agent">
+                            <i class="ph ph-sparkle"></i>
+                            <span>ShiroAI-v2-Agent</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nav-right">
+                    <!-- Gemini 3-Dots Dropdown Menu -->
+                    <div class="chat-menu-container">
+                        <button type="button" class="btn-chat-menu" id="btn-chat-menu" onclick="toggleDropdownMenu()" aria-label="Menu Opsi">
+                            <i class="ph ph-dots-three-vertical"></i>
+                        </button>
+                        <div class="chat-dropdown-menu hidden" id="chat-dropdown-menu">
+                            <button type="button" class="chat-dropdown-item" onclick="openShareModal()">
+                                <i class="ph ph-share-network"></i>
+                                <span>Bagikan percakapan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" onclick="toggleFilesDrawer()">
+                                <i class="ph ph-folder-notch"></i>
+                                <span>File dalam percakapan ini</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" onclick="togglePinCurrentSession()">
+                                <i class="ph ph-push-pin" id="menu-pin-icon"></i>
+                                <span id="menu-pin-label">Lepas sematan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" onclick="openRenameModal()">
+                                <i class="ph ph-pencil-simple"></i>
+                                <span>Ganti nama sesi</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" onclick="togglePinnedDrawer()">
+                                <i class="ph ph-bookmark-simple"></i>
+                                <span>Pesan tersemat</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" onclick="exportDemoChat()">
+                                <i class="ph ph-download-simple"></i>
+                                <span>Ekspor percakapan</span>
+                            </button>
+                            <div class="chat-dropdown-divider"></div>
+                            <button type="button" class="chat-dropdown-item" onclick="openSettingsModal('user')">
+                                <i class="ph ph-gear"></i>
+                                <span>Pengaturan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" onclick="openPipelineModal()">
+                                <i class="ph ph-tree-structure"></i>
+                                <span>Alur eksekusi</span>
+                            </button>
+                            <div class="chat-dropdown-divider"></div>
+                            <button type="button" class="chat-dropdown-item item-danger" onclick="deleteCurrentSessionPrompt()">
+                                <i class="ph ph-trash"></i>
+                                <span>Hapus percakapan</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Laci Pesan Tersemat (Pinned Messages Drawer) -->
+            <div class="pinned-drawer hidden" id="pinned-drawer">
+                <div class="pinned-drawer-header">
+                    <span><i class="ph-fill ph-push-pin"></i> Pesan Tersemat</span>
+                    <button type="button" class="btn-icon" onclick="togglePinnedDrawer(false)"><i class="ph ph-x"></i></button>
+                </div>
+                <div class="pinned-drawer-list" id="pinned-drawer-list">
+                    <div class="pinned-drawer-card" onclick="scrollToMessage('msg-3')">
+                        <div class="pinned-card-meta">
+                            <span>ShiroAI-v2-Agent</span>
+                            <i class="ph-fill ph-push-pin"></i>
+                        </div>
+                        <div class="pinned-card-text">Berikut kode HTML & CSS modern lengkap dengan tombol download ala ChatGPT...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Viewport -->
+            <section class="chat-viewport" id="chat-viewport">
+                <div class="messages-container" id="messages-container">
+                    <!-- Pesan 1: Assistant Greeting -->
+                    <div class="message assistant" id="msg-1">
+                        <div class="avatar shiro-avatar">S</div>
+                        <div class="message-bubble-wrap">
+                            <div class="bubble">
+                                Halo Kakak! ShiroAI-v2-Agent siap membantu. Ada program, berkas dokumen, atau analisis yang ingin kita kerjakan hari ini?
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pesan 2: User Message with Document -->
+                    <div class="message user" id="msg-2">
+                        <div class="message-bubble-wrap">
+                            <div class="bubble">
+                                <div class="doc-badge-card" onclick="openDocPreview('spesifikasi_desain.pdf')">
+                                    <i class="ph ph-file-pdf doc-badge-icon"></i>
+                                    <div class="doc-badge-info">
+                                        <div class="name">spesifikasi_desain.pdf</div>
+                                        <div class="sub">PDF Dokumen · 142 KB</div>
+                                    </div>
+                                </div>
+                                Tolong buatkan komponen kartu profil modern dengan tombol unduh kode ala ChatGPT ya Shiro!
+                            </div>
+                            <div class="msg-actions-bar">
+                                <button type="button" class="btn-msg-action" onclick="copyText('Tolong buatkan komponen kartu profil modern...')"><i class="ph ph-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="avatar user-avatar">U</div>
+                    </div>
+
+                    <!-- Pesan 3: Assistant Reply with Code & ChatGPT-style Download Button -->
+                    <div class="message assistant is-pinned" id="msg-3">
+                        <div class="avatar shiro-avatar">S</div>
+                        <div class="message-bubble-wrap">
+                            <!-- Tool Card -->
+                            <div class="agent-status-card">
+                                <div class="status-card-header" onclick="toggleToolCard(this)">
+                                    <div class="status-card-title-group">
+                                        <i class="ph ph-code status-card-icon"></i>
+                                        <span>Code Generator Presisi: Desain Komponen UI</span>
+                                    </div>
+                                    <span class="status-card-badge"><i class="ph ph-check-circle"></i> Berhasil · 0.4s</span>
+                                </div>
+                                <div class="status-card-body hidden">
+                                    Payload: { component: "ProfileCard", framework: "vanilla-html-css", download_ready: true }
+                                </div>
+                            </div>
+
+                            <div class="bubble">
+                                <div class="pin-indicator"><i class="ph-fill ph-push-pin"></i> Disematkan</div>
+                                Tentu Kakak! Ini implementasi lengkap komponen kartu profil modern. Perhatikan di pojok kanan atas blok kode di bawah ini terdapat tombol <strong>Unduh (Download)</strong> di samping <strong>Salin</strong>:
+
+                                <!-- Code Block With Download Button -->
+                                <div class="code-block-wrapper" data-lang="html">
+                                    <div class="code-block-header">
+                                        <span class="code-lang-label">html</span>
+                                        <div class="code-block-actions">
+                                            <button type="button" class="btn-code-action btn-download-code" onclick="downloadSnippet(this)" title="Unduh Kode sebagai Berkas">
+                                                <i class="ph ph-download-simple"></i> <span>Unduh</span>
+                                            </button>
+                                            <button type="button" class="btn-code-action btn-copy-code" onclick="copySnippet(this)" title="Salin Seluruh Kode">
+                                                <i class="ph ph-copy"></i> <span>Salin</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <pre><code class="language-html">&lt;!-- filename: ProfileCard.html --&gt;
+&lt;div class="profile-card"&gt;
+  &lt;div class="avatar-ring"&gt;
+    &lt;img src="avatar.jpg" alt="Shiro AI" /&gt;
+  &lt;/div&gt;
+  &lt;h3 class="name"&gt;ShiroAI-v2-Agent&lt;/h3&gt;
+  &lt;p class="role"&gt;Autonomous Assistant&lt;/p&gt;
+  &lt;button class="btn-action"&gt;Connect&lt;/button&gt;
+&lt;/div&gt;
+
+&lt;style&gt;
+.profile-card {
+  background: #17181b;
+  border: 1px solid #2e3138;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  color: #ececef;
+}
+.btn-action {
+  background: #94a3b8;
+  color: #121315;
+  border-radius: 6px;
+  padding: 8px 16px;
+}
+&lt;/style&gt;</code></pre>
+                                </div>
+
+                                Kakak tinggal menekan tombol <strong>Unduh</strong> di pojok kanan atas untuk langsung menyimpannya ke komputer tanpa perlu repot-repot <em>copy-paste</em>!
+                            </div>
+
+                            <div class="msg-actions-bar">
+                                <button type="button" class="btn-msg-action pinned" onclick="toggleMsgPin(this, 'msg-3')" title="PIN Pesan"><i class="ph-fill ph-push-pin"></i></button>
+                                <button type="button" class="btn-msg-action" onclick="copyText('Tentu Kakak! Ini implementasi lengkap...')"><i class="ph ph-copy"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Composer Input Bar -->
+            <footer class="composer-container">
+                <div class="composer-box">
+                    <textarea class="composer-textarea" id="composer-input" placeholder="Kirim pesan ke ShiroAI-v2-Agent... (Enter untuk kirim)" rows="1" oninput="adjustTextarea(this)" onkeydown="handleComposerKey(event)"></textarea>
+                    <div class="composer-actions-bar">
+                        <div class="composer-media-group">
+                            <button type="button" class="btn-composer-tool" onclick="simulateAttachFile('document')">
+                                <i class="ph ph-paperclip"></i>
+                                <span>Berkas</span>
+                            </button>
+                            <button type="button" class="btn-composer-tool" onclick="simulateAttachFile('image')">
+                                <i class="ph ph-image"></i>
+                                <span>Gambar</span>
+                            </button>
+                        </div>
+                        <button type="button" class="btn-send" id="btn-send" onclick="handleSendDemoMessage()" title="Kirim Pesan">
+                            <i class="ph ph-arrow-up" id="send-icon"></i>
+                        </button>
+                    </div>
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Modal Pengaturan (Settings) -->
+    <div class="modal-overlay hidden" id="modal-settings" onclick="closeModalOnBackdrop(event, 'modal-settings')">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <div class="modal-title">Pengaturan Shiro</div>
+                <button type="button" class="btn-icon" onclick="closeModal('modal-settings')"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="modal-tabs">
+                <button type="button" class="modal-tab-btn active" onclick="switchSettingsTab('model', this)">Model AI</button>
+                <button type="button" class="modal-tab-btn" onclick="switchSettingsTab('user', this)">Profil Anda</button>
+                <button type="button" class="modal-tab-btn" onclick="switchSettingsTab('privacy', this)">Privasi & Training</button>
+                <button type="button" class="modal-tab-btn" onclick="switchSettingsTab('theme', this)">Tema Tampilan</button>
+            </div>
+            <div class="modal-body">
+                <!-- Tab Model (HANYA 1 MODEL: ShiroAI-v2-Agent) -->
+                <div id="tab-pane-model" class="tab-pane">
+                    <div class="model-single-card active">
+                        <div class="model-single-top">
+                            <div class="model-active-badge">
+                                <i class="ph ph-check-circle"></i>
+                                <span>Model Utama Aktif</span>
+                            </div>
+                            <span class="model-chip-tag">GGUF · Q4_K_M</span>
+                        </div>
+                        <div class="model-name-title">ShiroAI-v2-Agent</div>
+                        <p class="model-desc-text">
+                            Model agen otonom generasi kedua dengan kemampuan eksekusi kode tingkat lanjut, analisis visual multimodal terintegrasi, dan pemeliharaan ingatan lintas sesi.
+                        </p>
+                        <div class="model-specs-grid">
+                            <div class="model-spec-item">
+                                <span class="k">Kapasitas Konteks</span>
+                                <span class="v">131,072 Tokens (128K)</span>
+                            </div>
+                            <div class="model-spec-item">
+                                <span class="k">Orkestrasi Vision</span>
+                                <span class="v">MoE Dual-Brain Ready</span>
+                            </div>
+                            <div class="model-spec-item">
+                                <span class="k">Kecepatan Inferensi</span>
+                                <span class="v">Streaming Real-Time SSE</span>
+                            </div>
+                            <div class="model-spec-item">
+                                <span class="k">Status Engine</span>
+                                <span class="v" style="color: var(--ok);">Terkunci & Optimal</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab User -->
+                <div id="tab-pane-user" class="tab-pane hidden">
+                    <div style="display:flex; flex-direction:column; gap:12px;">
+                        <div>
+                            <label style="font-size:12px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:4px;">Nama Panggilan</label>
+                            <input type="text" value="Kakak" style="width:100%; height:36px; padding:0 12px; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:6px; color:var(--text-primary);">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:4px;">Catatan Konteks</label>
+                            <textarea style="width:100%; height:70px; padding:8px 12px; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:6px; color:var(--text-primary); font-size:13px; resize:none;">Pengembang sistem cerdas & arsitektur Web UI presisi.</textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Privacy -->
+                <div id="tab-pane-privacy" class="tab-pane hidden">
+                    <div style="background:var(--bg-base); padding:14px; border-radius:8px; border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:space-between;">
+                        <div>
+                            <div style="font-weight:600; font-size:13px;">Simpan Data untuk Training Model</div>
+                            <div style="font-size:11.5px; color:var(--text-muted); margin-top:2px;">Percakapan dicatat secara anonim untuk fine-tuning.</div>
+                        </div>
+                        <input type="checkbox" checked style="accent-color:var(--ok); width:18px; height:18px;">
+                    </div>
+                </div>
+
+                <!-- Tab Theme -->
+                <div id="tab-pane-theme" class="tab-pane hidden">
+                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
+                        <button type="button" style="padding:10px; border-radius:8px; background:#121315; border:1px solid var(--border-default); color:#ececef; font-weight:600; font-size:12px; cursor:pointer;" onclick="showToast('Tema Grafit aktif')">Grafit</button>
+                        <button type="button" style="padding:10px; border-radius:8px; background:#10151d; border:1px solid var(--border-default); color:#e4e8ef; font-weight:600; font-size:12px; cursor:pointer;" onclick="showToast('Tema Midnight aktif')">Midnight</button>
+                        <button type="button" style="padding:10px; border-radius:8px; background:#121713; border:1px solid var(--border-default); color:#e4eae3; font-weight:600; font-size:12px; cursor:pointer;" onclick="showToast('Tema Forest aktif')">Forest</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Bagikan (Share Link Claude Style) -->
+    <div class="modal-overlay hidden" id="modal-share" onclick="closeModalOnBackdrop(event, 'modal-share')">
+        <div class="modal-dialog" style="max-width: 480px;">
+            <div class="modal-header">
+                <div class="modal-title">Bagikan Percakapan</div>
+                <button type="button" class="btn-icon" onclick="closeModal('modal-share')"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="modal-body" style="display:flex; flex-direction:column; gap:14px;">
+                <p style="font-size:13px; color:var(--text-secondary);">Gunakan tautan unik ini untuk membagikan sesi obrolan secara langsung:</p>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="share-link-input" readonly value="https://shiro.ai/chat/c8f2a1b9-4e20-4a8f-9a1b-7c3e5d8f9a01" style="flex:1; height:38px; padding:0 12px; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:6px; color:var(--text-primary); font-family:var(--font-mono); font-size:12px;">
+                    <button type="button" class="btn-new-chat" style="flex:none; padding:0 16px;" onclick="copyShareLink()">
+                        <i class="ph ph-copy"></i> Salin
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        // Inisialisasi Highlight.js
+        hljs.highlightAll();
+
+        // --------------------------------------------------------------------------
+        // Fitur Utama: Download Kode ala ChatGPT (HTML5 Blob API)
+        // --------------------------------------------------------------------------
+        function downloadSnippet(btn) {
+            const wrapper = btn.closest('.code-block-wrapper');
+            if (!wrapper) return;
+            const codeEl = wrapper.querySelector('code');
+            if (!codeEl) return;
+            const codeText = codeEl.innerText || codeEl.textContent;
+            
+            // Ekstrak nama berkas dari komentar pertama jika ada
+            let filename = 'ProfileCard.html';
+            const firstLine = codeText.split('\n')[0] || '';
+            const match = firstLine.match(/filename:\s*([a-zA-Z0-9_\-\.]+)/i);
+            if (match && match[1]) filename = match[1].trim();
+
+            // Unduh file langsung via Blob di browser (0ms latency, pure frontend)
+            const blob = new Blob([codeText], { type: 'text/html;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1200);
+
+            // Visual Feedback
+            const span = btn.querySelector('span');
+            const icon = btn.querySelector('i');
+            const oldText = span.textContent;
+            span.textContent = 'Tersimpan';
+            icon.className = 'ph ph-check';
+            btn.classList.add('download-success');
+
+            setTimeout(() => {
+                span.textContent = oldText;
+                icon.className = 'ph ph-download-simple';
+                btn.classList.remove('download-success');
+            }, 2000);
+
+            showToast(`Berkas "${filename}" berhasil diunduh ke komputer Anda!`);
+        }
+
+        function copySnippet(btn) {
+            const wrapper = btn.closest('.code-block-wrapper');
+            if (!wrapper) return;
+            const codeEl = wrapper.querySelector('code');
+            if (!codeEl) return;
+            const text = codeEl.innerText || codeEl.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const span = btn.querySelector('span');
+                const icon = btn.querySelector('i');
+                const oldText = span.textContent;
+                span.textContent = 'Tersalin';
+                icon.className = 'ph ph-check';
+                btn.classList.add('copy-success');
+                setTimeout(() => {
+                    span.textContent = oldText;
+                    icon.className = 'ph ph-copy';
+                    btn.classList.remove('copy-success');
+                }, 2000);
+            });
+        }
+
+        function copyText(str) {
+            navigator.clipboard.writeText(str).then(() => showToast('Pesan berhasil disalin'));
+        }
+
+        // --------------------------------------------------------------------------
+        // Sidebar & Session Demo Switching
+        // --------------------------------------------------------------------------
+        function toggleSidebar(forceState) {
+            const sidebar = document.getElementById('sidebar');
+            const backdrop = document.getElementById('sidebar-backdrop');
+            const isCollapsed = typeof forceState === 'boolean' ? !forceState : !sidebar.classList.contains('collapsed');
+            sidebar.classList.toggle('collapsed', isCollapsed);
+            if (window.innerWidth <= 768) {
+                backdrop.classList.toggle('hidden', isCollapsed);
+            }
+        }
+
+        function switchDemoSession(sessId) {
+            document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
+            const target = document.querySelector(`.session-item[data-id="${sessId}"]`);
+            if (target) target.classList.add('active');
+            showToast(`Beralih ke ${target ? target.querySelector('.session-item-title').textContent : 'sesi baru'}`);
+            if (window.innerWidth <= 768) toggleSidebar(false);
+        }
+
+        function createNewDemoSession() {
+            showToast('Sesi obrolan baru siap!');
+        }
+
+        function deleteDemoSession(e, sessId) {
+            e.stopPropagation();
+            const el = document.querySelector(`.session-item[data-id="${sessId}"]`);
+            if (el) {
+                el.remove();
+                showToast('Sesi percakapan telah dihapus.');
+            }
+        }
+
+        // --------------------------------------------------------------------------
+        // Gemini 3-Dots Menu & Modals
+        // --------------------------------------------------------------------------
+        function toggleDropdownMenu() {
+            const menu = document.getElementById('chat-dropdown-menu');
+            menu.classList.toggle('hidden');
+        }
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.chat-menu-container')) {
+                const menu = document.getElementById('chat-dropdown-menu');
+                if (menu) menu.classList.add('hidden');
+            }
+        });
+
+        function togglePinnedDrawer(forceState) {
+            const drawer = document.getElementById('pinned-drawer');
+            if (typeof forceState === 'boolean') {
+                drawer.classList.toggle('hidden', !forceState);
+            } else {
+                drawer.classList.toggle('hidden');
+            }
+            const menu = document.getElementById('chat-dropdown-menu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        function togglePinCurrentSession() {
+            const icon = document.getElementById('menu-pin-icon');
+            const label = document.getElementById('menu-pin-label');
+            const isPinned = label.textContent.includes('Lepas');
+            if (isPinned) {
+                label.textContent = 'Sematkan percakapan';
+                icon.className = 'ph ph-push-pin';
+                showToast('Sematan percakapan dilepas');
+            } else {
+                label.textContent = 'Lepas sematan';
+                icon.className = 'ph-fill ph-push-pin';
+                showToast('Percakapan berhasil disematkan');
+            }
+            toggleDropdownMenu();
+        }
+
+        function toggleMsgPin(btn, msgId) {
+            const msg = document.getElementById(msgId);
+            const isPinned = msg.classList.contains('is-pinned');
+            msg.classList.toggle('is-pinned', !isPinned);
+            btn.classList.toggle('pinned', !isPinned);
+            showToast(!isPinned ? 'Pesan disematkan ke daftar PIN' : 'Sematan pesan dilepas');
+        }
+
+        function scrollToMessage(msgId) {
+            const el = document.getElementById(msgId);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function toggleToolCard(header) {
+            const card = header.closest('.agent-status-card');
+            const body = card.querySelector('.status-card-body');
+            body.classList.toggle('hidden');
+        }
+
+        function openSettingsModal(defaultTab = 'model') {
+            document.getElementById('modal-settings').classList.remove('hidden');
+            const tabBtn = Array.from(document.querySelectorAll('.modal-tab-btn')).find(b => b.getAttribute('onclick').includes(defaultTab));
+            if (tabBtn) switchSettingsTab(defaultTab, tabBtn);
+            const menu = document.getElementById('chat-dropdown-menu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        function switchSettingsTab(tabKey, btn) {
+            document.querySelectorAll('.modal-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+            const target = document.getElementById(`tab-pane-${tabKey}`);
+            if (target) target.classList.remove('hidden');
+        }
+
+        function openShareModal() {
+            document.getElementById('modal-share').classList.remove('hidden');
+            const menu = document.getElementById('chat-dropdown-menu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        function copyShareLink() {
+            const input = document.getElementById('share-link-input');
+            input.select();
+            navigator.clipboard.writeText(input.value).then(() => {
+                showToast('Tautan percakapan berhasil disalin!');
+                closeModal('modal-share');
+            });
+        }
+
+        function openPipelineModal() {
+            showToast('Alur eksekusi ShiroAI-v2-Agent: Prompt -> Memory -> Reasoning -> Code Output');
+            const menu = document.getElementById('chat-dropdown-menu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.add('hidden');
+        }
+
+        function closeModalOnBackdrop(e, modalId) {
+            if (e.target.id === modalId) closeModal(modalId);
+        }
+
+        // --------------------------------------------------------------------------
+        // Interactive Composer Simulation
+        // --------------------------------------------------------------------------
+        let isGenerating = false;
+        function adjustTextarea(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+        }
+
+        function handleComposerKey(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendDemoMessage();
+            }
+        }
+
+        function handleSendDemoMessage() {
+            const input = document.getElementById('composer-input');
+            const text = input.value.trim();
+            if (!text || isGenerating) return;
+
+            input.value = '';
+            input.style.height = '48px';
+
+            const container = document.getElementById('messages-container');
+            const userMsg = document.createElement('div');
+            userMsg.className = 'message user';
+            userMsg.innerHTML = `
+                <div class="message-bubble-wrap">
+                    <div class="bubble">${text.replace(/</g, '&lt;')}</div>
+                </div>
+                <div class="avatar user-avatar">U</div>
+            `;
+            container.appendChild(userMsg);
+
+            // Scroll down
+            const viewport = document.getElementById('chat-viewport');
+            viewport.scrollTop = viewport.scrollHeight;
+
+            // Simulasikan inferensi ShiroAI-v2-Agent
+            isGenerating = true;
+            const sendBtn = document.getElementById('btn-send');
+            const sendIcon = document.getElementById('send-icon');
+            sendBtn.classList.add('stop-mode');
+            sendIcon.className = 'ph ph-stop';
+
+            const replyMsg = document.createElement('div');
+            replyMsg.className = 'message assistant';
+            replyMsg.innerHTML = `
+                <div class="avatar shiro-avatar">S</div>
+                <div class="message-bubble-wrap">
+                    <div class="bubble"><span class="typing-text">Mengetik...</span></div>
+                </div>
+            `;
+            container.appendChild(replyMsg);
+            viewport.scrollTop = viewport.scrollHeight;
+
+            const sampleResponse = `Halo Kakak! Sebagai **ShiroAI-v2-Agent**, permintaan Anda telah saya proses.\n\nBerikut kode JavaScript pembantu untuk tugas tersebut:\n\`\`\`javascript\n// filename: agent_tool.js\nfunction runAgentTask(command) {\n  console.log("ShiroAI-v2-Agent executing:", command);\n  return { status: "success", timestamp: Date.now() };\n}\n\`\`\`\nTombol **Unduh** sudah otomatis terpasang di atas blok kode!`;
+
+            let i = 0;
+            const bubbleEl = replyMsg.querySelector('.bubble');
+            const interval = setInterval(() => {
+                i += 4;
+                if (i >= sampleResponse.length) {
+                    clearInterval(interval);
+                    isGenerating = false;
+                    sendBtn.classList.remove('stop-mode');
+                    sendIcon.className = 'ph ph-arrow-up';
+                    
+                    // Render Markdown & Code Block With Download Button
+                    bubbleEl.innerHTML = `
+                        Tentu Kakak! Berikut berkas skrip yang Anda minta:
+                        <div class="code-block-wrapper" data-lang="javascript">
+                            <div class="code-block-header">
+                                <span class="code-lang-label">javascript</span>
+                                <div class="code-block-actions">
+                                    <button type="button" class="btn-code-action btn-download-code" onclick="downloadSnippet(this)" title="Unduh Kode">
+                                        <i class="ph ph-download-simple"></i> <span>Unduh</span>
+                                    </button>
+                                    <button type="button" class="btn-code-action btn-copy-code" onclick="copySnippet(this)" title="Salin Kode">
+                                        <i class="ph ph-copy"></i> <span>Salin</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <pre><code class="language-javascript">// filename: agent_tool.js
+function runAgentTask(command) {
+  console.log("ShiroAI-v2-Agent executing:", command);
+  return { status: "success", timestamp: Date.now() };
+}</code></pre>
+                        </div>
+                        Kode di atas siap langsung diunduh ke komputer Anda.
+                    `;
+                    hljs.highlightAll();
+                    viewport.scrollTop = viewport.scrollHeight;
+                } else {
+                    bubbleEl.innerHTML = sampleResponse.slice(0, i).replace(/\n/g, '<br>') + ' ▌';
+                    viewport.scrollTop = viewport.scrollHeight;
+                }
+            }, 30);
+        }
+
+        function simulateAttachFile(type) {
+            showToast(type === 'document' ? 'Dokumen berhasil disematkan ke input chat!' : 'Gambar berhasil dipilih!');
+        }
+
+        // --------------------------------------------------------------------------
+        // Toast Notification System
+        // --------------------------------------------------------------------------
+        function showToast(text) {
+            const container = document.getElementById('toast-container');
+            const pill = document.createElement('div');
+            pill.className = 'toast-pill';
+            pill.innerHTML = `<i class="ph ph-info" style="color:var(--accent);"></i> <span>${text}</span>`;
+            container.appendChild(pill);
+            setTimeout(() => {
+                pill.style.opacity = '0';
+                pill.style.transition = 'opacity 0.25s';
+                setTimeout(() => pill.remove(), 250);
+            }, 2500);
+        }
+    </script>
+</body>
+</html>
