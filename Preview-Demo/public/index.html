@@ -1,0 +1,2336 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shiro</title>
+    <meta name="theme-color" content="#121315">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f2125'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%23ececef'%3ES%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+    <script>
+(function () {
+    // Mesin tema bersama (index.html dan pipeline.html). Tema "default" tidak
+    // menimpa apa pun, jadi tampilan awal persis seperti di style.css.
+    var KEY = 'shiro_theme_v1';
+    var PRESETS = [
+        { id: 'default',  name: 'Grafit',       bg: '#121315', fg: '#ececef', accent: '#94a3b8' },
+        { id: 'shiro',    name: 'Shiro',        bg: '#f4f4f2', fg: '#1d1e21', accent: '#3d6a8c' },
+        { id: 'midnight', name: 'Tengah malam', bg: '#10151d', fg: '#e4e8ef', accent: '#6f9cc4' },
+        { id: 'forest',   name: 'Hutan',        bg: '#121713', fg: '#e4eae3', accent: '#8fce9e' },
+        { id: 'dusk',     name: 'Senja',        bg: '#191615', fg: '#ece5e0', accent: '#d9a066' },
+        { id: 'sakura',   name: 'Sakura',       bg: '#191416', fg: '#eee5e9', accent: '#e596b2' }
+    ];
+    var TOKENS = ['--bg-base', '--bg-surface', '--bg-elevated', '--bg-input', '--bg-code',
+        '--border-subtle', '--border-default', '--border-hover',
+        '--text-primary', '--text-secondary', '--text-muted',
+        '--accent', '--accent-soft', '--ok', '--warn', '--danger', '--danger-soft',
+        '--wire', '--wire-done', '--grid-dot', '--grid-line',
+        '--code-fg', '--code-secondary', '--code-muted', '--code-border', '--code-hover'];
+    var HEX = /^#[0-9a-f]{6}$/i;
+
+    function toRgb(h) { var n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+    function toHex(r) { return '#' + r.map(function (v) { return Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0'); }).join(''); }
+    function mix(a, b, t) { var A = toRgb(a), B = toRgb(b); return toHex(A.map(function (v, i) { return v + (B[i] - v) * t; })); }
+    function rgba(h, a) { var c = toRgb(h); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+    function lum(h) {
+        var c = toRgb(h).map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    }
+    function contrast(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+    function isLight(h) { return lum(h) > 0.35; }
+
+    function derive(bg, fg, ac) {
+        var light = isLight(bg);
+        var surface = light ? mix(bg, '#ffffff', 0.55) : mix(bg, fg, 0.035);
+        var ok = light ? '#2e9467' : '#5fbf8f', warn = light ? '#b57a14' : '#e0a84a', danger = light ? '#d04a45' : '#e5736f';
+        var secondary = mix(fg, bg, 0.35), muted = mix(fg, bg, 0.58);
+        var codeBg = light ? '#1f2126' : mix(bg, '#000000', 0.28);
+        var codeFg = light ? '#e8e8ea' : fg;
+        var t = {
+            '--bg-base': bg, '--bg-surface': surface, '--bg-elevated': mix(bg, fg, light ? 0.07 : 0.075),
+            '--bg-input': surface, '--bg-code': codeBg,
+            '--border-subtle': mix(bg, fg, 0.09), '--border-default': mix(bg, fg, 0.17), '--border-hover': mix(bg, fg, 0.3),
+            '--text-primary': fg, '--text-secondary': secondary, '--text-muted': muted,
+            '--accent': ac, '--accent-soft': rgba(ac, 0.16),
+            '--ok': ok, '--warn': warn, '--danger': danger, '--danger-soft': rgba(danger, 0.12),
+            '--wire': mix(bg, fg, 0.2), '--wire-done': light ? '#3f8a68' : '#4f8f72',
+            '--grid-dot': mix(bg, fg, light ? 0.18 : 0.12), '--grid-line': mix(bg, fg, 0.07),
+            '--code-fg': codeFg,
+            '--code-secondary': light ? '#a3a5ab' : secondary,
+            '--code-muted': light ? '#80848c' : muted,
+            '--code-border': light ? '#2c2e33' : mix(codeBg, fg, 0.1),
+            '--code-hover': light ? '#2a2c31' : mix(codeBg, fg, 0.09)
+        };
+        return t;
+    }
+
+    function defaults() { var p = PRESETS[0]; return { preset: 'default', custom: { bg: p.bg, fg: p.fg, accent: p.accent } }; }
+
+    function validCustom(c) { return c && HEX.test(c.bg) && HEX.test(c.fg) && HEX.test(c.accent); }
+
+    function get() {
+        try {
+            var s = JSON.parse(localStorage.getItem(KEY));
+            if (s) {
+                var custom = validCustom(s.custom) ? s.custom : defaults().custom;
+                if (s.preset === 'custom' && validCustom(s.custom)) return { preset: 'custom', custom: custom };
+                if (PRESETS.some(function (p) { return p.id === s.preset; })) return { preset: s.preset, custom: custom };
+            }
+        } catch (e) { /* pakai default */ }
+        return defaults();
+    }
+
+    function resolve(theme) {
+        if (theme.preset === 'custom') return theme.custom;
+        var p = PRESETS.filter(function (x) { return x.id === theme.preset; })[0] || PRESETS[0];
+        return { bg: p.bg, fg: p.fg, accent: p.accent };
+    }
+
+    function apply(theme) {
+        var root = document.documentElement;
+        if (theme.preset === 'default') {
+            TOKENS.forEach(function (k) { root.style.removeProperty(k); });
+            root.style.colorScheme = '';
+            return;
+        }
+        var c = resolve(theme), t = derive(c.bg, c.fg, c.accent);
+        Object.keys(t).forEach(function (k) { root.style.setProperty(k, t[k]); });
+        root.style.colorScheme = isLight(c.bg) ? 'light' : 'dark';
+    }
+
+    function set(theme) {
+        try { localStorage.setItem(KEY, JSON.stringify(theme)); } catch (e) { /* penyimpanan dinonaktifkan */ }
+        apply(theme);
+    }
+
+    window.ShiroTheme = { presets: PRESETS, get: get, set: set, apply: apply, resolve: resolve, derive: derive, defaults: defaults, contrast: contrast, isLight: isLight, key: KEY };
+    apply(get());
+})();
+    </script>
+    <style>
+        /* ==========================================================================
+           Peningkatan UI/UX Presisi (Matte, Terstruktur, Bebas Glow & Bebas Emoji)
+           Tetap mempertahankan seluruh variabel dan kontrak class dari style.css
+           ========================================================================== */
+
+        /* Sidebar: Label bagian & perapihan navigasi bawah */
+        .sidebar-section-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            user-select: none;
+        }
+
+        .sidebar-footer {
+            padding: 10px 8px;
+            gap: 4px;
+            background: var(--bg-surface);
+        }
+
+        .sidebar-footer-stat {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 8px 10px;
+            margin-bottom: 4px;
+        }
+
+        .btn-sidebar-footer {
+            justify-content: space-between;
+            font-weight: 500;
+        }
+
+        .btn-sidebar-footer-left {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-sidebar-footer-Left i {
+            font-size: 15px;
+            color: var(--text-muted);
+        }
+
+        .sidebar-item-hint {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+        }
+
+        /* Navbar: Pemisah & tata letak indikator */
+        .brand-sep {
+            width: 1px;
+            height: 14px;
+            background: var(--border-default);
+            flex-shrink: 0;
+        }
+
+        .nav-divider {
+            width: 1px;
+            height: 16px;
+            background: var(--border-subtle);
+            margin: 0 2px;
+        }
+
+        .memory-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            height: 26px;
+            padding: 0 8px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-size: 11.5px;
+            color: var(--text-secondary);
+        }
+
+        /* Area Chat & Tombol Gulir ke Bawah */
+        .main-content {
+            position: relative;
+        }
+
+        .scroll-bottom-btn {
+            position: absolute;
+            bottom: 118px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 30;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 30px;
+            padding: 0 12px;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-full);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+        }
+
+        .scroll-bottom-btn:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-surface);
+        }
+
+        .scroll-bottom-btn.is-streaming {
+            border-color: rgba(99, 102, 241, 0.45);
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+        }
+
+        .scroll-bottom-btn.is-streaming i.ph-arrow-down {
+            animation: bounceSoft 1s infinite alternate ease-in-out;
+            color: #6366f1;
+        }
+
+        @keyframes bounceSoft {
+            0% { transform: translateY(-2px); }
+            100% { transform: translateY(2px); }
+        }
+
+        /* Composer & Footer Meta */
+        .composer-bar {
+            padding-top: 4px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .media-btn-label {
+            font-size: 11.5px;
+            font-weight: 500;
+            margin-left: 5px;
+            color: var(--text-secondary);
+        }
+
+        .btn-media-labeled {
+            width: auto;
+            padding: 0 8px;
+            height: 28px;
+        }
+
+        .btn-media-labeled:hover .media-btn-label {
+            color: var(--text-primary);
+        }
+
+        .footer-meta {
+            padding: 2px 4px 0;
+        }
+
+        .footer-status-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .footer-status-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .footer-shortcuts {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .kbd-inline {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            padding: 1px 5px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        /* Modal Pengaturan & Dialog */
+        #settings-modal .modal-dialog {
+            max-width: 540px;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .settings-modal-top {
+            padding: 16px 20px 0;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }
+
+        .settings-modal-top .modal-header {
+            margin-bottom: 12px;
+        }
+
+        .modal-title-group {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .modal-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .settings-modal-top .modal-tabs {
+            margin-bottom: 12px;
+        }
+
+        .settings-modal-body {
+            padding: 18px 20px 20px;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .settings-modal-body::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .settings-modal-body::-webkit-scrollbar-thumb {
+            background: var(--border-default);
+            border-radius: var(--radius-full);
+        }
+
+        .tab-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 7px 8px;
+        }
+
+        .tab-btn i {
+            font-size: 14px;
+        }
+
+        /* Kartu Identitas Profil (Anda & Shiro) */
+        .profile-identity-card {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 14px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            margin-bottom: 16px;
+        }
+
+        .profile-identity-card .profile-preview-box {
+            margin-bottom: 0;
+            flex-shrink: 0;
+        }
+
+        .profile-identity-card .avatar-preview {
+            width: 60px;
+            height: 60px;
+            font-size: 22px;
+        }
+
+        .profile-upload-meta {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .profile-upload-meta label {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .profile-upload-meta input[type="file"] {
+            font-size: 12px;
+            color: var(--text-muted);
+            width: 100%;
+        }
+
+        .profile-upload-meta input[type="file"]::file-selector-button {
+            font-family: var(--font-ui);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            padding: 5px 10px;
+            margin-right: 10px;
+            cursor: pointer;
+            transition: background 0.12s, border-color 0.12s;
+        }
+
+        .profile-upload-meta input[type="file"]::file-selector-button:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-surface);
+        }
+
+        /* Kartu Panel pada Tab Model, Tema, & API */
+        .settings-panel {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .settings-panel + .settings-panel {
+            margin-top: 14px;
+        }
+
+        .settings-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .settings-panel-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .settings-panel-title i {
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+
+        .settings-panel .form-field {
+            margin-bottom: 0;
+        }
+
+        .settings-panel .info-box {
+            background: var(--bg-surface);
+        }
+
+        .badge-active {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+
+        .badge-active::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--ok);
+        }
+
+        /* Endpoint Cards di Tab API */
+        .endpoint-list {
+            gap: 10px;
+            border-top: none;
+            margin-top: 2px;
+        }
+
+        .endpoint-item {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
+        }
+
+        .endpoint-route-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .endpoint-method-badge {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            padding: 2px 6px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: 4px;
+            color: var(--text-primary);
+        }
+
+        .endpoint-url {
+            display: inline-block;
+            margin-top: 2px;
+            padding: 3px 7px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+        }
+
+        /* Tab Tema: Pemilih Warna Kustom */
+        .theme-section-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .theme-custom {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
+            margin-bottom: 14px;
+        }
+
+        .color-row {
+            padding: 7px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .color-row:last-of-type {
+            border-bottom: none;
+        }
+
+        .color-hex {
+            width: auto;
+            padding: 2px 7px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .theme-contrast {
+            padding: 8px 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            margin-top: 10px;
+        }
+
+        /* ==========================================================================
+           Fitur Baru: PIN Chat, Pinned Drawer, Language Switcher & Training Toggle
+           ========================================================================== */
+        .message.is-pinned .bubble {
+            border-color: var(--accent) !important;
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
+
+        .msg-pin-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--accent);
+            margin-bottom: 6px;
+            padding: 2px 7px;
+            border-radius: var(--radius-full);
+            background: var(--accent-soft);
+        }
+
+        .btn-msg-action.pin-btn.pinned {
+            color: var(--accent);
+            background: var(--accent-soft);
+            border-color: var(--accent);
+        }
+
+        /* Gemini-Style 3-Dots Dropdown Menu */
+        .chat-menu-container {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .chat-actions-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .chat-actions-btn:hover,
+        .chat-actions-btn.active {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-default);
+        }
+
+        .chat-actions-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            width: 250px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 14px 36px rgba(0, 0, 0, 0.38);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            animation: dropdownFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-sizing: border-box;
+        }
+
+        @keyframes dropdownFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-6px) scale(0.97);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .chat-dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            padding: 9px 12px;
+            border-radius: 9px;
+            border: none;
+            background: transparent;
+            color: var(--text-primary);
+            font-size: 13.5px;
+            font-weight: 500;
+            text-align: left;
+            cursor: pointer;
+            transition: background 0.12s ease, color 0.12s ease;
+            box-sizing: border-box;
+        }
+
+        .chat-dropdown-item i {
+            font-size: 17px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .chat-dropdown-item:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .chat-dropdown-item:hover i {
+            color: var(--text-primary);
+        }
+
+        .chat-dropdown-item.item-active i {
+            color: var(--accent);
+        }
+
+        .chat-dropdown-item.item-danger {
+            color: var(--danger, #ff6b6b);
+        }
+
+        .chat-dropdown-item.item-danger i {
+            color: var(--danger, #ff6b6b);
+        }
+
+        .chat-dropdown-item.item-danger:hover {
+            background: var(--danger-soft, rgba(255, 107, 107, 0.12));
+        }
+
+        .chat-dropdown-divider {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 4px 4px;
+        }
+
+        /* Sidebar Session Pinned Badge (Gemini Style) */
+        .session-item.is-pinned {
+            border-left: 2px solid var(--accent);
+        }
+
+        .session-pin-badge {
+            color: var(--accent);
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: auto;
+            margin-right: 4px;
+            opacity: 0.9;
+        }
+
+        /* Rename Modal */
+        .rename-dialog {
+            max-width: 440px;
+        }
+        .rename-body {
+            padding: 18px 22px;
+        }
+        .rename-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 14px 22px 18px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        /* Pinned Drawer */
+        .pinned-drawer {
+            position: relative;
+            z-index: 25;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-default);
+            padding: 12px 20px;
+            max-height: 240px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .pinned-drawer-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .pinned-drawer-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .pinned-drawer-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 7px 10px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+
+        .pinned-drawer-item:hover {
+            border-color: var(--accent);
+            background: var(--bg-base);
+        }
+
+        .pinned-item-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .pinned-role-tag {
+            font-size: 10.5px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            flex-shrink: 0;
+            text-transform: uppercase;
+        }
+
+        .pinned-item-text {
+            font-size: 12.5px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .pinned-unpin-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pinned-unpin-btn:hover {
+            color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        @keyframes pinFlash {
+            0% { box-shadow: 0 0 0 0 var(--accent); }
+            50% { box-shadow: 0 0 0 4px var(--accent-soft); }
+            100% { box-shadow: 0 0 0 0 transparent; }
+        }
+
+        .message.pin-jump-highlight .bubble {
+            animation: pinFlash 1.4s ease;
+        }
+
+        /* Symmetrical Settings Modal Styling (PC, Tablet, Android, iOS) */
+        .modal-dialog {
+            width: 95%;
+            max-width: 680px;
+            max-height: 88vh;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            border-radius: 18px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        .settings-modal-top {
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 20px 24px 14px;
+            box-sizing: border-box;
+        }
+
+        .modal-title-group h2,
+        .modal-title-group h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .modal-subtitle {
+            display: block;
+            margin-top: 4px;
+            font-size: 12.5px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        .modal-tabs {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 4px;
+            padding: 4px;
+            margin: 0 24px 16px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            box-sizing: border-box;
+            width: calc(100% - 48px);
+        }
+
+        .tab-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            height: 36px;
+            width: 100%;
+            min-width: 0;
+            padding: 0 2px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 11.5px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.14s ease;
+            box-sizing: border-box;
+        }
+
+        .tab-btn span {
+            white-space: nowrap;
+        }
+
+        .tab-btn i {
+            font-size: 13.5px;
+            flex-shrink: 0;
+        }
+
+        .tab-btn:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .tab-btn.active {
+            background: var(--bg-base);
+            border-color: var(--border-default);
+            color: var(--text-primary);
+            font-weight: 600;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+        }
+
+        #doc-modal-tabs {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px;
+            padding: 4px;
+            margin: 0 24px 16px;
+            width: calc(100% - 48px);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            box-sizing: border-box;
+        }
+
+        .settings-modal-body {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 20px 24px;
+            box-sizing: border-box;
+        }
+
+        /* Symmetrical Panels & Cards inside Settings */
+        .settings-panel {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 14px;
+            padding: 18px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        .settings-panel:last-child {
+            margin-bottom: 0;
+        }
+
+        .settings-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .settings-panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .settings-panel-title i {
+            font-size: 16px;
+            color: var(--accent);
+        }
+
+        /* Symmetrical Language Buttons Grid */
+        .lang-selector-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+            box-sizing: border-box;
+        }
+
+        .lang-option-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            height: 42px;
+            padding: 0 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-sizing: border-box;
+        }
+
+        .lang-option-btn:hover {
+            border-color: var(--border-hover);
+            color: var(--text-primary);
+        }
+
+        .lang-option-btn.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--text-primary);
+        }
+
+        /* Symmetrical Switch Card */
+        .settings-toggle-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px;
+            border-radius: 12px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            box-sizing: border-box;
+        }
+
+        .settings-toggle-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .settings-toggle-title {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .settings-toggle-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .shiro-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .shiro-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .shiro-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: var(--border-default);
+            transition: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            border-radius: 999px;
+        }
+
+        .shiro-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text-primary);
+            transition: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            border-radius: 50%;
+        }
+
+        .shiro-switch input:checked + .shiro-slider {
+            background-color: var(--ok);
+        }
+
+        .shiro-switch input:checked + .shiro-slider:before {
+            transform: translateX(20px);
+            background-color: #ffffff;
+        }
+
+        /* Symmetrical Training Status Banner */
+        .training-mode-banner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            font-size: 12.5px;
+            font-weight: 500;
+            margin-top: 12px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+            color: var(--text-secondary);
+            box-sizing: border-box;
+        }
+
+        .training-mode-banner.mode-on {
+            border-color: rgba(95, 191, 143, 0.35);
+            background: rgba(95, 191, 143, 0.08);
+            color: var(--ok);
+        }
+
+        .training-mode-banner.mode-off {
+            border-color: rgba(224, 168, 74, 0.35);
+            background: rgba(224, 168, 74, 0.08);
+            color: var(--warn);
+        }
+
+        /* Mobile & iOS Responsive Precision */
+        @media (max-width: 640px) {
+            .modal-dialog {
+                max-width: 100%;
+                max-height: 92vh;
+                border-radius: 16px;
+            }
+            .modal-header {
+                padding: 16px 16px 12px;
+            }
+            .modal-tabs {
+                grid-template-columns: repeat(3, 1fr);
+                padding: 0 16px 12px;
+                gap: 6px;
+            }
+            .tab-btn {
+                height: 36px;
+                padding: 0 4px;
+                font-size: 11.5px;
+                gap: 5px;
+            }
+            .tab-btn i {
+                font-size: 13.5px;
+                display: inline-block !important;
+            }
+            .tab-btn span {
+                font-size: 11px;
+            }
+            .settings-modal-body {
+                padding: 16px;
+            }
+            .settings-panel {
+                padding: 14px;
+                border-radius: 12px;
+                margin-bottom: 12px;
+            }
+            .lang-selector-group {
+                grid-template-columns: 1fr;
+            }
+            .settings-toggle-card {
+                padding: 14px;
+                align-items: flex-start;
+            }
+            .chat-files-drawer {
+                width: 100% !important;
+                max-width: 100vw !important;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .footer-shortcuts,
+            .media-btn-label {
+                display: none;
+            }
+            .btn-media-labeled {
+                width: 30px;
+                padding: 0;
+            }
+        }
+
+        /* ChatGPT-Style "Files in Chat" Drawer Panel */
+        .chat-files-drawer {
+            position: absolute;
+            top: 56px;
+            right: 0;
+            bottom: 0;
+            width: 340px;
+            max-width: 90vw;
+            background: var(--bg-surface);
+            border-left: 1px solid var(--border-default);
+            box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+            z-index: 45;
+            display: flex;
+            flex-direction: column;
+            animation: drawerSlideInRight 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            box-sizing: border-box;
+        }
+
+        @keyframes drawerSlideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0.5;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .chat-files-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+            flex-shrink: 0;
+        }
+
+        .chat-files-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .chat-files-title i {
+            font-size: 18px;
+            color: var(--accent);
+        }
+
+        .chat-files-body {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .chat-files-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .chat-file-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-sizing: border-box;
+        }
+
+        .chat-file-card:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-base);
+        }
+
+        .chat-file-card-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .chat-file-card-icon.is-doc {
+            background: rgba(59, 130, 246, 0.15);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.25);
+        }
+
+        .chat-file-card-icon.is-code {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+
+        .chat-file-card-icon.is-image {
+            background: rgba(236, 72, 153, 0.15);
+            color: #f472b6;
+            border: 1px solid rgba(236, 72, 153, 0.25);
+        }
+
+        .chat-file-thumb-img {
+            width: 36px;
+            height: 36px;
+            border-radius: 9px;
+            object-fit: cover;
+            flex-shrink: 0;
+            border: 1px solid var(--border-subtle);
+        }
+
+        .chat-file-card-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .chat-file-card-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+        }
+
+        .chat-file-card-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .file-ext-tag {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+        }
+
+        .chat-file-card-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .btn-file-action {
+            width: 30px;
+            height: 30px;
+            border-radius: 7px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 15px;
+            transition: all 0.12s ease;
+        }
+
+        .btn-file-action:hover {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+
+        .btn-file-action.attach-btn:hover {
+            color: var(--accent);
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .chat-files-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 40px 16px;
+            color: var(--text-muted);
+        }
+
+        .chat-files-empty .empty-icon-wrap {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 12px;
+            color: var(--text-muted);
+        }
+
+        .chat-files-empty .empty-title {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .chat-files-empty .empty-desc {
+            font-size: 12px;
+            line-height: 1.5;
+            margin-bottom: 16px;
+        }
+
+        /* Claude-Style Share Dialog */
+        .share-dialog {
+            max-width: 480px;
+        }
+
+        .share-body {
+            padding: 18px 22px;
+        }
+
+        .share-info-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+        }
+
+        .share-info-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .share-info-left i {
+            font-size: 24px;
+            color: var(--accent);
+        }
+
+        .share-meta-title {
+            display: block;
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .share-meta-sub {
+            display: block;
+            font-size: 11.5px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .share-link-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 6px;
+        }
+
+        .share-url-input {
+            flex: 1;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            cursor: text;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar riwayat -->
+        <aside class="chat-sidebar" id="chat-sidebar" aria-label="Navigasi riwayat percakapan">
+            <div class="sidebar-header">
+                <button id="sidebar-new-chat-btn" class="btn-sidebar-new-chat" type="button">
+                    <i class="ph ph-plus"></i>
+                    <span data-i18n="new_chat">Chat baru</span>
+                </button>
+                <button id="close-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Tutup sidebar" data-i18n-title="close_sidebar" aria-label="Tutup sidebar" type="button">
+                    <i class="ph ph-sidebar-simple"></i>
+                </button>
+            </div>
+
+            <div class="sidebar-section-head">
+                <span data-i18n="chat_history">Riwayat percakapan</span>
+            </div>
+
+            <div class="sidebar-session-list" id="sidebar-session-list">
+                <!-- Sesi percakapan di-render lewat script.js -->
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="sidebar-footer-stat" title="Jumlah fakta yang diingat Shiro" data-i18n-title="memory_facts_tooltip">
+                    <div class="stat-icon"><i class="ph ph-brain"></i></div>
+                    <div class="stat-info">
+                        <span class="stat-label" data-i18n="memory_base">Basis ingatan</span>
+                        <span class="stat-val" id="sidebar-memory-count">0 fakta</span>
+                    </div>
+                </div>
+                <div class="sidebar-footer-actions">
+                    <button id="sidebar-pipeline-btn" class="btn-sidebar-footer" type="button">
+                        <span class="btn-sidebar-footer-left">
+                            <i class="ph ph-tree-structure"></i>
+                            <span data-i18n="pipeline_title">Alur eksekusi</span>
+                        </span>
+                        <span class="sidebar-item-hint" data-i18n="inspector">Inspektur</span>
+                    </button>
+                    <button id="sidebar-settings-btn" class="btn-sidebar-footer" type="button">
+                        <span class="btn-sidebar-footer-left">
+                            <i class="ph ph-gear"></i>
+                            <span data-i18n="settings">Pengaturan</span>
+                        </span>
+                        <span class="sidebar-item-hint" data-i18n="configuration">Konfigurasi</span>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ChatGPT-style Draggable Sidebar Resizer -->
+        <div class="sidebar-resizer" id="sidebar-resizer" title="Geser untuk mengatur lebar sidebar (Klik 2x untuk reset)"></div>
+
+        <div class="sidebar-backdrop hidden" id="sidebar-backdrop"></div>
+
+        <div class="main-content" id="main-content">
+            <header class="navbar">
+                <div class="nav-left">
+                    <button id="open-sidebar-btn" class="btn-icon" title="Buka sidebar" data-i18n-title="open_sidebar" aria-label="Buka sidebar" type="button">
+                        <i class="ph ph-sidebar-simple"></i>
+                    </button>
+                    <div class="brand">
+                        <span class="status-dot" title="Terhubung" data-i18n-title="connected" role="img" aria-label="Terhubung"></span>
+                        <div class="brand-text">
+                            <span class="brand-title">Shiro</span>
+                            <span class="brand-sep" aria-hidden="true"></span>
+                            <span class="model-pill" title="Model aktif saat ini" data-i18n-title="active_model_tooltip">Qwen3-32B</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nav-actions">
+                    <!-- Gemini-style 3-Dots Dropdown Menu -->
+                    <div class="chat-menu-container">
+                        <button id="chat-actions-btn" class="chat-actions-btn" type="button" title="Opsi percakapan" data-i18n-title="chat_options" aria-label="Opsi percakapan" aria-haspopup="true" aria-expanded="false">
+                            <i class="ph ph-dots-three-vertical"></i>
+                        </button>
+                        <div id="chat-actions-menu" class="chat-actions-dropdown hidden" role="menu">
+                            <button type="button" class="chat-dropdown-item" id="action-share-chat" role="menuitem">
+                                <i class="ph ph-share-network"></i>
+                                <span data-i18n="menu_share_chat">Bagikan percakapan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-files-chat" role="menuitem">
+                                <i class="ph ph-folder-notch"></i>
+                                <span data-i18n="menu_files_chat">File dalam percakapan ini</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-pin-chat" role="menuitem">
+                                <i class="ph ph-push-pin" id="action-pin-icon"></i>
+                                <span id="action-pin-label" data-i18n="menu_pin_chat">Sematkan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-rename-chat" role="menuitem">
+                                <i class="ph ph-pencil-simple"></i>
+                                <span data-i18n="menu_rename_chat">Ganti nama</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-pinned-msgs" role="menuitem">
+                                <i class="ph ph-bookmark-simple"></i>
+                                <span id="action-pinned-msgs-label" data-i18n="menu_pinned_msgs">Pesan tersemat</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-export-chat" role="menuitem">
+                                <i class="ph ph-download-simple"></i>
+                                <span data-i18n="menu_export_chat">Ekspor percakapan</span>
+                            </button>
+                            <div class="chat-dropdown-divider"></div>
+                            <button type="button" class="chat-dropdown-item" id="action-settings-chat" role="menuitem">
+                                <i class="ph ph-gear"></i>
+                                <span data-i18n="settings">Pengaturan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-lang-toggle" role="menuitem">
+                                <i class="ph ph-translate"></i>
+                                <span data-i18n="menu_lang_switch">Ganti Bahasa (ID / EN)</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-pipeline-chat" role="menuitem">
+                                <i class="ph ph-tree-structure"></i>
+                                <span data-i18n="pipeline_title">Alur eksekusi</span>
+                            </button>
+                            <div class="chat-dropdown-divider"></div>
+                            <button type="button" class="chat-dropdown-item item-danger" id="action-delete-chat" role="menuitem">
+                                <i class="ph ph-trash"></i>
+                                <span data-i18n="delete">Hapus</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Hidden alias elements for existing script hooks -->
+                    <select id="session-select" class="hidden" title="Pilih percakapan"></select>
+                    <button id="delete-chat-btn" class="hidden" type="button"></button>
+                    <button id="reset-btn" class="hidden" type="button"></button>
+                    <button id="pinned-messages-btn" class="hidden" type="button"></button>
+                    <button id="lang-quick-btn" class="hidden" type="button"></button>
+                    <button id="new-chat-btn" class="hidden" type="button"></button>
+                    <button id="pipeline-btn" class="hidden" type="button"></button>
+                    <button id="settings-btn" class="hidden" type="button"></button>
+                    <span id="pinned-count-badge" class="hidden">0</span>
+                    <span id="nav-lang-code" class="hidden">ID</span>
+                    <span id="memory-count" class="hidden">0</span>
+                </div>
+            </header>
+
+            <!-- Laci Pesan Tersemat (Pinned Messages Drawer) -->
+            <div id="pinned-drawer" class="pinned-drawer hidden">
+                <div class="pinned-drawer-head">
+                    <span><i class="ph-fill ph-push-pin"></i> <span data-i18n="pinned_messages_title">Pesan Tersemat di Sesi Ini</span></span>
+                    <button type="button" class="btn-icon" onclick="togglePinnedDrawer(false)" title="Tutup">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+                <div id="pinned-drawer-list" class="pinned-drawer-list"></div>
+            </div>
+
+            <main class="chat-viewport" id="chat-viewport">
+                <div id="chat-messages" class="messages-list" role="log" aria-live="polite" aria-label="Percakapan">
+                    <div class="message assistant">
+                        <div class="avatar shiro-avatar">S</div>
+                        <div class="bubble" data-i18n="welcome_greeting">Halo Kakak. Ada yang bisa Shiro bantu hari ini?</div>
+                    </div>
+
+                    <div id="typing-indicator" class="message assistant hidden">
+                        <div class="avatar shiro-avatar">S</div>
+                        <div class="bubble typing" aria-label="Shiro sedang mengetik">
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <button type="button" id="scroll-bottom-btn" class="scroll-bottom-btn hidden" title="Gulir ke pesan terbaru" data-i18n-title="scroll_bottom_tooltip" aria-label="Gulir ke pesan terbaru">
+                <i class="ph ph-arrow-down"></i>
+                <span data-i18n="latest_messages">Pesan terbaru</span>
+            </button>
+
+            <footer class="input-section">
+                <div id="document-preview-bar" class="image-preview-bar hidden">
+                    <div class="image-preview-card doc-preview-card">
+                        <div class="doc-icon-badge"><i class="ph ph-file-text"></i></div>
+                        <div class="image-preview-info">
+                            <span class="image-preview-title" id="doc-preview-name">dokumen.pdf</span>
+                            <span class="image-preview-sub" id="doc-preview-sub" data-i18n="doc_ready_sub">Siap dirangkum atau diperiksa</span>
+                        </div>
+                        <button type="button" id="remove-doc-btn" class="btn-remove-thumb" title="Hapus dokumen" data-i18n-title="remove_doc" aria-label="Hapus dokumen">
+                            <i class="ph ph-x"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="image-preview-bar" class="image-preview-bar hidden">
+                    <div class="image-preview-card">
+                        <img id="image-preview-thumb" src="" alt="Gambar terlampir">
+                        <div class="image-preview-info">
+                            <span class="image-preview-title" id="image-preview-name">gambar.jpg</span>
+                            <span class="image-preview-sub" data-i18n="img_ready_sub">Siap dianalisis</span>
+                        </div>
+                        <button type="button" id="remove-image-btn" class="btn-remove-thumb" title="Hapus gambar" data-i18n-title="remove_img" aria-label="Hapus gambar">
+                            <i class="ph ph-x"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="input-card">
+                    <textarea
+                        id="user-input"
+                        class="chat-input"
+                        placeholder="Tulis pesan..."
+                        data-i18n-placeholder="input_placeholder"
+                        aria-label="Pesan untuk Shiro"
+                        autocomplete="off"
+                        rows="1"
+                    ></textarea>
+                    <div class="composer-bar">
+                        <div class="media-input-buttons">
+                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan berkas atau kode (.js, .py, .ts, .cpp, PDF, Word, TXT, CSV, MD, dll.)" data-i18n-title="attach_file_tooltip" aria-label="Lampirkan dokumen" type="button">
+                                <i class="ph ph-paperclip"></i>
+                                <span class="media-btn-label" data-i18n="files_btn">Berkas</span>
+                            </button>
+                            <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.markdown,.rtf,.log,.js,.jsx,.mjs,.cjs,.ts,.tsx,.vue,.svelte,.astro,.html,.htm,.css,.scss,.sass,.less,.py,.pyw,.pyi,.ipynb,.java,.c,.cpp,.cc,.cxx,.h,.hpp,.hh,.cs,.go,.rs,.php,.rb,.swift,.kt,.kts,.scala,.dart,.lua,.pl,.pm,.r,.jl,.zig,.nim,.sh,.bash,.zsh,.fish,.ps1,.psm1,.bat,.cmd,.awk,.sed,.dockerfile,.sql,.prisma,.graphql,.gql,.json,.jsonl,.json5,.yaml,.yml,.toml,.xml,.csv,.tsv,.ini,.cfg,.conf,.config,.properties,.env,.gitignore,.proto" class="hidden">
+                            <button id="upload-image-btn" class="btn-media btn-media-labeled" title="Lampirkan gambar" data-i18n-title="attach_img_tooltip" aria-label="Lampirkan gambar" type="button">
+                                <i class="ph ph-image"></i>
+                                <span class="media-btn-label" data-i18n="images_btn">Gambar</span>
+                            </button>
+                            <button id="open-camera-btn" class="btn-media btn-media-labeled" title="Ambil foto dengan kamera" data-i18n-title="open_cam_tooltip" aria-label="Buka kamera" type="button">
+                                <i class="ph ph-camera"></i>
+                                <span class="media-btn-label" data-i18n="camera_btn">Kamera</span>
+                            </button>
+                            <input type="file" id="image-file-input" accept="image/*" class="hidden">
+                        </div>
+                        <div class="input-actions">
+                            <button id="send-btn" class="btn-send" title="Kirim pesan (Enter)" data-i18n-title="send_msg_tooltip" aria-label="Kirim pesan" type="button">
+                                <i class="ph ph-arrow-up"></i>
+                            </button>
+                            <button id="stop-btn" class="btn-send btn-stop hidden" title="Hentikan respons" data-i18n-title="stop_resp_tooltip" aria-label="Hentikan respons" type="button">
+                                <i class="ph ph-stop"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="footer-meta">
+                    <div class="footer-status-wrap">
+                        <span class="footer-status-dot" aria-hidden="true"></span>
+                        <span id="status" role="status" data-i18n="status_ready">Siap</span>
+                    </div>
+                    <div class="footer-shortcuts" aria-hidden="true">
+                        <span><kbd class="kbd-inline">Enter</kbd> <span data-i18n="shortcut_send">kirim</span></span>
+                        <span><kbd class="kbd-inline">Shift + Enter</kbd> <span data-i18n="shortcut_newline">baris baru</span></span>
+                    </div>
+                </div>
+            </footer>
+
+            <!-- ChatGPT-style "Files in chat" Drawer Panel -->
+            <aside id="chat-files-drawer" class="chat-files-drawer hidden" aria-label="File dalam percakapan">
+                <div class="chat-files-header">
+                    <div class="chat-files-title">
+                        <i class="ph ph-folder-notch"></i>
+                        <span data-i18n="files_in_chat_title">Files in chat</span>
+                    </div>
+                    <div class="chat-files-header-actions">
+                        <button type="button" class="btn-icon" id="close-chat-files-btn" title="Tutup" aria-label="Tutup panel file" onclick="closeChatFilesDrawer()">
+                            <i class="ph ph-x"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="chat-files-body">
+                    <div id="chat-files-list" class="chat-files-list"></div>
+                    <div id="chat-files-empty" class="chat-files-empty hidden">
+                        <div class="empty-icon-wrap"><i class="ph ph-folder-dashed"></i></div>
+                        <span class="empty-title" data-i18n="no_files_title">Belum ada file di chat ini</span>
+                        <p class="empty-desc" data-i18n="no_files_desc">File atau gambar yang dikirimkan akan tersimpan dan dapat dilihat atau dilampirkan kembali di sini.</p>
+                        <button type="button" class="btn-secondary btn-sm" id="btn-drawer-upload-doc" onclick="triggerDocUploadFromDrawer()">
+                            <i class="ph ph-paperclip"></i> <span data-i18n="upload_new_file">Unggah Berkas</span>
+                        </button>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+    <!-- Kamera -->
+    <div id="camera-modal" class="modal-backdrop hidden">
+        <div class="modal-dialog camera-dialog" role="dialog" aria-modal="true" aria-labelledby="camera-title">
+            <div class="modal-header">
+                <div class="camera-header-title">
+                    <i class="ph ph-camera"></i>
+                    <h2 id="camera-title" data-i18n="camera_btn">Kamera</h2>
+                </div>
+                <button id="close-camera-modal" class="btn-icon" type="button" title="Tutup" aria-label="Tutup kamera">
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="camera-body">
+                <div class="camera-viewfinder">
+                    <video id="camera-video" autoplay playsinline muted></video>
+                    <div id="camera-placeholder" class="camera-placeholder hidden">
+                        <i class="ph ph-video-camera-slash"></i>
+                        <p data-i18n="camera_inactive">Kamera tidak aktif</p>
+                    </div>
+                </div>
+                <canvas id="camera-canvas" class="hidden"></canvas>
+                <div class="camera-controls">
+                    <button type="button" id="switch-camera-btn" class="btn-secondary" title="Ganti kamera">
+                        <i class="ph ph-arrows-clockwise"></i> <span data-i18n="switch_camera">Ganti kamera</span>
+                    </button>
+                    <button type="button" id="capture-photo-btn" class="btn-primary btn-capture" title="Ambil foto">
+                        <i class="ph ph-camera"></i> <span data-i18n="capture_photo">Ambil foto</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alur eksekusi: editor kanvas yang sama dengan halaman /pipeline -->
+    <div id="pipeline-modal" class="modal-backdrop hidden">
+        <div class="modal-dialog pipeline-dialog" role="dialog" aria-modal="true" aria-labelledby="pipeline-title">
+            <div class="modal-header">
+                <div class="pipeline-header-title">
+                    <h2 id="pipeline-title" data-i18n="pipeline_title">Alur eksekusi</h2>
+                    <span class="pipeline-modal-sub" data-i18n="pipeline_sub">Geser node untuk menata ulang. Hanya mengubah tampilan, eksekusi tetap sama.</span>
+                </div>
+                <div class="pipeline-modal-actions">
+                    <span id="pipeline-total-time" class="badge-time">0 ms</span>
+                    <a href="/pipeline" target="_blank" class="btn-secondary btn-sm" title="Buka di tab baru">
+                        <i class="ph ph-arrow-square-out"></i> <span data-i18n="fullscreen">Layar penuh</span>
+                    </a>
+                    <button id="close-pipeline-modal" class="btn-icon" type="button" title="Tutup" aria-label="Tutup">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+            <iframe id="pipeline-frame" class="pipeline-frame" title="Editor alur eksekusi"></iframe>
+        </div>
+    </div>
+
+    <!-- Pengaturan -->
+    <div id="settings-modal" class="modal-backdrop hidden">
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div class="settings-modal-top">
+                <div class="modal-header">
+                    <div class="modal-title-group">
+                        <h2 id="settings-title" data-i18n="settings">Pengaturan</h2>
+                        <span class="modal-subtitle" data-i18n="settings_subtitle">Konfigurasi bahasa, privasi training, profil, model inferensi, API, dan tampilan</span>
+                    </div>
+                    <button id="close-settings" class="btn-icon" type="button" title="Tutup (Esc)" aria-label="Tutup pengaturan">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+
+                <div class="modal-tabs" id="settings-modal-tabs" role="tablist" aria-label="Bagian pengaturan">
+                    <button class="tab-btn active" data-tab="user" type="button">
+                        <i class="ph ph-user"></i>
+                        <span data-i18n="tab_user">Anda</span>
+                    </button>
+                    <button class="tab-btn" data-tab="privacy" type="button">
+                        <i class="ph ph-shield-check"></i>
+                        <span data-i18n="tab_privacy">Privasi</span>
+                    </button>
+                    <button class="tab-btn" data-tab="ai" type="button">
+                        <i class="ph ph-robot"></i>
+                        <span>Shiro</span>
+                    </button>
+                    <button class="tab-btn" data-tab="model" type="button">
+                        <i class="ph ph-cpu"></i>
+                        <span data-i18n="tab_model">Model</span>
+                    </button>
+                    <button class="tab-btn" data-tab="api" type="button">
+                        <i class="ph ph-key"></i>
+                        <span>API</span>
+                    </button>
+                    <button class="tab-btn" data-tab="theme" type="button">
+                        <i class="ph ph-palette"></i>
+                        <span data-i18n="tab_theme">Tema</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="settings-modal-body">
+                <div id="user-tab" class="tab-content active">
+                    <!-- Pintasan Cepat Bahasa & Privasi Data Training di Tab Utama -->
+                    <div class="settings-panel" style="margin-bottom: 14px;">
+                        <div class="settings-panel-head">
+                            <span class="settings-panel-title"><i class="ph ph-sliders-horizontal"></i> <span data-i18n="quick_prefs_title">Preferensi Bahasa &amp; Data Training</span></span>
+                        </div>
+                        <div class="form-field" style="margin-bottom: 10px;">
+                            <label data-i18n="ui_language_label">Bahasa Antarmuka (UI Language)</label>
+                            <div class="lang-selector-group">
+                                <button type="button" class="lang-option-btn lang-btn-id active" onclick="setUILanguage('id')">
+                                    <i class="ph ph-globe"></i> <span>Bahasa Indonesia (ID)</span>
+                                </button>
+                                <button type="button" class="lang-option-btn lang-btn-en" onclick="setUILanguage('en')">
+                                    <i class="ph ph-translate"></i> <span>English (EN)</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="settings-toggle-card" style="margin-bottom: 0;">
+                            <div class="settings-toggle-info">
+                                <div class="settings-toggle-title">
+                                    <i class="ph ph-database"></i>
+                                    <span data-i18n="training_toggle_title">Simpan Data untuk Training Model</span>
+                                </div>
+                                <div class="settings-toggle-desc" data-i18n="training_toggle_desc">
+                                    Jika dinonaktifkan (OFF), ingatan hanya berlaku selama 1 sesi aktif dan tidak akan direkam ke dataset training model.
+                                </div>
+                            </div>
+                            <label class="shiro-switch" title="On/Off Simpan Data Training">
+                                <input type="checkbox" id="training-logging-toggle-quick" checked onchange="toggleTrainingLogging(this.checked)">
+                                <span class="shiro-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <form id="user-form" enctype="multipart/form-data">
+                        <div class="profile-identity-card">
+                            <div class="profile-preview-box">
+                                <div id="user-preview" class="avatar-preview"><i class="ph ph-user"></i></div>
+                            </div>
+                            <div class="profile-upload-meta">
+                                <label for="user-image" data-i18n="user_photo_label">Foto profil Anda</label>
+                                <div class="custom-file-upload">
+                                    <label for="user-image" class="btn-file-select">
+                                        <i class="ph ph-upload-simple"></i> <span data-i18n="choose_file">Pilih Berkas</span>
+                                    </label>
+                                    <span class="file-chosen-text" id="user-image-filename" data-i18n="no_file_chosen">Belum ada berkas dipilih</span>
+                                </div>
+                                <input type="file" id="user-image" accept="image/*" style="display: none;">
+                                <span class="field-help" data-i18n="user_photo_help">Format gambar persegi (JPG, PNG, WEBP) disarankan.</span>
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label for="user-name" data-i18n="user_name_label">Nama panggilan</label>
+                            <input type="text" id="user-name" placeholder="Nama Anda" data-i18n-placeholder="user_name_placeholder" value="Kakak">
+                            <span class="field-help" data-i18n="user_name_help">Digunakan Shiro saat menyapa Anda dalam percakapan.</span>
+                        </div>
+                        <div class="form-field">
+                            <label for="user-desc" data-i18n="user_desc_label">Catatan konteks tentang Anda</label>
+                            <textarea id="user-desc" placeholder="Misalnya bidang pekerjaan, bahasa pemrograman favorit, atau gaya penjelasan yang disukai" data-i18n-placeholder="user_desc_placeholder"></textarea>
+                        </div>
+                        <button type="button" onclick="saveProfile('user')" class="btn-primary">
+                            <i class="ph ph-floppy-disk"></i> <span data-i18n="save_user_profile">Simpan profil Anda</span>
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Tab Khusus Privasi & Bahasa -->
+                <div id="privacy-tab" class="tab-content">
+                    <div class="model-card">
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-translate"></i> <span data-i18n="ui_language_label">Bahasa Antarmuka (UI Language)</span></span>
+                            </div>
+                            <div class="form-field">
+                                <span class="field-help" data-i18n="ui_language_help">Pilih bahasa tampilan aplikasi Web UI. Perubahan diterapkan seketika tanpa memuat ulang halaman.</span>
+                                <div class="lang-selector-group">
+                                    <button type="button" class="lang-option-btn lang-btn-id active" onclick="setUILanguage('id')">
+                                        <i class="ph ph-globe"></i> <span>Bahasa Indonesia (ID)</span>
+                                    </button>
+                                    <button type="button" class="lang-option-btn lang-btn-en" onclick="setUILanguage('en')">
+                                        <i class="ph ph-translate"></i> <span>English (EN)</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-shield-check"></i> <span data-i18n="privacy_training_header">Privasi Memori &amp; Dataset Training</span></span>
+                            </div>
+                            <div class="settings-toggle-card">
+                                <div class="settings-toggle-info">
+                                    <div class="settings-toggle-title">
+                                        <span data-i18n="training_toggle_title">Simpan Data untuk Training Model</span>
+                                    </div>
+                                    <div class="settings-toggle-desc" data-i18n="training_toggle_desc">
+                                        Jika dinonaktifkan (OFF), ingatan hanya berlaku selama 1 sesi aktif dan tidak akan direkam ke dataset training model.
+                                    </div>
+                                </div>
+                                <label class="shiro-switch" title="On/Off Simpan Data Training">
+                                    <input type="checkbox" id="training-logging-toggle" checked onchange="toggleTrainingLogging(this.checked)">
+                                    <span class="shiro-slider"></span>
+                                </label>
+                            </div>
+                            <div id="training-mode-banner" class="training-mode-banner mode-on">
+                                <i id="training-mode-icon" class="ph ph-check-circle"></i>
+                                <span id="training-mode-status-text" data-i18n="training_status_on">Status: AKTIF — Percakapan direkam untuk meningkatkan kecerdasan model.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="ai-tab" class="tab-content">
+                    <form id="ai-form" enctype="multipart/form-data">
+                        <div class="profile-identity-card">
+                            <div class="profile-preview-box">
+                                <div id="ai-preview" class="avatar-preview ai"><i class="ph ph-robot"></i></div>
+                            </div>
+                            <div class="profile-upload-meta">
+                                <label for="ai-image" data-i18n="ai_photo_label">Foto avatar asisten</label>
+                                <div class="custom-file-upload">
+                                    <label for="ai-image" class="btn-file-select">
+                                        <i class="ph ph-upload-simple"></i> <span data-i18n="choose_file">Pilih Berkas</span>
+                                    </label>
+                                    <span class="file-chosen-text" id="ai-image-filename" data-i18n="no_file_chosen">Belum ada berkas dipilih</span>
+                                </div>
+                                <input type="file" id="ai-image" accept="image/*" style="display: none;">
+                                <span class="field-help" data-i18n="ai_photo_help">Ditampilkan pada setiap pesan balasan asisten.</span>
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label for="ai-name" data-i18n="ai_name_label">Nama asisten</label>
+                            <input type="text" id="ai-name" placeholder="Nama AI" value="Shiro">
+                        </div>
+                        <div class="form-field">
+                            <label for="ai-desc" data-i18n="ai_desc_label">Karakter dan instruksi gaya bicara</label>
+                            <textarea id="ai-desc" placeholder="Tentukan karakter, nada bicara, dan batasan perilaku asisten" data-i18n-placeholder="ai_desc_placeholder"></textarea>
+                        </div>
+                        <button type="button" onclick="saveProfile('ai')" class="btn-primary">
+                            <i class="ph ph-floppy-disk"></i> <span data-i18n="save_ai_profile">Simpan profil asisten</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div id="model-tab" class="tab-content">
+                    <div class="model-card">
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-cpu"></i> <span data-i18n="main_llm_title">Model bahasa utama</span></span>
+                                <span id="current-model-badge" class="badge-active">Memuat...</span>
+                            </div>
+                            <div class="form-field">
+                                <label for="model-select" data-i18n="select_gguf_label">Pilih berkas model (.gguf)</label>
+                                <select id="model-select" class="form-select">
+                                    <option disabled selected>Memuat daftar model...</option>
+                                </select>
+                                <span class="field-help" data-i18n="select_gguf_help">Berkas <code>.gguf</code> di dalam direktori <code>model/</code> dipindai secara otomatis.</span>
+                            </div>
+                            <div id="model-info" class="info-box">
+                                <p id="model-desc-text">Memuat detail model...</p>
+                            </div>
+                            <div class="model-hint-box">
+                                <span class="model-hint-text"><i class="ph ph-info"></i> <span data-i18n="model_folder_hint">Salin berkas .gguf baru ke folder model/ lalu buka kembali jendela ini untuk memuatnya.</span></span>
+                            </div>
+                            <button type="button" onclick="switchModel()" class="btn-primary">
+                                <i class="ph ph-check"></i> <span data-i18n="apply_model_btn">Terapkan model</span>
+                            </button>
+                        </div>
+
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-eye"></i> <span data-i18n="vision_moe_title">Orkestrasi visi (MoE)</span></span>
+                            </div>
+                            <div class="form-field">
+                                <label for="moe-mode-select" data-i18n="vision_strategy_label">Strategi pemrosesan gambar</label>
+                                <select id="moe-mode-select" class="form-select">
+                                    <option value="auto" data-i18n="moe_opt_auto">Otomatis: gunakan model visi jika model utama berbasis teks</option>
+                                    <option value="concurrent" data-i18n="moe_opt_concurrent">Berdampingan: model visi tetap di VRAM (GPU kapasitas besar)</option>
+                                    <option value="swap" data-i18n="moe_opt_swap">Bergantian: muat model secara bergilir (hemat VRAM)</option>
+                                    <option value="off" data-i18n="moe_opt_off">Nonaktif: hanya ekstraksi OCR lokal</option>
+                                </select>
+                                <span class="field-help" id="moe-status-help" data-i18n="vision_moe_help">Memasangkan model visi Qwen2.5-VL dengan model percakapan untuk membaca lampiran visual.</span>
+                            </div>
+                            <div id="moe-info-box" class="info-box">
+                                <p id="moe-desc-text">Status MoE: memuat...</p>
+                            </div>
+                            <button type="button" onclick="saveMoeSettings()" class="btn-secondary btn-block">
+                                <i class="ph ph-sliders-horizontal"></i> <span data-i18n="save_vision_mode">Simpan mode visi</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="theme-tab" class="tab-content">
+                    <div class="theme-section-label" data-i18n="theme_presets_label">Preset skema warna</div>
+                    <div class="theme-grid" id="theme-grid"></div>
+
+                    <div class="theme-custom">
+                        <div class="theme-custom-title" data-i18n="theme_custom_title">Penyesuaian warna kustom</div>
+                        <div class="color-row">
+                            <label for="theme-bg" data-i18n="theme_bg_label">Permukaan latar</label>
+                            <span class="color-hex" id="theme-bg-hex"></span>
+                            <input type="color" id="theme-bg">
+                        </div>
+                        <div class="color-row">
+                            <label for="theme-fg" data-i18n="theme_fg_label">Teks utama</label>
+                            <span class="color-hex" id="theme-fg-hex"></span>
+                            <input type="color" id="theme-fg">
+                        </div>
+                        <div class="color-row">
+                            <label for="theme-accent" data-i18n="theme_accent_label">Aksen fokus &amp; tautan</label>
+                            <span class="color-hex" id="theme-accent-hex"></span>
+                            <input type="color" id="theme-accent">
+                        </div>
+                        <div class="theme-contrast" id="theme-contrast"></div>
+                    </div>
+
+                    <button type="button" id="theme-reset" class="btn-secondary btn-block">
+                        <i class="ph ph-arrow-counter-clockwise"></i> <span data-i18n="theme_reset_btn">Kembalikan ke tema bawaan</span>
+                    </button>
+                </div>
+
+                <div id="api-tab" class="tab-content">
+                    <div class="model-card">
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-key"></i> <span data-i18n="api_key_title">Kunci autentikasi (API Key)</span></span>
+                            </div>
+                            <div class="form-field">
+                                <label for="active-api-key-input" data-i18n="active_key_label">Kunci aktif</label>
+                                <div class="key-row">
+                                    <input type="text" id="active-api-key-input" readonly value="Memuat key...">
+                                    <button type="button" class="btn-secondary" onclick="copyApiKey()" title="Salin API key" aria-label="Salin API key">
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_btn">Salin</span>
+                                    </button>
+                                </div>
+                                <span class="field-help" data-i18n="api_key_help">Sertakan pada header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code> untuk seluruh endpoint di bawah.</span>
+                            </div>
+
+                            <button type="button" onclick="regenerateApiKey()" class="btn-secondary btn-block" id="btn-regen-key">
+                                <i class="ph ph-arrows-clockwise"></i> <span data-i18n="regen_api_key">Buat ulang API key</span>
+                            </button>
+                        </div>
+
+                        <div class="endpoint-list">
+                            <div class="endpoint-item">
+                                <div class="endpoint-head">
+                                    <div class="endpoint-route-group">
+                                        <span class="endpoint-method-badge">V1</span>
+                                        <span class="endpoint-name" data-i18n="ep_v1_name">Persona Bahasa Indonesia</span>
+                                    </div>
+                                    <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v1')">
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_url_btn">Salin URL</span>
+                                    </button>
+                                </div>
+                                <div class="endpoint-url" id="endpoint-v1-url">/v1</div>
+                                <div class="endpoint-desc" data-i18n="ep_v1_desc">Persona Shiro berbahasa Indonesia penuh. Siap dihubungkan ke integrasi WhatsApp, Telegram, atau klien eksternal.</div>
+                            </div>
+                            <div class="endpoint-item">
+                                <div class="endpoint-head">
+                                    <div class="endpoint-route-group">
+                                        <span class="endpoint-method-badge">V2</span>
+                                        <span class="endpoint-name" data-i18n="ep_v2_name">VTuber &amp; VoiceVox</span>
+                                    </div>
+                                    <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v2')">
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_url_btn">Salin URL</span>
+                                    </button>
+                                </div>
+                                <div class="endpoint-url" id="endpoint-v2-url">/v2</div>
+                                <div class="endpoint-desc" data-i18n="ep_v2_desc">Keluaran bahasa Jepang terformat [Tag] "..." khusus sintesis suara VoiceVox dan pipeline VTuber.</div>
+                            </div>
+                            <div class="endpoint-item">
+                                <div class="endpoint-head">
+                                    <div class="endpoint-route-group">
+                                        <span class="endpoint-method-badge">V3</span>
+                                        <span class="endpoint-name" data-i18n="ep_v3_name">System Prompt Kustom</span>
+                                    </div>
+                                    <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v3')">
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_url_btn">Salin URL</span>
+                                    </button>
+                                </div>
+                                <div class="endpoint-url" id="endpoint-v3-url">/v3</div>
+                                <div class="endpoint-desc" data-i18n="ep_v3_desc">Mengikuti instruksi sistem dari klien sepenuhnya tanpa batasan persona bawaan. Cocok untuk otomasi kode dan riset.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Ganti Nama Percakapan (Rename Session) -->
+    <div id="rename-modal" class="modal-backdrop hidden" onclick="handleRenameBackdropClick(event)">
+        <div class="modal-dialog rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <h3 id="rename-title" data-i18n="rename_chat_title">Ganti nama percakapan</h3>
+                    <span class="modal-subtitle" data-i18n="rename_chat_sub">Beri nama yang mudah diingat untuk sesi obrolan ini</span>
+                </div>
+                <button id="close-rename-modal" class="btn-icon" type="button" title="Tutup (Esc)">
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="modal-body rename-body">
+                <div class="form-field" style="margin-bottom: 0;">
+                    <label for="rename-input" data-i18n="rename_input_label">Judul percakapan baru</label>
+                    <input type="text" id="rename-input" class="form-input" placeholder="Misal: Diskusi Proyek Web, Cerita Shiro..." maxlength="80">
+                </div>
+            </div>
+            <div class="modal-footer rename-footer">
+                <button type="button" id="btn-cancel-rename" class="btn-secondary" data-i18n="cancel">Batal</button>
+                <button type="button" id="btn-save-rename" class="btn-primary" data-i18n="save">
+                    <i class="ph ph-check"></i> <span data-i18n="save">Simpan</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Bagikan Percakapan (Share Conversation Claude Style) -->
+    <div id="share-modal" class="modal-backdrop hidden" onclick="handleShareBackdropClick(event)">
+        <div class="modal-dialog share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <h3 id="share-title" data-i18n="share_modal_title">Bagikan percakapan</h3>
+                    <span class="modal-subtitle" data-i18n="share_modal_sub">Tautan unik untuk mengakses percakapan ini secara langsung</span>
+                </div>
+                <button id="close-share-modal" class="btn-icon" type="button" title="Tutup (Esc)" onclick="closeShareModal()">
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="modal-body share-body">
+                <div class="share-info-card">
+                    <div class="share-info-left">
+                        <i class="ph ph-chat-circle-text"></i>
+                        <div class="share-info-meta">
+                            <span id="share-session-title" class="share-meta-title">Obrolan Utama</span>
+                            <span id="share-session-meta" class="share-meta-sub">ID: session-xxx</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-field" style="margin-top: 14px; margin-bottom: 0;">
+                    <label data-i18n="share_link_label">Tautan Sesi Percakapan</label>
+                    <div class="share-box-container">
+                        <div class="share-input-wrapper">
+                            <i class="ph ph-link share-link-icon"></i>
+                            <input type="text" id="share-link-input" class="share-url-input" readonly spellcheck="false" autocomplete="off">
+                        </div>
+                        <button type="button" id="btn-copy-share-link" class="btn-copy-share" onclick="copyShareLink()">
+                            <i class="ph ph-copy" id="share-copy-icon"></i>
+                            <span id="share-copy-text" data-i18n="copy_link_btn">Salin</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- In-App Confirmation Modal (Replaces browser-native confirm/prompt) -->
+    <div id="confirm-modal" class="modal-backdrop hidden" onclick="handleConfirmBackdropClick(event)">
+        <div class="modal-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" onclick="event.stopPropagation()">
+            <div class="confirm-header">
+                <div class="confirm-icon-badge is-danger" id="confirm-modal-badge">
+                    <i id="confirm-modal-icon" class="ph ph-warning"></i>
+                </div>
+                <div class="confirm-header-text">
+                    <h3 id="confirm-modal-title">Konfirmasi Tindakan</h3>
+                    <p id="confirm-modal-subtitle" class="confirm-subtitle">Tindakan ini tidak dapat dibatalkan</p>
+                </div>
+            </div>
+            <div class="confirm-body">
+                <p id="confirm-modal-msg" class="confirm-message">Apakah Anda yakin ingin melanjutkan tindakan ini?</p>
+                <div id="confirm-modal-notes" class="confirm-notes hidden"></div>
+            </div>
+            <div class="confirm-footer">
+                <button type="button" class="btn-secondary" id="confirm-modal-cancel-btn" onclick="resolveConfirmDialog(false)">Batal</button>
+                <button type="button" class="btn-danger-confirm" id="confirm-modal-ok-btn" onclick="resolveConfirmDialog(true)">Lanjutkan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lightbox gambar -->
+    <div id="image-lightbox-modal" class="image-lightbox-backdrop hidden" onclick="handleLightboxBackdropClick(event)">
+        <div class="lightbox-container" role="dialog" aria-modal="true" aria-labelledby="lightbox-title" onclick="event.stopPropagation()">
+            <div class="lightbox-toolbar">
+                <div class="lightbox-title-wrap">
+                    <i class="ph ph-image"></i>
+                    <span id="lightbox-title" data-i18n="image_preview">Pratinjau gambar</span>
+                </div>
+                <div class="lightbox-actions">
+                    <a id="lightbox-open-newtab" href="#" target="_blank" class="btn-icon" title="Buka di tab baru" aria-label="Buka di tab baru">
+                        <i class="ph ph-arrow-square-out"></i>
+                    </a>
+                    <a id="lightbox-download-btn" href="#" download class="btn-icon" title="Unduh" aria-label="Unduh gambar">
+                        <i class="ph ph-download-simple"></i>
+                    </a>
+                    <button id="close-lightbox-btn" class="btn-icon" type="button" onclick="closeImageLightbox()" title="Tutup (Esc)" aria-label="Tutup">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="lightbox-content-box">
+                <img id="lightbox-img" src="" alt="Pratinjau gambar">
+            </div>
+        </div>
+    </div>
+
+    <!-- Viewer dokumen -->
+    <div id="doc-viewer-modal" class="modal-backdrop hidden" onclick="handleDocModalBackdropClick(event)">
+        <div class="modal-dialog doc-dialog" role="dialog" aria-modal="true" aria-labelledby="doc-modal-filename" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="doc-modal-title">
+                    <div class="doc-icon-badge" id="doc-modal-icon-badge">
+                        <i id="doc-modal-icon" class="ph ph-file-text"></i>
+                    </div>
+                    <div class="doc-modal-header-meta">
+                        <h2 id="doc-modal-filename">dokumen.pdf</h2>
+                        <span id="doc-modal-sub" class="pipeline-modal-sub" data-i18n="doc_preview">Pratinjau dokumen</span>
+                    </div>
+                </div>
+                <div class="pipeline-modal-actions">
+                    <button type="button" class="btn-secondary btn-sm" id="doc-modal-copy-btn" onclick="copyDocModalContent()" title="Salin teks dokumen">
+                        <i class="ph ph-copy"></i> <span data-i18n="copy_text_btn">Salin teks</span>
+                    </button>
+                    <a id="doc-modal-download-link" href="#" target="_blank" class="btn-secondary btn-sm" title="Buka berkas asli di tab baru">
+                        <i class="ph ph-arrow-square-out"></i> <span data-i18n="open_original_btn">Buka asli</span>
+                    </a>
+                    <button id="close-doc-modal" class="btn-icon" type="button" onclick="closeDocModal()" title="Tutup (Esc)" aria-label="Tutup">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="modal-tabs" id="doc-modal-tabs">
+                <button class="tab-btn active" id="tab-btn-doc-frame" type="button" onclick="switchDocViewMode('frame')">
+                    <i class="ph ph-file"></i>
+                    <span data-i18n="document_tab">Dokumen</span>
+                </button>
+                <button class="tab-btn" id="tab-btn-doc-text" type="button" onclick="switchDocViewMode('text')">
+                    <i class="ph ph-text-align-left"></i>
+                    <span data-i18n="extracted_text_tab">Teks hasil ekstraksi</span>
+                </button>
+            </div>
+
+            <div class="doc-modal-body">
+                <iframe id="doc-modal-iframe" class="doc-iframe" src="" title="Pratinjau dokumen"></iframe>
+                <div id="doc-modal-text-wrapper" class="doc-text-wrapper hidden">
+                    <pre><code id="doc-modal-text-display">Memuat isi teks dokumen...</code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>

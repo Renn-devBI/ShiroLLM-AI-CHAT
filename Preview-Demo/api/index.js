@@ -10,9 +10,13 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Helper untuk menemukan lokasi berkas relatif
 function resolveFilePath(relPath) {
     const candidates = [
+        path.join(__dirname, '..', 'public', relPath),
         path.join(__dirname, '..', relPath),
+        path.join(__dirname, 'public', relPath),
         path.join(__dirname, relPath),
+        path.join(process.cwd(), 'Preview-Demo', 'public', relPath),
         path.join(process.cwd(), 'Preview-Demo', relPath),
+        path.join(process.cwd(), 'public', relPath),
         path.join(process.cwd(), relPath)
     ];
     for (const c of candidates) {
@@ -394,22 +398,24 @@ Kakak bisa langsung menekan tombol **Unduh** di pojok kanan atas blok kode untuk
 // -------------------------------------------------------------
 // HTML Page Serving (100% Identik dengan app.py)
 // -------------------------------------------------------------
-const indexHtmlPath = resolveFilePath('templates/index.html');
-const pipelineHtmlPath = resolveFilePath('templates/pipeline.html');
+const indexHtmlPath = resolveFilePath('index.html') || resolveFilePath('templates/index.html');
+const pipelineHtmlPath = resolveFilePath('pipeline.html') || resolveFilePath('templates/pipeline.html');
 
 app.get(['/', '/chat/:sessionId', '/share/:sessionId'], (req, res) => {
-    if (fs.existsSync(indexHtmlPath)) {
-        res.sendFile(indexHtmlPath);
+    const target = fs.existsSync(indexHtmlPath) ? indexHtmlPath : resolveFilePath('templates/index.html');
+    if (fs.existsSync(target)) {
+        res.sendFile(target);
     } else {
-        res.status(404).send('templates/index.html tidak ditemukan.');
+        res.status(404).send('index.html tidak ditemukan.');
     }
 });
 
 app.get('/pipeline', (req, res) => {
-    if (fs.existsSync(pipelineHtmlPath)) {
-        res.sendFile(pipelineHtmlPath);
+    const target = fs.existsSync(pipelineHtmlPath) ? pipelineHtmlPath : resolveFilePath('templates/pipeline.html');
+    if (fs.existsSync(target)) {
+        res.sendFile(target);
     } else {
-        res.status(404).send('templates/pipeline.html tidak ditemukan.');
+        res.status(404).send('pipeline.html tidak ditemukan.');
     }
 });
 
