@@ -19,8 +19,12 @@ from shiro.pipeline.inference import get_shiro_reply
 chat_bp = Blueprint("chat_bp", __name__)
 
 def _format_message_for_api(msg):
-    """Format single message dictionary to ensure valid URLs for frontend viewing"""
+    """Format single message dictionary to ensure valid URLs and pin metadata for frontend viewing"""
     m = dict(msg)
+    if not m.get("id"):
+        m["id"] = f"msg-{uuid.uuid4().hex[:10]}"
+    if "pinned" not in m:
+        m["pinned"] = False
     img = m.get("image")
     if img and not img.startswith("data:") and not img.startswith("http://") and not img.startswith("https://") and not img.startswith("/"):
         m["image"] = "/" + img
@@ -32,14 +36,45 @@ def _format_message_for_api(msg):
 @chat_bp.route('/api/history', methods=['GET'])
 def get_history():
     memory = state.init_memory()
-    return jsonify({
-        "history": [_format_message_for_api(m) for m in memory.short_term_history],
-        "count": len(memory.short_term_history),
-        "metadata": memory.system_metadata,
-        "user_profile": memory.user_profile,
-        "agent_persona": memory.agent_persona,
-        "topics": memory.system_metadata.get("topics_discussed", [])
-    })
+    with memory.lock:
+        memory._ensure_message_ids(memory.short_term_history)
+        return jsonify({
+            "history": [_format_message_for_api(m) for m in memory.short_term_history],
+            "count": len(memory.short_term_history),
+            "metadata": memory.system_metadata,
+            "user_profile": memory.user_profile,
+            "agent_persona": memory.agent_persona,
+            "topics": memory.system_metadata.get("topics_discussed", []),
+            "enable_training_logging": memory.system_metadata.get("enable_training_logging", True),
+            "ui_language": memory.system_metadata.get("ui_language", "id")
+        })
+
+@chat_bp.route('/api/chat/pin', methods=['POST'])
+def pin_chat_message():
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        data = request.json or {}
+        message_id = data.get("message_id")
+        pinned = data.get("pinned", None)
+        content_match = data.get("content", None)
+
+        memory = state.init_memory()
+        with memory.lock:
+            updated = memory.toggle_pin_message(message_id=message_id, pinned=pinned, content_match=content_match)
+            if not updated:
+                return jsonify({"success": False, "error": "Pesan tidak ditemukan dalam sesi ini."}), 404
+            pinned_msgs = [_format_message_for_api(m) for m in memory.short_term_history if m.get("pinned")]
+            return jsonify({
+                "success": True,
+                "message": _format_message_for_api(updated),
+                "pinned": bool(updated.get("pinned")),
+                "pinned_count": len(pinned_msgs),
+                "pinned_messages": pinned_msgs
+            })
+    except Exception as e:
+        print(f"[Pin Error]: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @chat_bp.route('/api/memory-count', methods=['GET'])
 def get_memory_count():
@@ -85,7 +120,7 @@ def auto_trigger():
             
             reply = get_shiro_reply(trigger_prompt)
             
-            memory.add_message("assistant", reply)
+            msg_id = memory.add_message("assistant", reply)
             if len(memory.short_term_history) > 500:
                 compress_old_messages(memory, keep_count=500)
             memory.save_memory()
@@ -93,6 +128,7 @@ def auto_trigger():
             
             return jsonify({
                 "reply": reply,
+                "assistant_message_id": msg_id,
                 "count": memory.system_metadata["total_turns"],
                 "mood": memory.agent_persona.get("current_mood", "Neutral")
             })
@@ -143,11 +179,17 @@ def chat():
                 "error": "Pesan terlalu panjang (Maksimal 120.000 karakter)",
                 "reply": "Pesan Kakak melampaui batas aman konteks (120.000 karakter). Mohon persingkat sedikit atau kirim dalam berkas dokumen ya, Kak!"
             }), 400
+
+        memory = state.init_memory()
+        training_enabled = memory.system_metadata.get("enable_training_logging", True)
         
         saved_img_rel = None
         if image_base64:
             try:
-                v_dir = os.path.join("training_data", "vision", "images")
+                if training_enabled:
+                    v_dir = os.path.join("training_data", "vision", "images")
+                else:
+                    v_dir = os.path.join("data", "uploads")
                 os.makedirs(v_dir, exist_ok=True)
                 fn = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.jpg"
                 fp = os.path.join(v_dir, fn)
@@ -158,7 +200,6 @@ def chat():
             except Exception as e_img:
                 print(f"[Chat] Warning saving image: {e_img}")
 
-        memory = state.init_memory()
         with memory.lock:
             state.serial_questions = 0
             user_emotion = detect_emotion_category(user_message) if user_message else "neutral"
@@ -175,7 +216,7 @@ def chat():
             doc_url = f"/api/files/{document_name}" if document_name else None
             doc_type = os.path.splitext(document_name)[1].lower().replace(".", "") if document_name else None
 
-            memory.add_message(
+            user_msg_id = memory.add_message(
                 "user", 
                 log_msg, 
                 image_path=img_url,
@@ -199,11 +240,11 @@ def chat():
             if trace and isinstance(trace.get("agent_action"), dict):
                 assistant_img_url = trace["agent_action"].get("image_url")
 
-            memory.add_message("assistant", reply, image_path=assistant_img_url)
+            assistant_msg_id = memory.add_message("assistant", reply, image_path=assistant_img_url)
             memory.update_emotional_state_from_response(reply)
             memory.update_mood_from_emotions()
             
-            if not image_base64 or "poster tersebut" not in reply.lower():
+            if training_enabled and (not image_base64 or "poster tersebut" not in reply.lower()):
                 memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             
             # Menjaga seluruh riwayat percakapan tetap tersimpan utuh
@@ -213,6 +254,8 @@ def chat():
             
             return jsonify({
                 "reply": reply,
+                "user_message_id": user_msg_id,
+                "assistant_message_id": assistant_msg_id,
                 "assistant_image_url": assistant_img_url,
                 "count": memory.system_metadata["total_turns"],
                 "emotion": user_emotion,

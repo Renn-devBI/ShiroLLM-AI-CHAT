@@ -13,10 +13,43 @@ import re
 from typing import Dict, Any, Optional, List
 
 SUPPORTED_EXTENSIONS = {
-    ".pdf", ".docx", ".txt", ".md", ".json", ".csv",
-    ".log", ".py", ".html", ".xml", ".yaml", ".yml",
-    ".ini", ".cfg", ".sql", ".js", ".css", ".tsv"
+    # Documents
+    ".pdf", ".docx", ".doc", ".txt", ".md", ".markdown", ".rtf", ".log",
+    # Web & Frontend
+    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".vue", ".svelte", ".astro",
+    ".html", ".htm", ".css", ".scss", ".sass", ".less",
+    # Backend & Systems Programming
+    ".py", ".pyw", ".pyi", ".ipynb", ".java", ".c", ".cpp", ".cc", ".cxx",
+    ".h", ".hpp", ".hh", ".cs", ".go", ".rs", ".php", ".rb", ".swift",
+    ".kt", ".kts", ".scala", ".dart", ".lua", ".pl", ".pm", ".r", ".jl",
+    ".zig", ".nim", ".v", ".ex", ".exs", ".erl", ".hrl", ".hs", ".clj",
+    # Shell, Scripting & DevOps
+    ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".psd1", ".bat", ".cmd",
+    ".awk", ".sed", ".dockerfile", ".vagrantfile", ".makefile", ".cmake",
+    # Data, Config & Database
+    ".json", ".jsonl", ".json5", ".yaml", ".yml", ".toml", ".xml", ".csv",
+    ".tsv", ".sql", ".prisma", ".graphql", ".gql", ".ini", ".cfg", ".conf",
+    ".config", ".properties", ".env", ".gitignore", ".dockerignore", ".editorconfig",
+    ".lock", ".gradle", ".plist", ".proto"
 }
+
+def is_probably_text_file(file_path: str, sample_size: int = 4096) -> bool:
+    """
+    Detect whether a file is a plain text / source code file by checking the first sample_size bytes
+    for null bytes (0x00). Allows reading extensionless files (e.g., Makefile, Dockerfile) or uncommon code files.
+    """
+    try:
+        if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            return False
+        with open(file_path, "rb") as f:
+            chunk = f.read(sample_size)
+        if not chunk:
+            return True
+        if b"\x00" in chunk:
+            return False
+        return True
+    except Exception:
+        return False
 
 def extract_text_from_file(file_path: str, filename: Optional[str] = None, max_chars: Optional[int] = None) -> Dict[str, Any]:
     """
@@ -145,8 +178,8 @@ def extract_text_from_folder(folder_path: str, max_files: int = 15, max_chars_pe
     for root, _, files in os.walk(folder_path):
         for f in files:
             ext = os.path.splitext(f)[1].lower()
-            if ext in SUPPORTED_EXTENSIONS:
-                full_p = os.path.join(root, f)
+            full_p = os.path.join(root, f)
+            if ext in SUPPORTED_EXTENSIONS or is_probably_text_file(full_p):
                 rel_p = os.path.relpath(full_p, folder_path)
                 res = extract_text_from_file(full_p, filename=rel_p, max_chars=max_chars_per_file)
                 if res["success"]:

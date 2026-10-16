@@ -314,3 +314,35 @@ def moe_settings():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"Gagal mengatur MoE: {str(e)[:160]}"}), 500
+
+
+@admin_bp.route('/api/settings/privacy', methods=['GET', 'POST'])
+def privacy_and_ui_settings():
+    """Get or update training data logging toggle and UI language preference."""
+    memory = state.init_memory()
+    if request.method == 'GET':
+        with memory.lock:
+            return jsonify({
+                "enable_training_logging": bool(memory.system_metadata.get("enable_training_logging", True)),
+                "ui_language": memory.system_metadata.get("ui_language", "id"),
+                "learned_patterns_count": len(getattr(memory, "learned_patterns", [])),
+                "archived_training_count": len(getattr(memory, "archived_training_history", []))
+            })
+    try:
+        data = request.json or {}
+        with memory.lock:
+            if "enable_training_logging" in data:
+                memory.system_metadata["enable_training_logging"] = bool(data["enable_training_logging"])
+            if "ui_language" in data and data["ui_language"] in ("id", "en"):
+                memory.system_metadata["ui_language"] = data["ui_language"]
+                memory.user_profile["language"] = data["ui_language"]
+            memory.save_memory()
+            return jsonify({
+                "success": True,
+                "enable_training_logging": bool(memory.system_metadata.get("enable_training_logging", True)),
+                "ui_language": memory.system_metadata.get("ui_language", "id")
+            })
+    except Exception as e:
+        print(f"[Admin] Error updating privacy settings: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+

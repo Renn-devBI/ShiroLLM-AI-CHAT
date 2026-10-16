@@ -22,18 +22,23 @@ def upload_document():
         if f.filename == '':
             return jsonify({"success": False, "error": "Nama file kosong."}), 400
 
-        from shiro.document import extract_text_from_file, SUPPORTED_EXTENSIONS
+        from shiro.document import extract_text_from_file, SUPPORTED_EXTENSIONS, is_probably_text_file
         ext = os.path.splitext(f.filename)[1].lower()
-        if ext not in SUPPORTED_EXTENSIONS:
-            return jsonify({
-                "success": False,
-                "error": f"Format '{ext}' belum didukung. Format didukung: PDF, Word (docx), Text, Markdown, CSV, JSON, Python, dll."
-            }), 400
 
         upload_dir = os.path.join("data", "uploads")
         os.makedirs(upload_dir, exist_ok=True)
-        save_path = os.path.join(upload_dir, f.filename)
+        save_path = os.path.join(upload_dir, os.path.basename(f.filename))
         f.save(save_path)
+
+        if ext not in SUPPORTED_EXTENSIONS and not is_probably_text_file(save_path):
+            try:
+                os.remove(save_path)
+            except Exception:
+                pass
+            return jsonify({
+                "success": False,
+                "error": f"Format biner '{ext or f.filename}' tidak didukung. Gunakan berkas dokumen (PDF, DOCX, TXT, MD) atau berkas kode pemrograman (.js, .py, .ts, .cpp, .html, dll.)."
+            }), 400
 
         res = extract_text_from_file(save_path, filename=f.filename)
         if not res.get("success"):

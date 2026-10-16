@@ -559,6 +559,311 @@
             margin-top: 10px;
         }
 
+        /* ==========================================================================
+           Fitur Baru: PIN Chat, Pinned Drawer, Language Switcher & Training Toggle
+           ========================================================================== */
+        .message.is-pinned .bubble {
+            border-color: var(--accent) !important;
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
+
+        .msg-pin-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--accent);
+            margin-bottom: 6px;
+            padding: 2px 7px;
+            border-radius: var(--radius-full);
+            background: var(--accent-soft);
+        }
+
+        .btn-msg-action.pin-btn.pinned {
+            color: var(--accent);
+            background: var(--accent-soft);
+            border-color: var(--accent);
+        }
+
+        .nav-pill-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            height: 30px;
+            padding: 0 9px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .nav-pill-btn:hover {
+            border-color: var(--border-hover);
+            color: var(--text-primary);
+            background: var(--bg-surface);
+        }
+
+        .nav-pill-btn.has-pins {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .pin-count-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 17px;
+            height: 17px;
+            padding: 0 5px;
+            border-radius: 999px;
+            background: var(--accent);
+            color: var(--bg-base);
+            font-size: 10.5px;
+            font-weight: 700;
+        }
+
+        .pinned-drawer {
+            position: relative;
+            z-index: 25;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-default);
+            padding: 10px 18px;
+            max-height: 240px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+        }
+
+        .pinned-drawer-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .pinned-drawer-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .pinned-drawer-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 7px 10px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+
+        .pinned-drawer-item:hover {
+            border-color: var(--accent);
+            background: var(--bg-base);
+        }
+
+        .pinned-item-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .pinned-role-tag {
+            font-size: 10.5px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            flex-shrink: 0;
+            text-transform: uppercase;
+        }
+
+        .pinned-item-text {
+            font-size: 12.5px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .pinned-unpin-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pinned-unpin-btn:hover {
+            color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        @keyframes pinFlash {
+            0% { box-shadow: 0 0 0 0 var(--accent); }
+            50% { box-shadow: 0 0 0 4px var(--accent-soft); }
+            100% { box-shadow: 0 0 0 0 transparent; }
+        }
+
+        .message.pin-jump-highlight .bubble {
+            animation: pinFlash 1.4s ease;
+        }
+
+        /* Toggle Switch & Language Selector in Settings */
+        .settings-toggle-card {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 12px 14px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            margin-bottom: 10px;
+        }
+
+        .settings-toggle-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .settings-toggle-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 3px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .settings-toggle-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.45;
+        }
+
+        .shiro-switch {
+            position: relative;
+            display: inline-block;
+            width: 42px;
+            height: 24px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .shiro-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .shiro-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: var(--border-default);
+            transition: 0.2s;
+            border-radius: 999px;
+        }
+
+        .shiro-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text-primary);
+            transition: 0.2s;
+            border-radius: 50%;
+        }
+
+        .shiro-switch input:checked + .shiro-slider {
+            background-color: var(--ok);
+        }
+
+        .shiro-switch input:checked + .shiro-slider:before {
+            transform: translateX(18px);
+            background-color: #ffffff;
+        }
+
+        .lang-selector-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .lang-option-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 9px 12px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+            color: var(--text-secondary);
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .lang-option-btn:hover {
+            border-color: var(--border-hover);
+            color: var(--text-primary);
+        }
+
+        .lang-option-btn.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--text-primary);
+        }
+
+        .training-mode-banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 12px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 500;
+            margin-top: 8px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+        }
+
+        .training-mode-banner.mode-on {
+            border-color: rgba(95, 191, 143, 0.35);
+            color: var(--ok);
+        }
+
+        .training-mode-banner.mode-off {
+            border-color: rgba(224, 168, 74, 0.35);
+            color: var(--warn);
+        }
+
         @media (max-width: 768px) {
             .footer-shortcuts,
             .media-btn-label {
@@ -584,15 +889,15 @@
             <div class="sidebar-header">
                 <button id="sidebar-new-chat-btn" class="btn-sidebar-new-chat" type="button">
                     <i class="ph ph-plus"></i>
-                    <span>Chat baru</span>
+                    <span data-i18n="new_chat">Chat baru</span>
                 </button>
-                <button id="close-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Tutup sidebar" aria-label="Tutup sidebar" type="button">
+                <button id="close-sidebar-btn" class="btn-icon btn-sidebar-toggle" title="Tutup sidebar" data-i18n-title="close_sidebar" aria-label="Tutup sidebar" type="button">
                     <i class="ph ph-sidebar-simple"></i>
                 </button>
             </div>
 
             <div class="sidebar-section-head">
-                <span>Riwayat percakapan</span>
+                <span data-i18n="chat_history">Riwayat percakapan</span>
             </div>
 
             <div class="sidebar-session-list" id="sidebar-session-list">
@@ -600,10 +905,10 @@
             </div>
 
             <div class="sidebar-footer">
-                <div class="sidebar-footer-stat" title="Jumlah fakta yang diingat Shiro">
+                <div class="sidebar-footer-stat" title="Jumlah fakta yang diingat Shiro" data-i18n-title="memory_facts_tooltip">
                     <div class="stat-icon"><i class="ph ph-brain"></i></div>
                     <div class="stat-info">
-                        <span class="stat-label">Basis ingatan</span>
+                        <span class="stat-label" data-i18n="memory_base">Basis ingatan</span>
                         <span class="stat-val" id="sidebar-memory-count">0 fakta</span>
                     </div>
                 </div>
@@ -611,16 +916,16 @@
                     <button id="sidebar-pipeline-btn" class="btn-sidebar-footer" type="button">
                         <span class="btn-sidebar-footer-left">
                             <i class="ph ph-tree-structure"></i>
-                            <span>Alur eksekusi</span>
+                            <span data-i18n="pipeline_title">Alur eksekusi</span>
                         </span>
-                        <span class="sidebar-item-hint">Inspektur</span>
+                        <span class="sidebar-item-hint" data-i18n="inspector">Inspektur</span>
                     </button>
                     <button id="sidebar-settings-btn" class="btn-sidebar-footer" type="button">
                         <span class="btn-sidebar-footer-left">
                             <i class="ph ph-gear"></i>
-                            <span>Pengaturan</span>
+                            <span data-i18n="settings">Pengaturan</span>
                         </span>
-                        <span class="sidebar-item-hint">Konfigurasi</span>
+                        <span class="sidebar-item-hint" data-i18n="configuration">Konfigurasi</span>
                     </button>
                 </div>
             </div>
@@ -631,38 +936,47 @@
         <div class="main-content" id="main-content">
             <header class="navbar">
                 <div class="nav-left">
-                    <button id="open-sidebar-btn" class="btn-icon" title="Buka sidebar" aria-label="Buka sidebar" type="button">
+                    <button id="open-sidebar-btn" class="btn-icon" title="Buka sidebar" data-i18n-title="open_sidebar" aria-label="Buka sidebar" type="button">
                         <i class="ph ph-sidebar-simple"></i>
                     </button>
                     <div class="brand">
-                        <span class="status-dot" title="Terhubung" role="img" aria-label="Terhubung"></span>
+                        <span class="status-dot" title="Terhubung" data-i18n-title="connected" role="img" aria-label="Terhubung"></span>
                         <div class="brand-text">
                             <span class="brand-title">Shiro</span>
                             <span class="brand-sep" aria-hidden="true"></span>
-                            <span class="model-pill" title="Model aktif saat ini">Qwen3-32B</span>
+                            <span class="model-pill" title="Model aktif saat ini" data-i18n-title="active_model_tooltip">Qwen3-32B</span>
                         </div>
                     </div>
                 </div>
 
                 <div class="nav-actions">
-                    <div class="memory-badge btn-duplicate-nav" title="Jumlah ingatan aktif">
+                    <button id="pinned-messages-btn" class="nav-pill-btn" type="button" onclick="togglePinnedDrawer()" title="Pesan yang disematkan (PIN)" data-i18n-title="pinned_messages_tooltip">
+                        <i class="ph ph-push-pin"></i>
+                        <span data-i18n="pinned_short">PIN</span>
+                        <span id="pinned-count-badge" class="pin-count-pill hidden">0</span>
+                    </button>
+                    <button id="lang-quick-btn" class="nav-pill-btn" type="button" onclick="toggleQuickLanguage()" title="Ganti Bahasa UI (ID / EN)" data-i18n-title="switch_lang_tooltip">
+                        <i class="ph ph-translate"></i>
+                        <span id="nav-lang-code">ID</span>
+                    </button>
+                    <div class="memory-badge btn-duplicate-nav" title="Jumlah ingatan aktif" data-i18n-title="active_memory_tooltip">
                         <i class="ph ph-brain"></i>
-                        <span class="badge-label">Ingatan:</span>
+                        <span class="badge-label" data-i18n="memory_label">Ingatan:</span>
                         <span id="memory-count">0</span>
                     </div>
-                    <button id="new-chat-btn" class="btn-icon btn-duplicate-nav" title="Chat baru" aria-label="Chat baru" type="button">
+                    <button id="new-chat-btn" class="btn-icon btn-duplicate-nav" title="Chat baru" data-i18n-title="new_chat" aria-label="Chat baru" type="button">
                         <i class="ph ph-plus"></i>
-                        <span class="btn-new-chat-text">Chat baru</span>
+                        <span class="btn-new-chat-text" data-i18n="new_chat">Chat baru</span>
                     </button>
-                    <button id="pipeline-btn" class="btn-icon btn-duplicate-nav" title="Alur eksekusi" aria-label="Alur eksekusi" type="button">
+                    <button id="pipeline-btn" class="btn-icon btn-duplicate-nav" title="Alur eksekusi" data-i18n-title="pipeline_title" aria-label="Alur eksekusi" type="button">
                         <i class="ph ph-tree-structure"></i>
                         <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
                     </button>
-                    <button id="settings-btn" class="btn-icon btn-duplicate-nav" title="Pengaturan" aria-label="Pengaturan" type="button">
+                    <button id="settings-btn" class="btn-icon btn-duplicate-nav" title="Pengaturan" data-i18n-title="settings" aria-label="Pengaturan" type="button">
                         <i class="ph ph-gear"></i>
                     </button>
                     <span class="nav-divider btn-duplicate-nav" aria-hidden="true"></span>
-                    <button id="reset-btn" class="btn-icon btn-danger-hover" title="Hapus percakapan sesi ini" aria-label="Hapus percakapan sesi ini" type="button">
+                    <button id="reset-btn" class="btn-icon btn-danger-hover" title="Hapus percakapan sesi ini" data-i18n-title="reset_session_tooltip" aria-label="Hapus percakapan sesi ini" type="button">
                         <i class="ph ph-trash"></i>
                     </button>
                     <select id="session-select" class="hidden" title="Pilih percakapan"></select>
@@ -670,11 +984,22 @@
                 </div>
             </header>
 
+            <!-- Laci Pesan Tersemat (Pinned Messages Drawer) -->
+            <div id="pinned-drawer" class="pinned-drawer hidden">
+                <div class="pinned-drawer-head">
+                    <span><i class="ph-fill ph-push-pin"></i> <span data-i18n="pinned_messages_title">Pesan Tersemat di Sesi Ini</span></span>
+                    <button type="button" class="btn-icon" onclick="togglePinnedDrawer(false)" title="Tutup">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+                <div id="pinned-drawer-list" class="pinned-drawer-list"></div>
+            </div>
+
             <main class="chat-viewport" id="chat-viewport">
                 <div id="chat-messages" class="messages-list" role="log" aria-live="polite" aria-label="Percakapan">
                     <div class="message assistant">
                         <div class="avatar shiro-avatar">S</div>
-                        <div class="bubble">Halo Kakak. Ada yang bisa Shiro bantu hari ini?</div>
+                        <div class="bubble" data-i18n="welcome_greeting">Halo Kakak. Ada yang bisa Shiro bantu hari ini?</div>
                     </div>
 
                     <div id="typing-indicator" class="message assistant hidden">
@@ -688,9 +1013,9 @@
                 </div>
             </main>
 
-            <button type="button" id="scroll-bottom-btn" class="scroll-bottom-btn hidden" title="Gulir ke pesan terbaru" aria-label="Gulir ke pesan terbaru">
+            <button type="button" id="scroll-bottom-btn" class="scroll-bottom-btn hidden" title="Gulir ke pesan terbaru" data-i18n-title="scroll_bottom_tooltip" aria-label="Gulir ke pesan terbaru">
                 <i class="ph ph-arrow-down"></i>
-                <span>Pesan terbaru</span>
+                <span data-i18n="latest_messages">Pesan terbaru</span>
             </button>
 
             <footer class="input-section">
@@ -699,9 +1024,9 @@
                         <div class="doc-icon-badge"><i class="ph ph-file-text"></i></div>
                         <div class="image-preview-info">
                             <span class="image-preview-title" id="doc-preview-name">dokumen.pdf</span>
-                            <span class="image-preview-sub" id="doc-preview-sub">Siap dirangkum atau diperiksa</span>
+                            <span class="image-preview-sub" id="doc-preview-sub" data-i18n="doc_ready_sub">Siap dirangkum atau diperiksa</span>
                         </div>
-                        <button type="button" id="remove-doc-btn" class="btn-remove-thumb" title="Hapus dokumen" aria-label="Hapus dokumen">
+                        <button type="button" id="remove-doc-btn" class="btn-remove-thumb" title="Hapus dokumen" data-i18n-title="remove_doc" aria-label="Hapus dokumen">
                             <i class="ph ph-x"></i>
                         </button>
                     </div>
@@ -712,9 +1037,9 @@
                         <img id="image-preview-thumb" src="" alt="Gambar terlampir">
                         <div class="image-preview-info">
                             <span class="image-preview-title" id="image-preview-name">gambar.jpg</span>
-                            <span class="image-preview-sub">Siap dianalisis</span>
+                            <span class="image-preview-sub" data-i18n="img_ready_sub">Siap dianalisis</span>
                         </div>
-                        <button type="button" id="remove-image-btn" class="btn-remove-thumb" title="Hapus gambar" aria-label="Hapus gambar">
+                        <button type="button" id="remove-image-btn" class="btn-remove-thumb" title="Hapus gambar" data-i18n-title="remove_img" aria-label="Hapus gambar">
                             <i class="ph ph-x"></i>
                         </button>
                     </div>
@@ -725,32 +1050,33 @@
                         id="user-input"
                         class="chat-input"
                         placeholder="Tulis pesan..."
+                        data-i18n-placeholder="input_placeholder"
                         aria-label="Pesan untuk Shiro"
                         autocomplete="off"
                         rows="1"
                     ></textarea>
                     <div class="composer-bar">
                         <div class="media-input-buttons">
-                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan dokumen (PDF, Word, TXT, CSV, MD)" aria-label="Lampirkan dokumen" type="button">
+                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan berkas atau kode (.js, .py, .ts, .cpp, PDF, Word, TXT, CSV, MD, dll.)" data-i18n-title="attach_file_tooltip" aria-label="Lampirkan dokumen" type="button">
                                 <i class="ph ph-paperclip"></i>
-                                <span class="media-btn-label">Berkas</span>
+                                <span class="media-btn-label" data-i18n="files_btn">Berkas</span>
                             </button>
-                            <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.json,.csv,.py,.log,.html,.xml,.yaml,.yml" class="hidden">
-                            <button id="upload-image-btn" class="btn-media btn-media-labeled" title="Lampirkan gambar" aria-label="Lampirkan gambar" type="button">
+                            <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.markdown,.rtf,.log,.js,.jsx,.mjs,.cjs,.ts,.tsx,.vue,.svelte,.astro,.html,.htm,.css,.scss,.sass,.less,.py,.pyw,.pyi,.ipynb,.java,.c,.cpp,.cc,.cxx,.h,.hpp,.hh,.cs,.go,.rs,.php,.rb,.swift,.kt,.kts,.scala,.dart,.lua,.pl,.pm,.r,.jl,.zig,.nim,.sh,.bash,.zsh,.fish,.ps1,.psm1,.bat,.cmd,.awk,.sed,.dockerfile,.sql,.prisma,.graphql,.gql,.json,.jsonl,.json5,.yaml,.yml,.toml,.xml,.csv,.tsv,.ini,.cfg,.conf,.config,.properties,.env,.gitignore,.proto" class="hidden">
+                            <button id="upload-image-btn" class="btn-media btn-media-labeled" title="Lampirkan gambar" data-i18n-title="attach_img_tooltip" aria-label="Lampirkan gambar" type="button">
                                 <i class="ph ph-image"></i>
-                                <span class="media-btn-label">Gambar</span>
+                                <span class="media-btn-label" data-i18n="images_btn">Gambar</span>
                             </button>
-                            <button id="open-camera-btn" class="btn-media btn-media-labeled" title="Ambil foto dengan kamera" aria-label="Buka kamera" type="button">
+                            <button id="open-camera-btn" class="btn-media btn-media-labeled" title="Ambil foto dengan kamera" data-i18n-title="open_cam_tooltip" aria-label="Buka kamera" type="button">
                                 <i class="ph ph-camera"></i>
-                                <span class="media-btn-label">Kamera</span>
+                                <span class="media-btn-label" data-i18n="camera_btn">Kamera</span>
                             </button>
                             <input type="file" id="image-file-input" accept="image/*" class="hidden">
                         </div>
                         <div class="input-actions">
-                            <button id="send-btn" class="btn-send" title="Kirim pesan (Enter)" aria-label="Kirim pesan" type="button">
+                            <button id="send-btn" class="btn-send" title="Kirim pesan (Enter)" data-i18n-title="send_msg_tooltip" aria-label="Kirim pesan" type="button">
                                 <i class="ph ph-arrow-up"></i>
                             </button>
-                            <button id="stop-btn" class="btn-send btn-stop hidden" title="Hentikan respons" aria-label="Hentikan respons" type="button">
+                            <button id="stop-btn" class="btn-send btn-stop hidden" title="Hentikan respons" data-i18n-title="stop_resp_tooltip" aria-label="Hentikan respons" type="button">
                                 <i class="ph ph-stop"></i>
                             </button>
                         </div>
@@ -759,11 +1085,11 @@
                 <div class="footer-meta">
                     <div class="footer-status-wrap">
                         <span class="footer-status-dot" aria-hidden="true"></span>
-                        <span id="status" role="status">Siap</span>
+                        <span id="status" role="status" data-i18n="status_ready">Siap</span>
                     </div>
                     <div class="footer-shortcuts" aria-hidden="true">
-                        <span><kbd class="kbd-inline">Enter</kbd> kirim</span>
-                        <span><kbd class="kbd-inline">Shift + Enter</kbd> baris baru</span>
+                        <span><kbd class="kbd-inline">Enter</kbd> <span data-i18n="shortcut_send">kirim</span></span>
+                        <span><kbd class="kbd-inline">Shift + Enter</kbd> <span data-i18n="shortcut_newline">baris baru</span></span>
                     </div>
                 </div>
             </footer>
@@ -778,7 +1104,7 @@
             <div class="modal-header">
                 <div class="camera-header-title">
                     <i class="ph ph-camera"></i>
-                    <h2 id="camera-title">Kamera</h2>
+                    <h2 id="camera-title" data-i18n="camera_btn">Kamera</h2>
                 </div>
                 <button id="close-camera-modal" class="btn-icon" type="button" title="Tutup" aria-label="Tutup kamera">
                     <i class="ph ph-x"></i>
@@ -789,16 +1115,16 @@
                     <video id="camera-video" autoplay playsinline muted></video>
                     <div id="camera-placeholder" class="camera-placeholder hidden">
                         <i class="ph ph-video-camera-slash"></i>
-                        <p>Kamera tidak aktif</p>
+                        <p data-i18n="camera_inactive">Kamera tidak aktif</p>
                     </div>
                 </div>
                 <canvas id="camera-canvas" class="hidden"></canvas>
                 <div class="camera-controls">
                     <button type="button" id="switch-camera-btn" class="btn-secondary" title="Ganti kamera">
-                        <i class="ph ph-arrows-clockwise"></i> Ganti kamera
+                        <i class="ph ph-arrows-clockwise"></i> <span data-i18n="switch_camera">Ganti kamera</span>
                     </button>
                     <button type="button" id="capture-photo-btn" class="btn-primary btn-capture" title="Ambil foto">
-                        <i class="ph ph-camera"></i> Ambil foto
+                        <i class="ph ph-camera"></i> <span data-i18n="capture_photo">Ambil foto</span>
                     </button>
                 </div>
             </div>
@@ -810,13 +1136,13 @@
         <div class="modal-dialog pipeline-dialog" role="dialog" aria-modal="true" aria-labelledby="pipeline-title">
             <div class="modal-header">
                 <div class="pipeline-header-title">
-                    <h2 id="pipeline-title">Alur eksekusi</h2>
-                    <span class="pipeline-modal-sub">Geser node untuk menata ulang. Hanya mengubah tampilan, eksekusi tetap sama.</span>
+                    <h2 id="pipeline-title" data-i18n="pipeline_title">Alur eksekusi</h2>
+                    <span class="pipeline-modal-sub" data-i18n="pipeline_sub">Geser node untuk menata ulang. Hanya mengubah tampilan, eksekusi tetap sama.</span>
                 </div>
                 <div class="pipeline-modal-actions">
                     <span id="pipeline-total-time" class="badge-time">0 ms</span>
                     <a href="/pipeline" target="_blank" class="btn-secondary btn-sm" title="Buka di tab baru">
-                        <i class="ph ph-arrow-square-out"></i> Layar penuh
+                        <i class="ph ph-arrow-square-out"></i> <span data-i18n="fullscreen">Layar penuh</span>
                     </a>
                     <button id="close-pipeline-modal" class="btn-icon" type="button" title="Tutup" aria-label="Tutup">
                         <i class="ph ph-x"></i>
@@ -833,8 +1159,8 @@
             <div class="settings-modal-top">
                 <div class="modal-header">
                     <div class="modal-title-group">
-                        <h2 id="settings-title">Pengaturan</h2>
-                        <span class="modal-subtitle">Konfigurasi profil, model inferensi, integrasi API, dan tampilan</span>
+                        <h2 id="settings-title" data-i18n="settings">Pengaturan</h2>
+                        <span class="modal-subtitle" data-i18n="settings_subtitle">Konfigurasi bahasa, privasi training, profil, model inferensi, API, dan tampilan</span>
                     </div>
                     <button id="close-settings" class="btn-icon" type="button" title="Tutup (Esc)" aria-label="Tutup pengaturan">
                         <i class="ph ph-x"></i>
@@ -844,7 +1170,11 @@
                 <div class="modal-tabs" role="group" aria-label="Bagian pengaturan">
                     <button class="tab-btn active" data-tab="user" type="button">
                         <i class="ph ph-user"></i>
-                        <span>Anda</span>
+                        <span data-i18n="tab_user">Anda</span>
+                    </button>
+                    <button class="tab-btn" data-tab="privacy" type="button">
+                        <i class="ph ph-shield-check"></i>
+                        <span data-i18n="tab_privacy">Privasi &amp; Bahasa</span>
                     </button>
                     <button class="tab-btn" data-tab="ai" type="button">
                         <i class="ph ph-robot"></i>
@@ -852,7 +1182,7 @@
                     </button>
                     <button class="tab-btn" data-tab="model" type="button">
                         <i class="ph ph-cpu"></i>
-                        <span>Model</span>
+                        <span data-i18n="tab_model">Model</span>
                     </button>
                     <button class="tab-btn" data-tab="api" type="button">
                         <i class="ph ph-key"></i>
@@ -860,37 +1190,116 @@
                     </button>
                     <button class="tab-btn" data-tab="theme" type="button">
                         <i class="ph ph-palette"></i>
-                        <span>Tema</span>
+                        <span data-i18n="tab_theme">Tema</span>
                     </button>
                 </div>
             </div>
 
             <div class="settings-modal-body">
                 <div id="user-tab" class="tab-content active">
+                    <!-- Pintasan Cepat Bahasa & Privasi Data Training di Tab Utama -->
+                    <div class="settings-panel" style="margin-bottom: 14px;">
+                        <div class="settings-panel-head">
+                            <span class="settings-panel-title"><i class="ph ph-sliders-horizontal"></i> <span data-i18n="quick_prefs_title">Preferensi Bahasa &amp; Data Training</span></span>
+                        </div>
+                        <div class="form-field" style="margin-bottom: 10px;">
+                            <label data-i18n="ui_language_label">Bahasa Antarmuka (UI Language)</label>
+                            <div class="lang-selector-group">
+                                <button type="button" class="lang-option-btn lang-btn-id active" onclick="setUILanguage('id')">
+                                    <i class="ph ph-globe"></i> <span>Bahasa Indonesia (ID)</span>
+                                </button>
+                                <button type="button" class="lang-option-btn lang-btn-en" onclick="setUILanguage('en')">
+                                    <i class="ph ph-translate"></i> <span>English (EN)</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="settings-toggle-card" style="margin-bottom: 0;">
+                            <div class="settings-toggle-info">
+                                <div class="settings-toggle-title">
+                                    <i class="ph ph-database"></i>
+                                    <span data-i18n="training_toggle_title">Simpan Data untuk Training Model</span>
+                                </div>
+                                <div class="settings-toggle-desc" data-i18n="training_toggle_desc">
+                                    Jika dinonaktifkan (OFF), ingatan hanya berlaku selama 1 sesi aktif dan tidak akan direkam ke dataset training model.
+                                </div>
+                            </div>
+                            <label class="shiro-switch" title="On/Off Simpan Data Training">
+                                <input type="checkbox" id="training-logging-toggle-quick" checked onchange="toggleTrainingLogging(this.checked)">
+                                <span class="shiro-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
                     <form id="user-form" enctype="multipart/form-data">
                         <div class="profile-identity-card">
                             <div class="profile-preview-box">
                                 <div id="user-preview" class="avatar-preview"><i class="ph ph-user"></i></div>
                             </div>
                             <div class="profile-upload-meta">
-                                <label for="user-image">Foto profil Anda</label>
+                                <label for="user-image" data-i18n="user_photo_label">Foto profil Anda</label>
                                 <input type="file" id="user-image" accept="image/*">
-                                <span class="field-help">Format gambar persegi (JPG, PNG, WEBP) disarankan.</span>
+                                <span class="field-help" data-i18n="user_photo_help">Format gambar persegi (JPG, PNG, WEBP) disarankan.</span>
                             </div>
                         </div>
                         <div class="form-field">
-                            <label for="user-name">Nama panggilan</label>
-                            <input type="text" id="user-name" placeholder="Nama Anda" value="Kakak">
-                            <span class="field-help">Digunakan Shiro saat menyapa Anda dalam percakapan.</span>
+                            <label for="user-name" data-i18n="user_name_label">Nama panggilan</label>
+                            <input type="text" id="user-name" placeholder="Nama Anda" data-i18n-placeholder="user_name_placeholder" value="Kakak">
+                            <span class="field-help" data-i18n="user_name_help">Digunakan Shiro saat menyapa Anda dalam percakapan.</span>
                         </div>
                         <div class="form-field">
-                            <label for="user-desc">Catatan konteks tentang Anda</label>
-                            <textarea id="user-desc" placeholder="Misalnya bidang pekerjaan, bahasa pemrograman favorit, atau gaya penjelasan yang disukai"></textarea>
+                            <label for="user-desc" data-i18n="user_desc_label">Catatan konteks tentang Anda</label>
+                            <textarea id="user-desc" placeholder="Misalnya bidang pekerjaan, bahasa pemrograman favorit, atau gaya penjelasan yang disukai" data-i18n-placeholder="user_desc_placeholder"></textarea>
                         </div>
                         <button type="button" onclick="saveProfile('user')" class="btn-primary">
-                            <i class="ph ph-floppy-disk"></i> Simpan profil Anda
+                            <i class="ph ph-floppy-disk"></i> <span data-i18n="save_user_profile">Simpan profil Anda</span>
                         </button>
                     </form>
+                </div>
+
+                <!-- Tab Khusus Privasi & Bahasa -->
+                <div id="privacy-tab" class="tab-content">
+                    <div class="model-card">
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-translate"></i> <span data-i18n="ui_language_label">Bahasa Antarmuka (UI Language)</span></span>
+                            </div>
+                            <div class="form-field">
+                                <span class="field-help" data-i18n="ui_language_help">Pilih bahasa tampilan aplikasi Web UI. Perubahan diterapkan seketika tanpa memuat ulang halaman.</span>
+                                <div class="lang-selector-group">
+                                    <button type="button" class="lang-option-btn lang-btn-id active" onclick="setUILanguage('id')">
+                                        <i class="ph ph-globe"></i> <span>Bahasa Indonesia (ID)</span>
+                                    </button>
+                                    <button type="button" class="lang-option-btn lang-btn-en" onclick="setUILanguage('en')">
+                                        <i class="ph ph-translate"></i> <span>English (EN)</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-shield-check"></i> <span data-i18n="privacy_training_header">Privasi Memori &amp; Dataset Training</span></span>
+                            </div>
+                            <div class="settings-toggle-card">
+                                <div class="settings-toggle-info">
+                                    <div class="settings-toggle-title">
+                                        <span data-i18n="training_toggle_title">Simpan Data untuk Training Model</span>
+                                    </div>
+                                    <div class="settings-toggle-desc" data-i18n="training_toggle_desc">
+                                        Jika dinonaktifkan (OFF), ingatan hanya berlaku selama 1 sesi aktif dan tidak akan direkam ke dataset training model.
+                                    </div>
+                                </div>
+                                <label class="shiro-switch" title="On/Off Simpan Data Training">
+                                    <input type="checkbox" id="training-logging-toggle" checked onchange="toggleTrainingLogging(this.checked)">
+                                    <span class="shiro-slider"></span>
+                                </label>
+                            </div>
+                            <div id="training-mode-banner" class="training-mode-banner mode-on">
+                                <i id="training-mode-icon" class="ph ph-check-circle"></i>
+                                <span id="training-mode-status-text" data-i18n="training_status_on">Status: AKTIF — Percakapan direkam untuk meningkatkan kecerdasan model.</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="ai-tab" class="tab-content">
@@ -900,21 +1309,21 @@
                                 <div id="ai-preview" class="avatar-preview ai"><i class="ph ph-robot"></i></div>
                             </div>
                             <div class="profile-upload-meta">
-                                <label for="ai-image">Foto avatar asisten</label>
+                                <label for="ai-image" data-i18n="ai_photo_label">Foto avatar asisten</label>
                                 <input type="file" id="ai-image" accept="image/*">
-                                <span class="field-help">Ditampilkan pada setiap pesan balasan asisten.</span>
+                                <span class="field-help" data-i18n="ai_photo_help">Ditampilkan pada setiap pesan balasan asisten.</span>
                             </div>
                         </div>
                         <div class="form-field">
-                            <label for="ai-name">Nama asisten</label>
+                            <label for="ai-name" data-i18n="ai_name_label">Nama asisten</label>
                             <input type="text" id="ai-name" placeholder="Nama AI" value="Shiro">
                         </div>
                         <div class="form-field">
-                            <label for="ai-desc">Karakter dan instruksi gaya bicara</label>
-                            <textarea id="ai-desc" placeholder="Tentukan karakter, nada bicara, dan batasan perilaku asisten"></textarea>
+                            <label for="ai-desc" data-i18n="ai_desc_label">Karakter dan instruksi gaya bicara</label>
+                            <textarea id="ai-desc" placeholder="Tentukan karakter, nada bicara, dan batasan perilaku asisten" data-i18n-placeholder="ai_desc_placeholder"></textarea>
                         </div>
                         <button type="button" onclick="saveProfile('ai')" class="btn-primary">
-                            <i class="ph ph-floppy-disk"></i> Simpan profil asisten
+                            <i class="ph ph-floppy-disk"></i> <span data-i18n="save_ai_profile">Simpan profil asisten</span>
                         </button>
                     </form>
                 </div>
@@ -923,69 +1332,69 @@
                     <div class="model-card">
                         <div class="settings-panel">
                             <div class="settings-panel-head">
-                                <span class="settings-panel-title"><i class="ph ph-cpu"></i> Model bahasa utama</span>
+                                <span class="settings-panel-title"><i class="ph ph-cpu"></i> <span data-i18n="main_llm_title">Model bahasa utama</span></span>
                                 <span id="current-model-badge" class="badge-active">Memuat...</span>
                             </div>
                             <div class="form-field">
-                                <label for="model-select">Pilih berkas model (.gguf)</label>
+                                <label for="model-select" data-i18n="select_gguf_label">Pilih berkas model (.gguf)</label>
                                 <select id="model-select" class="form-select">
                                     <option disabled selected>Memuat daftar model...</option>
                                 </select>
-                                <span class="field-help">Berkas <code>.gguf</code> di dalam direktori <code>model/</code> dipindai secara otomatis.</span>
+                                <span class="field-help" data-i18n="select_gguf_help">Berkas <code>.gguf</code> di dalam direktori <code>model/</code> dipindai secara otomatis.</span>
                             </div>
                             <div id="model-info" class="info-box">
                                 <p id="model-desc-text">Memuat detail model...</p>
                             </div>
                             <div class="model-hint-box">
-                                <span class="model-hint-text"><i class="ph ph-info"></i> Salin berkas <code>.gguf</code> baru ke folder <code>model/</code> lalu buka kembali jendela ini untuk memuatnya.</span>
+                                <span class="model-hint-text"><i class="ph ph-info"></i> <span data-i18n="model_folder_hint">Salin berkas .gguf baru ke folder model/ lalu buka kembali jendela ini untuk memuatnya.</span></span>
                             </div>
                             <button type="button" onclick="switchModel()" class="btn-primary">
-                                <i class="ph ph-check"></i> Terapkan model
+                                <i class="ph ph-check"></i> <span data-i18n="apply_model_btn">Terapkan model</span>
                             </button>
                         </div>
 
                         <div class="settings-panel">
                             <div class="settings-panel-head">
-                                <span class="settings-panel-title"><i class="ph ph-eye"></i> Orkestrasi visi (MoE)</span>
+                                <span class="settings-panel-title"><i class="ph ph-eye"></i> <span data-i18n="vision_moe_title">Orkestrasi visi (MoE)</span></span>
                             </div>
                             <div class="form-field">
-                                <label for="moe-mode-select">Strategi pemrosesan gambar</label>
+                                <label for="moe-mode-select" data-i18n="vision_strategy_label">Strategi pemrosesan gambar</label>
                                 <select id="moe-mode-select" class="form-select">
-                                    <option value="auto">Otomatis: gunakan model visi jika model utama berbasis teks</option>
-                                    <option value="concurrent">Berdampingan: model visi tetap di VRAM (GPU kapasitas besar)</option>
-                                    <option value="swap">Bergantian: muat model secara bergilir (hemat VRAM)</option>
-                                    <option value="off">Nonaktif: hanya ekstraksi OCR lokal</option>
+                                    <option value="auto" data-i18n="moe_opt_auto">Otomatis: gunakan model visi jika model utama berbasis teks</option>
+                                    <option value="concurrent" data-i18n="moe_opt_concurrent">Berdampingan: model visi tetap di VRAM (GPU kapasitas besar)</option>
+                                    <option value="swap" data-i18n="moe_opt_swap">Bergantian: muat model secara bergilir (hemat VRAM)</option>
+                                    <option value="off" data-i18n="moe_opt_off">Nonaktif: hanya ekstraksi OCR lokal</option>
                                 </select>
-                                <span class="field-help" id="moe-status-help">Memasangkan model visi Qwen2.5-VL dengan model percakapan untuk membaca lampiran visual.</span>
+                                <span class="field-help" id="moe-status-help" data-i18n="vision_moe_help">Memasangkan model visi Qwen2.5-VL dengan model percakapan untuk membaca lampiran visual.</span>
                             </div>
                             <div id="moe-info-box" class="info-box">
                                 <p id="moe-desc-text">Status MoE: memuat...</p>
                             </div>
                             <button type="button" onclick="saveMoeSettings()" class="btn-secondary btn-block">
-                                <i class="ph ph-sliders-horizontal"></i> Simpan mode visi
+                                <i class="ph ph-sliders-horizontal"></i> <span data-i18n="save_vision_mode">Simpan mode visi</span>
                             </button>
                         </div>
                     </div>
                 </div>
 
                 <div id="theme-tab" class="tab-content">
-                    <div class="theme-section-label">Preset skema warna</div>
+                    <div class="theme-section-label" data-i18n="theme_presets_label">Preset skema warna</div>
                     <div class="theme-grid" id="theme-grid"></div>
 
                     <div class="theme-custom">
-                        <div class="theme-custom-title">Penyesuaian warna kustom</div>
+                        <div class="theme-custom-title" data-i18n="theme_custom_title">Penyesuaian warna kustom</div>
                         <div class="color-row">
-                            <label for="theme-bg">Permukaan latar</label>
+                            <label for="theme-bg" data-i18n="theme_bg_label">Permukaan latar</label>
                             <span class="color-hex" id="theme-bg-hex"></span>
                             <input type="color" id="theme-bg">
                         </div>
                         <div class="color-row">
-                            <label for="theme-fg">Teks utama</label>
+                            <label for="theme-fg" data-i18n="theme_fg_label">Teks utama</label>
                             <span class="color-hex" id="theme-fg-hex"></span>
                             <input type="color" id="theme-fg">
                         </div>
                         <div class="color-row">
-                            <label for="theme-accent">Aksen fokus &amp; tautan</label>
+                            <label for="theme-accent" data-i18n="theme_accent_label">Aksen fokus &amp; tautan</label>
                             <span class="color-hex" id="theme-accent-hex"></span>
                             <input type="color" id="theme-accent">
                         </div>
@@ -993,7 +1402,7 @@
                     </div>
 
                     <button type="button" id="theme-reset" class="btn-secondary btn-block">
-                        <i class="ph ph-arrow-counter-clockwise"></i> Kembalikan ke tema bawaan
+                        <i class="ph ph-arrow-counter-clockwise"></i> <span data-i18n="theme_reset_btn">Kembalikan ke tema bawaan</span>
                     </button>
                 </div>
 
@@ -1001,21 +1410,21 @@
                     <div class="model-card">
                         <div class="settings-panel">
                             <div class="settings-panel-head">
-                                <span class="settings-panel-title"><i class="ph ph-key"></i> Kunci autentikasi (API Key)</span>
+                                <span class="settings-panel-title"><i class="ph ph-key"></i> <span data-i18n="api_key_title">Kunci autentikasi (API Key)</span></span>
                             </div>
                             <div class="form-field">
-                                <label for="active-api-key-input">Kunci aktif</label>
+                                <label for="active-api-key-input" data-i18n="active_key_label">Kunci aktif</label>
                                 <div class="key-row">
                                     <input type="text" id="active-api-key-input" readonly value="Memuat key...">
                                     <button type="button" class="btn-secondary" onclick="copyApiKey()" title="Salin API key" aria-label="Salin API key">
-                                        <i class="ph ph-copy"></i> Salin
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_btn">Salin</span>
                                     </button>
                                 </div>
-                                <span class="field-help">Sertakan pada header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code> untuk seluruh endpoint di bawah.</span>
+                                <span class="field-help" data-i18n="api_key_help">Sertakan pada header <code>Authorization: Bearer &lt;KEY&gt;</code> atau <code>X-API-Key: &lt;KEY&gt;</code> untuk seluruh endpoint di bawah.</span>
                             </div>
 
                             <button type="button" onclick="regenerateApiKey()" class="btn-secondary btn-block" id="btn-regen-key">
-                                <i class="ph ph-arrows-clockwise"></i> Buat ulang API key
+                                <i class="ph ph-arrows-clockwise"></i> <span data-i18n="regen_api_key">Buat ulang API key</span>
                             </button>
                         </div>
 
@@ -1024,40 +1433,40 @@
                                 <div class="endpoint-head">
                                     <div class="endpoint-route-group">
                                         <span class="endpoint-method-badge">V1</span>
-                                        <span class="endpoint-name">Persona Bahasa Indonesia</span>
+                                        <span class="endpoint-name" data-i18n="ep_v1_name">Persona Bahasa Indonesia</span>
                                     </div>
                                     <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v1')">
-                                        <i class="ph ph-copy"></i> Salin URL
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_url_btn">Salin URL</span>
                                     </button>
                                 </div>
                                 <div class="endpoint-url" id="endpoint-v1-url">/v1</div>
-                                <div class="endpoint-desc">Persona Shiro berbahasa Indonesia penuh. Siap dihubungkan ke integrasi WhatsApp, Telegram, atau klien eksternal.</div>
+                                <div class="endpoint-desc" data-i18n="ep_v1_desc">Persona Shiro berbahasa Indonesia penuh. Siap dihubungkan ke integrasi WhatsApp, Telegram, atau klien eksternal.</div>
                             </div>
                             <div class="endpoint-item">
                                 <div class="endpoint-head">
                                     <div class="endpoint-route-group">
                                         <span class="endpoint-method-badge">V2</span>
-                                        <span class="endpoint-name">VTuber &amp; VoiceVox</span>
+                                        <span class="endpoint-name" data-i18n="ep_v2_name">VTuber &amp; VoiceVox</span>
                                     </div>
                                     <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v2')">
-                                        <i class="ph ph-copy"></i> Salin URL
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_url_btn">Salin URL</span>
                                     </button>
                                 </div>
                                 <div class="endpoint-url" id="endpoint-v2-url">/v2</div>
-                                <div class="endpoint-desc">Keluaran bahasa Jepang terformat <code>[Tag] "..."</code> khusus sintesis suara VoiceVox dan pipeline VTuber.</div>
+                                <div class="endpoint-desc" data-i18n="ep_v2_desc">Keluaran bahasa Jepang terformat [Tag] "..." khusus sintesis suara VoiceVox dan pipeline VTuber.</div>
                             </div>
                             <div class="endpoint-item">
                                 <div class="endpoint-head">
                                     <div class="endpoint-route-group">
                                         <span class="endpoint-method-badge">V3</span>
-                                        <span class="endpoint-name">System Prompt Kustom</span>
+                                        <span class="endpoint-name" data-i18n="ep_v3_name">System Prompt Kustom</span>
                                     </div>
                                     <button type="button" class="btn-secondary btn-sm" onclick="copyEndpointUrl('/v3')">
-                                        <i class="ph ph-copy"></i> Salin URL
+                                        <i class="ph ph-copy"></i> <span data-i18n="copy_url_btn">Salin URL</span>
                                     </button>
                                 </div>
                                 <div class="endpoint-url" id="endpoint-v3-url">/v3</div>
-                                <div class="endpoint-desc">Mengikuti instruksi sistem dari klien sepenuhnya tanpa batasan persona bawaan. Cocok untuk otomasi kode dan riset.</div>
+                                <div class="endpoint-desc" data-i18n="ep_v3_desc">Mengikuti instruksi sistem dari klien sepenuhnya tanpa batasan persona bawaan. Cocok untuk otomasi kode dan riset.</div>
                             </div>
                         </div>
                     </div>
@@ -1072,7 +1481,7 @@
             <div class="lightbox-toolbar">
                 <div class="lightbox-title-wrap">
                     <i class="ph ph-image"></i>
-                    <span id="lightbox-title">Pratinjau gambar</span>
+                    <span id="lightbox-title" data-i18n="image_preview">Pratinjau gambar</span>
                 </div>
                 <div class="lightbox-actions">
                     <a id="lightbox-open-newtab" href="#" target="_blank" class="btn-icon" title="Buka di tab baru" aria-label="Buka di tab baru">
@@ -1102,15 +1511,15 @@
                     </div>
                     <div class="doc-modal-header-meta">
                         <h2 id="doc-modal-filename">dokumen.pdf</h2>
-                        <span id="doc-modal-sub" class="pipeline-modal-sub">Pratinjau dokumen</span>
+                        <span id="doc-modal-sub" class="pipeline-modal-sub" data-i18n="doc_preview">Pratinjau dokumen</span>
                     </div>
                 </div>
                 <div class="pipeline-modal-actions">
                     <button type="button" class="btn-secondary btn-sm" id="doc-modal-copy-btn" onclick="copyDocModalContent()" title="Salin teks dokumen">
-                        <i class="ph ph-copy"></i> Salin teks
+                        <i class="ph ph-copy"></i> <span data-i18n="copy_text_btn">Salin teks</span>
                     </button>
                     <a id="doc-modal-download-link" href="#" target="_blank" class="btn-secondary btn-sm" title="Buka berkas asli di tab baru">
-                        <i class="ph ph-arrow-square-out"></i> Buka asli
+                        <i class="ph ph-arrow-square-out"></i> <span data-i18n="open_original_btn">Buka asli</span>
                     </a>
                     <button id="close-doc-modal" class="btn-icon" type="button" onclick="closeDocModal()" title="Tutup (Esc)" aria-label="Tutup">
                         <i class="ph ph-x"></i>
@@ -1121,11 +1530,11 @@
             <div class="modal-tabs" id="doc-modal-tabs">
                 <button class="tab-btn active" id="tab-btn-doc-frame" type="button" onclick="switchDocViewMode('frame')">
                     <i class="ph ph-file"></i>
-                    <span>Dokumen</span>
+                    <span data-i18n="document_tab">Dokumen</span>
                 </button>
                 <button class="tab-btn" id="tab-btn-doc-text" type="button" onclick="switchDocViewMode('text')">
                     <i class="ph ph-text-align-left"></i>
-                    <span>Teks hasil ekstraksi</span>
+                    <span data-i18n="extracted_text_tab">Teks hasil ekstraksi</span>
                 </button>
             </div>
 

@@ -39,13 +39,15 @@ class AdvancedMemoryManager:
     def initialize_memory(self):
         """Initialize empty memory structure"""
         self.system_metadata = {
-            "version": "2.0",
+            "version": "2.5",
             "created_date": datetime.now().isoformat(),
             "last_interaction": None,
             "total_turns": 0,
             "token_usage_approx": 0,
             "session_count": 0,
-            "user_name": "Kakak"
+            "user_name": "Kakak",
+            "enable_training_logging": True,
+            "ui_language": "id"
         }
         
         self.user_profile = {
@@ -184,6 +186,8 @@ class AdvancedMemoryManager:
                 if "system_metadata" in data:
                     # v2 format
                     self.system_metadata = data.get("system_metadata", self.system_metadata)
+                    self.system_metadata.setdefault("enable_training_logging", True)
+                    self.system_metadata.setdefault("ui_language", "id")
                     self.user_profile = data.get("user_profile", self.user_profile)
                     self.agent_persona = data.get("agent_persona", self.agent_persona)
                     self.knowledge_base = data.get("knowledge_base", self.knowledge_base)
@@ -213,9 +217,13 @@ class AdvancedMemoryManager:
                     self.learned_patterns = clean_patterns
                     self.archived_training_history = data.get("archived_training_history", [])
                     self.short_term_history = data.get("short_term_history", [])
+                    self._ensure_message_ids(self.short_term_history)
                     
                     # Multi-session store support
                     self.sessions_store = data.get("sessions_store", {})
+                    for s_id, s_data in self.sessions_store.items():
+                        if "messages" in s_data and isinstance(s_data["messages"], list):
+                            self._ensure_message_ids(s_data["messages"])
                     self.active_session_id = data.get("active_session_id", "default")
                     if not self.sessions_store:
                         self.sessions_store = {
@@ -553,6 +561,19 @@ class AdvancedMemoryManager:
                     pass
         
         return facts
+
+    def _ensure_message_ids(self, messages: List[Dict]):
+        """Ensure every message dictionary in a list has a stable 'id' and 'pinned' boolean."""
+        for idx, m in enumerate(messages):
+            if not isinstance(m, dict):
+                continue
+            if not m.get("id"):
+                ts = str(m.get("timestamp", idx))
+                raw = f"{idx}:{ts}:{m.get('role','')}:{(m.get('content','') or '')[:40]}"
+                digest = hashlib.md5(raw.encode("utf-8", errors="ignore")).hexdigest()[:10]
+                m["id"] = f"msg-{digest}"
+            if "pinned" not in m:
+                m["pinned"] = False
     
     def add_message(
         self, 
@@ -564,15 +585,20 @@ class AdvancedMemoryManager:
         document_url: Optional[str] = None,
         document_type: Optional[str] = None,
         document_text: Optional[str] = None
-    ):
+    ) -> str:
         """Add message to short-term history and self-learn from conversation & response"""
         with self.lock:
+            now_iso = datetime.now().isoformat()
+            raw_id = f"{now_iso}:{role}:{(content or '')[:40]}:{len(self.short_term_history)}"
+            msg_id = f"msg-{hashlib.md5(raw_id.encode('utf-8', errors='ignore')).hexdigest()[:10]}"
             message = {
+                "id": msg_id,
                 "role": role,
                 "content": content,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_iso,
                 "emotion": emotion,
-                "keywords": self._extract_keywords(content)
+                "keywords": self._extract_keywords(content),
+                "pinned": False
             }
             if image_path:
                 message["image"] = image_path
@@ -608,37 +634,39 @@ class AdvancedMemoryManager:
             self.system_metadata["last_interaction"] = message["timestamp"]
             self.system_metadata["total_turns"] += 1
             
-            # Continuous Self-Learning: Extract facts from both user and assistant
-            facts = self._extract_rdf_facts(content, role)
-            existing_keys = set()
-            for f in self.knowledge_base["facts"]:
-                key = (f.get("subject", "").lower(), f.get("predicate", "").lower(), f.get("object", "").lower())
-                existing_keys.add(key)
-            for fact in facts:
-                key = (fact.get("subject", "").lower(), fact.get("predicate", "").lower(), fact.get("object", "").lower())
-                if key not in existing_keys:
-                    self.knowledge_base["facts"].append(fact)
+            # Continuous Self-Learning: Only extract permanent facts & preferences if training logging is enabled
+            if self.system_metadata.get("enable_training_logging", True):
+                facts = self._extract_rdf_facts(content, role)
+                existing_keys = set()
+                for f in self.knowledge_base["facts"]:
+                    key = (f.get("subject", "").lower(), f.get("predicate", "").lower(), f.get("object", "").lower())
                     existing_keys.add(key)
-            
-            # Also learn user preferences dynamically
-            if role == "user":
-                content_lower = content.lower()
-                for match in re.finditer(r"(?:aku|saya|kakak)\s+(?:suka|senang|gemar)\s+([a-zA-Z0-9\s]{3,30})(?=[.!?,]|$)", content_lower):
-                    fav = match.group(1).strip()
-                    if fav and fav not in self.user_profile["preferences"].get("favorite_topics", []):
-                        self.user_profile["preferences"].setdefault("favorite_topics", []).append(fav)
-                for match in re.finditer(r"(?:aku|saya|kakak)\s+(?:tidak suka|benci|gak suka)\s+([a-zA-Z0-9\s]{3,30})(?=[.!?,]|$)", content_lower):
-                    dislike = match.group(1).strip()
-                    if dislike and dislike not in self.user_profile["preferences"].get("dislikes", []):
-                        self.user_profile["preferences"].setdefault("dislikes", []).append(dislike)
-            
-            # Limit facts to max 50, remove oldest if exceeded
-            if len(self.knowledge_base["facts"]) > 50:
-                self.knowledge_base["facts"] = self.knowledge_base["facts"][-50:]
+                for fact in facts:
+                    key = (fact.get("subject", "").lower(), fact.get("predicate", "").lower(), fact.get("object", "").lower())
+                    if key not in existing_keys:
+                        self.knowledge_base["facts"].append(fact)
+                        existing_keys.add(key)
+                
+                # Also learn user preferences dynamically
+                if role == "user":
+                    content_lower = content.lower()
+                    for match in re.finditer(r"(?:aku|saya|kakak)\s+(?:suka|senang|gemar)\s+([a-zA-Z0-9\s]{3,30})(?=[.!?,]|$)", content_lower):
+                        fav = match.group(1).strip()
+                        if fav and fav not in self.user_profile["preferences"].get("favorite_topics", []):
+                            self.user_profile["preferences"].setdefault("favorite_topics", []).append(fav)
+                    for match in re.finditer(r"(?:aku|saya|kakak)\s+(?:tidak suka|benci|gak suka)\s+([a-zA-Z0-9\s]{3,30})(?=[.!?,]|$)", content_lower):
+                        dislike = match.group(1).strip()
+                        if dislike and dislike not in self.user_profile["preferences"].get("dislikes", []):
+                            self.user_profile["preferences"].setdefault("dislikes", []).append(dislike)
+                
+                # Limit facts to max 50, remove oldest if exceeded
+                if len(self.knowledge_base["facts"]) > 50:
+                    self.knowledge_base["facts"] = self.knowledge_base["facts"][-50:]
             
             # Update emotions if assistant message
             if role == "assistant":
                 self.update_emotional_state_from_response(content)
+            return msg_id
     
     def _extract_keywords(self, text: str) -> List[str]:
         """Extract important keywords from text"""
@@ -840,8 +868,10 @@ class AdvancedMemoryManager:
         return topics if topics else ["General Chat"]
     
     def finalize_session(self) -> Dict:
-        """Finalize current session and move to episodic memory"""
+        """Finalize current session and move to episodic memory if training logging is enabled"""
         with self.lock:
+            if not self.system_metadata.get("enable_training_logging", True):
+                return {}
             session = self.create_session_summary()
             
             if session:
@@ -1040,9 +1070,9 @@ class AdvancedMemoryManager:
 
     def delete_session(self, session_id: str) -> bool:
         """
-        Delete a session while permanently preserving all conversation pairs into
+        Delete a session. If enable_training_logging is True, permanently preserves all conversation pairs into
         archived_training_history, learned_patterns, and fine-tuning datasets (ChatML/Alpaca/ShareGPT).
-        Only the visible conversation history of this session is removed.
+        If enable_training_logging is False, simply deletes the session cleanly without archiving to training data.
         """
         with self.lock:
             if not hasattr(self, "sessions_store") or session_id not in self.sessions_store:
@@ -1056,28 +1086,31 @@ class AdvancedMemoryManager:
             if not hasattr(self, "archived_training_history") or self.archived_training_history is None:
                 self.archived_training_history = []
 
-            # 1. Permanently archive all dialogue pairs from this session
+            training_enabled = self.system_metadata.get("enable_training_logging", True)
+
+            # 1. Permanently archive all dialogue pairs from this session ONLY IF training logging is enabled
             archived_count = 0
-            for i in range(len(messages) - 1):
-                if messages[i].get("role") == "user" and messages[i+1].get("role") == "assistant":
-                    u = messages[i].get("content", "").strip()
-                    a = messages[i+1].get("content", "").strip()
-                    img = messages[i].get("image") or messages[i+1].get("image")
-                    if u and a and not a.startswith("*bingung*") and "<think>" not in a.lower():
-                        self.archived_training_history.append({
-                            "user": u,
-                            "assistant": a,
-                            "image": img,
-                            "session_id": session_id,
-                            "archived_at": datetime.now().isoformat()
-                        })
-                        # Also record into learned_patterns for immediate few-shot exemplars
-                        self.record_learned_pattern(u, a, image_path=img)
-                        # Extract and retain user facts into permanent knowledge base
-                        facts = self._extract_rdf_facts(u, "user")
-                        if facts:
-                            self.knowledge_base.setdefault("facts", []).extend(facts)
-                        archived_count += 1
+            if training_enabled:
+                for i in range(len(messages) - 1):
+                    if messages[i].get("role") == "user" and messages[i+1].get("role") == "assistant":
+                        u = messages[i].get("content", "").strip()
+                        a = messages[i+1].get("content", "").strip()
+                        img = messages[i].get("image") or messages[i+1].get("image")
+                        if u and a and not a.startswith("*bingung*") and "<think>" not in a.lower():
+                            self.archived_training_history.append({
+                                "user": u,
+                                "assistant": a,
+                                "image": img,
+                                "session_id": session_id,
+                                "archived_at": datetime.now().isoformat()
+                            })
+                            # Also record into learned_patterns for immediate few-shot exemplars
+                            self.record_learned_pattern(u, a, image_path=img)
+                            # Extract and retain user facts into permanent knowledge base
+                            facts = self._extract_rdf_facts(u, "user")
+                            if facts:
+                                self.knowledge_base.setdefault("facts", []).extend(facts)
+                            archived_count += 1
 
             # 2. Remove session from sessions_store
             del self.sessions_store[session_id]
@@ -1092,19 +1125,57 @@ class AdvancedMemoryManager:
                 else:
                     self.create_new_session("Obrolan Utama")
 
-            # 4. Persist updated memory with archived_training_history to disk
+            # 4. Persist updated memory to disk
             self.save_memory()
 
-            # 5. Export training dataset files (ChatML/Alpaca/ShareGPT) so training data is immediately updated
-            try:
-                from shiro.training.exporter import export_data
-                train_dir = os.environ.get("SHIRO_TRAINING_DIR", "training_data")
-                export_data(memory_path=self.memory_file, base_output_dir=train_dir)
-                print(f"📦 [Training Preserved] Sesi '{session_id}' dihapus, namun {archived_count} giliran dialog berhasil diabadikan ke dataset training!")
-            except Exception as e_exp:
-                print(f"⚠️ [Training Sync] Catatan export training: {e_exp}")
+            # 5. Export training dataset files ONLY IF training logging is enabled
+            if training_enabled:
+                try:
+                    from shiro.training.exporter import export_data
+                    train_dir = os.environ.get("SHIRO_TRAINING_DIR", "training_data")
+                    export_data(memory_path=self.memory_file, base_output_dir=train_dir)
+                    print(f"📦 [Training Preserved] Sesi '{session_id}' dihapus, namun {archived_count} giliran dialog berhasil diabadikan ke dataset training!")
+                except Exception as e_exp:
+                    print(f"⚠️ [Training Sync] Catatan export training: {e_exp}")
+            else:
+                print(f"🔒 [Private Session] Sesi '{session_id}' dihapus bersih tanpa direkam ke dataset training.")
 
             return True
+
+    def toggle_pin_message(self, message_id: str, pinned: Optional[bool] = None, content_match: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Toggle or set the 'pinned' status of a message in the active session.
+        Syncs with sessions_store and saves memory.
+        """
+        with self.lock:
+            self._ensure_message_ids(self.short_term_history)
+            target_msg = None
+            if message_id:
+                for m in self.short_term_history:
+                    if m.get("id") == message_id:
+                        target_msg = m
+                        break
+            if not target_msg and content_match:
+                clean_target = content_match.strip()
+                for m in reversed(self.short_term_history):
+                    if (m.get("content") or "").strip() == clean_target:
+                        target_msg = m
+                        break
+            if not target_msg:
+                return None
+
+            new_pin_state = bool(pinned) if pinned is not None else (not bool(target_msg.get("pinned", False)))
+            target_msg["pinned"] = new_pin_state
+            if new_pin_state:
+                target_msg["pinned_at"] = datetime.now().isoformat()
+            else:
+                target_msg.pop("pinned_at", None)
+
+            if hasattr(self, "sessions_store") and getattr(self, "active_session_id", None) in self.sessions_store:
+                self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
+
+            self.save_memory()
+            return dict(target_msg)
 
     def get_cross_session_context(self, query: str) -> str:
         """
@@ -1169,6 +1240,8 @@ class AdvancedMemoryManager:
     def record_learned_pattern(self, user_text: str, assistant_text: str, quality: float = 1.0, image_path: Optional[str] = None):
         """Record high quality conversational turns for In-Context Few-Shot Learning"""
         with self.lock:
+            if not self.system_metadata.get("enable_training_logging", True):
+                return
             if not user_text or not assistant_text:
                 return
             u_clean = user_text.strip()

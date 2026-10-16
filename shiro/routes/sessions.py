@@ -18,6 +18,7 @@ def list_sessions():
     try:
         memory = state.init_memory()
         with memory.lock:
+            memory._ensure_message_ids(memory.short_term_history)
             return jsonify({
                 "sessions": memory.get_sessions_list(),
                 "active_session_id": getattr(memory, "active_session_id", "default"),
@@ -60,6 +61,7 @@ def switch_session():
             ok = memory.switch_session(session_id)
             if not ok:
                 return jsonify({"error": "Sesi tidak ditemukan"}), 404
+            memory._ensure_message_ids(memory.short_term_history)
             return jsonify({
                 "success": True,
                 "active_session_id": session_id,
@@ -77,6 +79,7 @@ def delete_session(session_id):
         memory = state.init_memory()
         with memory.lock:
             ok = memory.delete_session(session_id)
+            memory._ensure_message_ids(memory.short_term_history)
             return jsonify({
                 "success": ok,
                 "active_session_id": memory.active_session_id,
