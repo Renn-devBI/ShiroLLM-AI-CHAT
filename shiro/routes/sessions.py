@@ -71,6 +71,32 @@ def switch_session():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@sessions_bp.route('/api/sessions/<session_id>', methods=['GET'])
+def get_session(session_id):
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        memory = state.init_memory()
+        with memory.lock:
+            if not hasattr(memory, "sessions_store") or session_id not in memory.sessions_store:
+                return jsonify({"error": "Sesi tidak ditemukan", "found": False}), 404
+            sess = memory.sessions_store[session_id]
+            msgs = sess.get("messages", [])
+            memory._ensure_message_ids(msgs)
+            return jsonify({
+                "found": True,
+                "session": {
+                    "id": sess.get("id", session_id),
+                    "title": sess.get("title", f"Chat {session_id[:8]}"),
+                    "pinned": sess.get("pinned", False),
+                    "created_at": sess.get("created_at"),
+                    "last_active": sess.get("last_active")
+                },
+                "messages": [_format_message_for_api(m) for m in msgs]
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @sessions_bp.route('/api/sessions/<session_id>', methods=['DELETE'])
 def delete_session(session_id):
     if not verify_api_key(allow_web_ui=True):

@@ -11,7 +11,9 @@ from shiro.pipeline.trace import global_pipeline_manager
 views_bp = Blueprint("views_bp", __name__)
 
 @views_bp.route('/')
-def index():
+@views_bp.route('/chat/<session_id>')
+@views_bp.route('/share/<session_id>')
+def index(session_id=None):
     return render_template('index.html')
 
 @views_bp.route('/pipeline')

@@ -881,38 +881,43 @@
         }
 
         .modal-tabs {
-            display: flex;
-            align-items: center;
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
             gap: 6px;
             padding: 0 20px 14px;
-            overflow-x: auto;
-            scrollbar-width: none;
-            -webkit-overflow-scrolling: touch;
             box-sizing: border-box;
-        }
-
-        .modal-tabs::-webkit-scrollbar {
-            display: none;
+            width: 100%;
         }
 
         .tab-btn {
-            display: inline-flex;
+            display: flex;
             align-items: center;
             justify-content: center;
-            gap: 7px;
+            gap: 6px;
             height: 38px;
-            padding: 0 15px;
+            width: 100%;
+            min-width: 0;
+            padding: 0 4px;
             border-radius: 10px;
             border: 1px solid transparent;
             background: transparent;
             color: var(--text-secondary);
-            font-size: 13px;
+            font-size: 12.5px;
             font-weight: 500;
-            white-space: nowrap;
-            flex-shrink: 0;
             cursor: pointer;
             transition: all 0.15s ease;
             box-sizing: border-box;
+        }
+
+        .tab-btn span {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .tab-btn i {
+            font-size: 15px;
+            flex-shrink: 0;
         }
 
         .tab-btn:hover {
@@ -925,6 +930,13 @@
             border-color: var(--border-default);
             color: var(--text-primary);
             font-weight: 600;
+        }
+
+        #doc-modal-tabs {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+            padding: 0 20px 14px;
         }
 
         .settings-modal-body {
@@ -1126,13 +1138,22 @@
                 padding: 16px 16px 12px;
             }
             .modal-tabs {
+                grid-template-columns: repeat(3, 1fr);
                 padding: 0 16px 12px;
                 gap: 6px;
             }
             .tab-btn {
                 height: 36px;
-                padding: 0 12px;
-                font-size: 12.5px;
+                padding: 0 4px;
+                font-size: 11.5px;
+                gap: 5px;
+            }
+            .tab-btn i {
+                font-size: 13.5px;
+                display: inline-block !important;
+            }
+            .tab-btn span {
+                font-size: 11px;
             }
             .settings-modal-body {
                 padding: 16px;
@@ -1149,6 +1170,10 @@
                 padding: 14px;
                 align-items: flex-start;
             }
+            .chat-files-drawer {
+                width: 100% !important;
+                max-width: 100vw !important;
+            }
         }
 
         @media (max-width: 768px) {
@@ -1160,12 +1185,295 @@
                 width: 30px;
                 padding: 0;
             }
-            .tab-btn span {
-                font-size: 11.5px;
+        }
+
+        /* ChatGPT-Style "Files in Chat" Drawer Panel */
+        .chat-files-drawer {
+            position: absolute;
+            top: 56px;
+            right: 0;
+            bottom: 0;
+            width: 340px;
+            max-width: 90vw;
+            background: var(--bg-surface);
+            border-left: 1px solid var(--border-default);
+            box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+            z-index: 45;
+            display: flex;
+            flex-direction: column;
+            animation: drawerSlideInRight 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            box-sizing: border-box;
+        }
+
+        @keyframes drawerSlideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0.5;
             }
-            .tab-btn i {
-                display: none;
+            to {
+                transform: translateX(0);
+                opacity: 1;
             }
+        }
+
+        .chat-files-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+            flex-shrink: 0;
+        }
+
+        .chat-files-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .chat-files-title i {
+            font-size: 18px;
+            color: var(--accent);
+        }
+
+        .chat-files-body {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .chat-files-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .chat-file-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-sizing: border-box;
+        }
+
+        .chat-file-card:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-base);
+        }
+
+        .chat-file-card-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .chat-file-card-icon.is-doc {
+            background: rgba(59, 130, 246, 0.15);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.25);
+        }
+
+        .chat-file-card-icon.is-code {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+
+        .chat-file-card-icon.is-image {
+            background: rgba(236, 72, 153, 0.15);
+            color: #f472b6;
+            border: 1px solid rgba(236, 72, 153, 0.25);
+        }
+
+        .chat-file-thumb-img {
+            width: 36px;
+            height: 36px;
+            border-radius: 9px;
+            object-fit: cover;
+            flex-shrink: 0;
+            border: 1px solid var(--border-subtle);
+        }
+
+        .chat-file-card-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .chat-file-card-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+        }
+
+        .chat-file-card-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .file-ext-tag {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+        }
+
+        .chat-file-card-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .btn-file-action {
+            width: 30px;
+            height: 30px;
+            border-radius: 7px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 15px;
+            transition: all 0.12s ease;
+        }
+
+        .btn-file-action:hover {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+
+        .btn-file-action.attach-btn:hover {
+            color: var(--accent);
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .chat-files-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 40px 16px;
+            color: var(--text-muted);
+        }
+
+        .chat-files-empty .empty-icon-wrap {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 12px;
+            color: var(--text-muted);
+        }
+
+        .chat-files-empty .empty-title {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .chat-files-empty .empty-desc {
+            font-size: 12px;
+            line-height: 1.5;
+            margin-bottom: 16px;
+        }
+
+        /* Claude-Style Share Dialog */
+        .share-dialog {
+            max-width: 480px;
+        }
+
+        .share-body {
+            padding: 18px 22px;
+        }
+
+        .share-info-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+        }
+
+        .share-info-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .share-info-left i {
+            font-size: 24px;
+            color: var(--accent);
+        }
+
+        .share-meta-title {
+            display: block;
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .share-meta-sub {
+            display: block;
+            font-size: 11.5px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .share-link-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 6px;
+        }
+
+        .share-url-input {
+            flex: 1;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            cursor: text;
         }
     </style>
 </head>
@@ -1415,6 +1723,32 @@
                     </div>
                 </div>
             </footer>
+
+            <!-- ChatGPT-style "Files in chat" Drawer Panel -->
+            <aside id="chat-files-drawer" class="chat-files-drawer hidden" aria-label="File dalam percakapan">
+                <div class="chat-files-header">
+                    <div class="chat-files-title">
+                        <i class="ph ph-folder-notch"></i>
+                        <span data-i18n="files_in_chat_title">Files in chat</span>
+                    </div>
+                    <div class="chat-files-header-actions">
+                        <button type="button" class="btn-icon" id="close-chat-files-btn" title="Tutup" aria-label="Tutup panel file" onclick="closeChatFilesDrawer()">
+                            <i class="ph ph-x"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="chat-files-body">
+                    <div id="chat-files-list" class="chat-files-list"></div>
+                    <div id="chat-files-empty" class="chat-files-empty hidden">
+                        <div class="empty-icon-wrap"><i class="ph ph-folder-dashed"></i></div>
+                        <span class="empty-title" data-i18n="no_files_title">Belum ada file di chat ini</span>
+                        <p class="empty-desc" data-i18n="no_files_desc">File atau gambar yang dikirimkan akan tersimpan dan dapat dilihat atau dilampirkan kembali di sini.</p>
+                        <button type="button" class="btn-secondary btn-sm" id="btn-drawer-upload-doc" onclick="triggerDocUploadFromDrawer()">
+                            <i class="ph ph-paperclip"></i> <span data-i18n="upload_new_file">Unggah Berkas</span>
+                        </button>
+                    </div>
+                </div>
+            </aside>
         </div>
     </div>
 
@@ -1820,6 +2154,42 @@
                 <button type="button" id="btn-save-rename" class="btn-primary" data-i18n="save">
                     <i class="ph ph-check"></i> <span data-i18n="save">Simpan</span>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Bagikan Percakapan (Share Conversation Claude Style) -->
+    <div id="share-modal" class="modal-backdrop hidden" onclick="handleShareBackdropClick(event)">
+        <div class="modal-dialog share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <h3 id="share-title" data-i18n="share_modal_title">Bagikan percakapan</h3>
+                    <span class="modal-subtitle" data-i18n="share_modal_sub">Tautan unik untuk mengakses percakapan ini secara langsung</span>
+                </div>
+                <button id="close-share-modal" class="btn-icon" type="button" title="Tutup (Esc)" onclick="closeShareModal()">
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="modal-body share-body">
+                <div class="share-info-card">
+                    <div class="share-info-left">
+                        <i class="ph ph-chat-circle-text"></i>
+                        <div class="share-info-meta">
+                            <span id="share-session-title" class="share-meta-title">Obrolan Utama</span>
+                            <span id="share-session-meta" class="share-meta-sub">ID: session-xxx</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-field" style="margin-top: 14px; margin-bottom: 0;">
+                    <label data-i18n="share_link_label">Tautan Sesi Percakapan</label>
+                    <div class="share-link-input-group">
+                        <input type="text" id="share-link-input" class="form-input share-url-input" readonly>
+                        <button type="button" id="btn-copy-share-link" class="btn-primary" onclick="copyShareLink()">
+                            <i class="ph ph-copy" id="share-copy-icon"></i>
+                            <span id="share-copy-text" data-i18n="copy_link_btn">Salin</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

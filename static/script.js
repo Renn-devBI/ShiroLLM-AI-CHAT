@@ -210,7 +210,21 @@ const SHIRO_I18N = {
         copy_reply: 'Salin jawaban',
         regen_reply: 'Buat ulang jawaban',
         no_sessions: 'Belum ada riwayat chat.',
-        delete_chat_tooltip: 'Hapus chat ini'
+        delete_chat_tooltip: 'Hapus chat ini',
+        files_in_chat_title: 'File dalam percakapan',
+        no_files_title: 'Belum ada file di chat ini',
+        no_files_desc: 'File atau gambar yang dikirimkan akan tersimpan dan dapat dilihat atau dilampirkan kembali di sini.',
+        upload_new_file: 'Unggah berkas',
+        attach_to_chat: 'Lampirkan ke chat',
+        view_file: 'Lihat file',
+        file_attached_toast: 'Berkas berhasil dilampirkan ke composer!',
+        image_attached_toast: 'Gambar berhasil dilampirkan ke composer!',
+        share_modal_title: 'Bagikan percakapan',
+        share_modal_sub: 'Tautan unik untuk mengakses percakapan ini secara langsung',
+        share_link_label: 'Tautan sesi percakapan',
+        copy_link_btn: 'Salin Tautan',
+        link_copied_toast: 'Tautan percakapan berhasil disalin ke clipboard!',
+        session_not_found_toast: 'Sesi percakapan tidak ditemukan.'
     },
     en: {
         new_chat: 'New chat',
@@ -362,7 +376,21 @@ const SHIRO_I18N = {
         copy_reply: 'Copy reply',
         regen_reply: 'Regenerate reply',
         no_sessions: 'No conversation history yet.',
-        delete_chat_tooltip: 'Delete this chat'
+        delete_chat_tooltip: 'Delete this chat',
+        files_in_chat_title: 'Files in chat',
+        no_files_title: 'No files in this chat yet',
+        no_files_desc: 'Files or images uploaded will be saved and can be viewed or re-attached here.',
+        upload_new_file: 'Upload file',
+        attach_to_chat: 'Attach to chat',
+        view_file: 'View file',
+        file_attached_toast: 'File attached to composer!',
+        image_attached_toast: 'Image attached to composer!',
+        share_modal_title: 'Share conversation',
+        share_modal_sub: 'Unique link to access this conversation directly',
+        share_link_label: 'Conversation session link',
+        copy_link_btn: 'Copy Link',
+        link_copied_toast: 'Conversation link copied to clipboard!',
+        session_not_found_toast: 'Conversation session not found.'
     }
 };
 
@@ -1561,6 +1589,10 @@ async function createNewSession() {
         const data = await res.json();
         if (data.success) {
             activeSessionId = data.session_id;
+            try {
+                window.history.pushState(null, '', '/chat/' + data.session_id);
+            } catch (e) {}
+
             clearAttachedDocument();
             clearAttachedImage();
 
@@ -1576,6 +1608,10 @@ async function createNewSession() {
                 chatMessages.appendChild(typingIndicator);
             }
             renderPinnedDrawer();
+            const drawer = document.getElementById('chat-files-drawer');
+            if (drawer && !drawer.classList.contains('hidden')) {
+                renderChatFilesList();
+            }
             await loadSessions();
             updateMemoryCount();
             status.textContent = t('status_ready');
@@ -1599,6 +1635,12 @@ async function switchSession(sessionId) {
         const data = await res.json();
         if (data.success) {
             activeSessionId = sessionId;
+            try {
+                if (window.location.pathname !== '/chat/' + sessionId) {
+                    window.history.pushState(null, '', '/chat/' + sessionId);
+                }
+            } catch (e) {}
+
             clearAttachedDocument();
             clearAttachedImage();
 
@@ -1635,6 +1677,10 @@ async function switchSession(sessionId) {
             }
 
             renderPinnedDrawer();
+            const drawer = document.getElementById('chat-files-drawer');
+            if (drawer && !drawer.classList.contains('hidden')) {
+                renderChatFilesList();
+            }
             await loadSessions();
             updateMemoryCount();
             status.textContent = t('status_ready');
@@ -1848,39 +1894,74 @@ async function saveRenameSession() {
     }
 }
 
-// Share Conversation (Copy Markdown transcript to clipboard)
+// ==========================================================================
+// Claude-Style Share Conversation Link
+// ==========================================================================
+function openShareModal() {
+    const shareModal = document.getElementById('share-modal');
+    if (!shareModal) return;
+    const shareUrl = `${window.location.origin}/chat/${activeSessionId}`;
+    const input = document.getElementById('share-link-input');
+    if (input) input.value = shareUrl;
+    
+    const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
+    const sessionTitle = currentSession ? (currentSession.title || 'Obrolan') : 'Obrolan';
+    const titleEl = document.getElementById('share-session-title');
+    if (titleEl) titleEl.textContent = sessionTitle;
+    const metaEl = document.getElementById('share-session-meta');
+    if (metaEl) metaEl.textContent = `ID: ${activeSessionId}`;
+
+    shareModal.classList.remove('hidden');
+    if (input) {
+        input.focus();
+        input.select();
+    }
+}
+
+function closeShareModal() {
+    const shareModal = document.getElementById('share-modal');
+    if (shareModal) shareModal.classList.add('hidden');
+}
+
+function handleShareBackdropClick(e) {
+    if (e.target && e.target.id === 'share-modal') {
+        closeShareModal();
+    }
+}
+
+async function copyShareLink() {
+    const shareUrl = `${window.location.origin}/chat/${activeSessionId}`;
+    try {
+        await navigator.clipboard.writeText(shareUrl);
+    } catch (e) {
+        const input = document.getElementById('share-link-input');
+        if (input) {
+            input.select();
+            document.execCommand('copy');
+        }
+    }
+    const copyText = document.getElementById('share-copy-text');
+    const copyIcon = document.getElementById('share-copy-icon');
+    if (copyText) copyText.textContent = t('copied') || 'Tersalin!';
+    if (copyIcon) copyIcon.className = 'ph ph-check';
+    showToast(t('link_copied_toast'));
+    setTimeout(() => {
+        if (copyText) copyText.textContent = t('copy_link_btn') || 'Salin';
+        if (copyIcon) copyIcon.className = 'ph ph-copy';
+    }, 2000);
+}
+
+// Share Conversation (Generate and copy unique Claude-style URL, then open dialog)
 async function shareCurrentChat() {
     toggleChatActionsMenu(false);
-    const msgEls = document.querySelectorAll('#chat-messages .message');
-    if (!msgEls || msgEls.length === 0) {
-        showToast(t('no_sessions'));
-        return;
-    }
-
-    const lines = [];
-    lines.push(`# Percakapan ShiroLLM`);
-    lines.push(`Tanggal: ${new Date().toLocaleString()}\n`);
-
-    msgEls.forEach(el => {
-        const isUser = el.classList.contains('user');
-        const role = isUser ? 'Kakak' : 'Shiro';
-        const bubble = el.querySelector('.bubble');
-        if (bubble) {
-            const text = bubble.innerText.trim();
-            if (text) {
-                lines.push(`### ${role}\n${text}\n`);
-            }
-        }
-    });
-
-    const fullTranscript = lines.join('\n');
+    const shareUrl = `${window.location.origin}/chat/${activeSessionId}`;
     try {
-        await navigator.clipboard.writeText(fullTranscript);
-        showToast(t('chat_copied_toast'));
+        await navigator.clipboard.writeText(shareUrl);
+        showToast(t('link_copied_toast'));
     } catch (e) {
         console.warn('Clipboard write error:', e);
-        showToast(t('chat_copied_toast'));
     }
+    openShareModal();
 }
 
 // Export Conversation (.md file download)
@@ -1924,19 +2005,228 @@ function exportCurrentChat() {
     showToast(t('export_started_toast'));
 }
 
-// Files in conversation
+// ==========================================================================
+// ChatGPT-Style "Files in Chat" Drawer Panel
+// ==========================================================================
+function openChatFilesDrawer() {
+    const drawer = document.getElementById('chat-files-drawer');
+    if (!drawer) return;
+    renderChatFilesList();
+    drawer.classList.remove('hidden');
+}
+
+function closeChatFilesDrawer() {
+    const drawer = document.getElementById('chat-files-drawer');
+    if (drawer) drawer.classList.add('hidden');
+}
+
+function toggleChatFilesDrawer() {
+    const drawer = document.getElementById('chat-files-drawer');
+    if (!drawer) return;
+    if (drawer.classList.contains('hidden')) {
+        openChatFilesDrawer();
+    } else {
+        closeChatFilesDrawer();
+    }
+}
+
+function triggerDocUploadFromDrawer() {
+    const input = document.getElementById('doc-file-input');
+    if (input) input.click();
+}
+
 function showChatFiles() {
     toggleChatActionsMenu(false);
-    if (attachedDocument) {
-        openDocModal(attachedDocument.filename, attachedDocument.url || '', attachedDocument.file_type || '');
-    } else {
-        const docBadge = document.querySelector('#chat-messages .msg-attachment-badge');
-        if (docBadge) {
-            docBadge.click();
-        } else {
-            showToast(t('no_files_in_chat'));
+    openChatFilesDrawer();
+}
+
+function renderChatFilesList() {
+    const listContainer = document.getElementById('chat-files-list');
+    const emptyState = document.getElementById('chat-files-empty');
+    if (!listContainer) return;
+    listContainer.innerHTML = '';
+
+    // Collect all files from current session attachments & messages
+    const files = [];
+    const seen = new Set();
+
+    // 1. Current active attachments
+    if (attachedDocument && attachedDocument.filename) {
+        const key = 'doc_' + attachedDocument.filename;
+        if (!seen.has(key)) {
+            seen.add(key);
+            files.push({
+                type: 'doc',
+                filename: attachedDocument.filename,
+                url: attachedDocument.url || '',
+                fileType: attachedDocument.file_type || 'dokumen',
+                textContent: attachedDocument.text_content || '',
+                activeAttached: true
+            });
         }
     }
+    if (attachedImage && attachedImage.filename) {
+        const key = 'img_' + attachedImage.filename;
+        if (!seen.has(key)) {
+            seen.add(key);
+            files.push({
+                type: 'image',
+                filename: attachedImage.filename,
+                url: attachedImage.url || attachedImage.data_url || '',
+                activeAttached: true
+            });
+        }
+    }
+
+    // 2. Scan all messages in DOM
+    const msgEls = document.querySelectorAll('#chat-messages .message');
+    msgEls.forEach(el => {
+        // Document badge
+        const docBadge = el.querySelector('.msg-attachment-badge');
+        if (docBadge) {
+            const fname = docBadge.getAttribute('data-filename') || docBadge.textContent.trim();
+            const furl = docBadge.getAttribute('data-doc-url') || '';
+            const ftype = docBadge.getAttribute('data-file-type') || '';
+            const ftext = docBadge.getAttribute('data-doc-text') || '';
+            const key = 'doc_' + fname;
+            if (fname && !seen.has(key)) {
+                seen.add(key);
+                files.push({
+                    type: 'doc',
+                    filename: fname,
+                    url: furl,
+                    fileType: ftype,
+                    textContent: ftext
+                });
+            }
+        }
+        // Image attachment
+        const imgEl = el.querySelector('.msg-image-thumb');
+        if (imgEl) {
+            const src = imgEl.getAttribute('data-full-src') || imgEl.getAttribute('src');
+            const fname = imgEl.getAttribute('alt') || 'gambar.png';
+            const key = 'img_' + (src || fname);
+            if (src && !seen.has(key)) {
+                seen.add(key);
+                files.push({
+                    type: 'image',
+                    filename: fname,
+                    url: src
+                });
+            }
+        }
+    });
+
+    if (files.length === 0) {
+        if (emptyState) emptyState.classList.remove('hidden');
+        return;
+    }
+
+    if (emptyState) emptyState.classList.add('hidden');
+
+    files.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'chat-file-card';
+
+        let iconHtml = '';
+        const ext = (f.filename.split('.').pop() || '').toLowerCase();
+        const isCodeExt = ['py', 'js', 'ts', 'jsx', 'tsx', 'cpp', 'c', 'cs', 'go', 'rs', 'php', 'html', 'css', 'json', 'yaml', 'yml', 'sql', 'sh', 'bat', 'ps1'].includes(ext);
+
+        if (f.type === 'image') {
+            if (f.url) {
+                iconHtml = `<img src="${escapeHtml(f.url)}" class="chat-file-thumb-img" alt="${escapeHtml(f.filename)}" />`;
+            } else {
+                iconHtml = `<div class="chat-file-card-icon is-image"><i class="ph ph-image"></i></div>`;
+            }
+        } else if (isCodeExt) {
+            iconHtml = `<div class="chat-file-card-icon is-code"><i class="ph ph-file-code"></i></div>`;
+        } else {
+            iconHtml = `<div class="chat-file-card-icon is-doc"><i class="ph ph-file-text"></i></div>`;
+        }
+
+        const typeLabel = ext ? ext.toUpperCase() : (f.type === 'image' ? 'IMG' : 'DOC');
+
+        item.innerHTML = `
+            ${iconHtml}
+            <div class="chat-file-card-info">
+                <span class="chat-file-card-name" title="${escapeHtml(f.filename)}">${escapeHtml(f.filename)}</span>
+                <span class="chat-file-card-meta">
+                    <span class="file-ext-tag">${escapeHtml(typeLabel)}</span>
+                    ${f.activeAttached ? '• Terpasang di composer' : ''}
+                </span>
+            </div>
+            <div class="chat-file-card-actions">
+                <button type="button" class="btn-file-action attach-btn" title="${t('attach_to_chat')}" data-action="attach">
+                    <i class="ph ph-paperclip"></i>
+                </button>
+                <button type="button" class="btn-file-action view-btn" title="${t('view_file')}" data-action="view">
+                    <i class="ph ph-arrow-square-out"></i>
+                </button>
+            </div>
+        `;
+
+        // Click on "Attach"
+        const attachBtn = item.querySelector('.btn-file-action.attach-btn');
+        if (attachBtn) {
+            attachBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (f.type === 'image') {
+                    attachImageFromExisting(f.filename, f.url);
+                } else {
+                    attachDocumentFromExisting(f.filename, f.url, f.fileType, f.textContent);
+                }
+            });
+        }
+
+        // Click on "View" or item card
+        const viewBtn = item.querySelector('.btn-file-action.view-btn');
+        if (viewBtn) {
+            viewBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openFilePreview(f);
+            });
+        }
+
+        item.addEventListener('click', () => {
+            openFilePreview(f);
+        });
+
+        listContainer.appendChild(item);
+    });
+}
+
+function openFilePreview(f) {
+    if (f.type === 'image') {
+        openImageLightbox(f.url, f.filename);
+    } else {
+        openDocModal(f.filename, f.url, f.fileType || '', f.textContent || '');
+    }
+}
+
+function attachDocumentFromExisting(filename, url, fileType, textContent) {
+    attachedDocument = {
+        filename: filename,
+        url: url,
+        file_type: fileType || 'dokumen',
+        text_content: textContent || ''
+    };
+    if (docPreviewName) docPreviewName.textContent = filename;
+    if (docPreviewBar) docPreviewBar.classList.remove('hidden');
+    if (userInput) userInput.focus();
+    showToast(t('file_attached_toast'));
+}
+
+function attachImageFromExisting(filename, url) {
+    attachedImage = {
+        filename: filename,
+        url: url,
+        data_url: url
+    };
+    if (imagePreviewName) imagePreviewName.textContent = filename;
+    if (imagePreviewThumb) imagePreviewThumb.src = url;
+    if (imagePreviewBar) imagePreviewBar.classList.remove('hidden');
+    if (userInput) userInput.focus();
+    showToast(t('image_attached_toast'));
 }
 
 // Sidebar Controls
@@ -2104,6 +2394,7 @@ function initSidebarResizer() {
 function initModalTabsScroll() {
     const tabsContainer = document.getElementById('settings-modal-tabs') || document.querySelector('.modal-tabs');
     if (!tabsContainer) return;
+    if (tabsContainer.scrollWidth <= tabsContainer.clientWidth + 2) return;
 
     let isDown = false;
     let startX = 0;
@@ -3377,8 +3668,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('modal tabs scroll error:', e);
     }
 
-    // Always fetch and render sessions immediately so sidebar is ready right away
-    loadSessions().catch(e => console.error('Error loading sessions:', e));
+    // Detect Claude-style /chat/<session_id> or /share/<session_id> directly in URL
+    const pathParts = window.location.pathname.split('/');
+    let targetSessionId = null;
+    if ((pathParts[1] === 'chat' || pathParts[1] === 'share') && pathParts[2]) {
+        targetSessionId = pathParts[2].trim();
+    }
+
+    try {
+        await loadSessions();
+        if (targetSessionId && targetSessionId !== activeSessionId) {
+            try {
+                await switchSession(targetSessionId);
+            } catch (err) {
+                console.warn('Direct session switch fallback:', err);
+                await loadChatHistory();
+            }
+        } else {
+            await loadChatHistory();
+        }
+    } catch (e) {
+        console.error('Session/Chat history init error:', e);
+        try { await loadChatHistory(); } catch (err) {}
+    }
+
+    window.addEventListener('popstate', () => {
+        const parts = window.location.pathname.split('/');
+        if ((parts[1] === 'chat' || parts[1] === 'share') && parts[2]) {
+            if (parts[2] !== activeSessionId) {
+                switchSession(parts[2]);
+            }
+        }
+    });
 
     try {
         await Promise.allSettled([
@@ -3388,12 +3709,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         ]);
     } catch (e) {
         console.error('Profiles/models error:', e);
-    }
-
-    try {
-        await loadChatHistory();
-    } catch (e) {
-        console.error('Chat history error:', e);
     }
 
     if (userInput) {

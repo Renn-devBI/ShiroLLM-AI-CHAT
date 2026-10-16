@@ -997,9 +997,9 @@ class AdvancedMemoryManager:
                     self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
                     self.sessions_store[self.active_session_id]["last_active"] = datetime.now().isoformat()
 
-            # 3. Generate unique session ID
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_id = f"session_{timestamp}"
+            # 3. Generate unique session ID (Claude AI style UUID v4)
+            import uuid
+            new_id = str(uuid.uuid4())
             if not hasattr(self, "sessions_store") or not self.sessions_store:
                 self.sessions_store = {}
             
