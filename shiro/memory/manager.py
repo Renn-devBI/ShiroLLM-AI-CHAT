@@ -1062,11 +1062,46 @@ class AdvancedMemoryManager:
                     "message_count": len(s_data.get("messages", [])),
                     "created_at": s_data.get("created_at"),
                     "last_active": s_data.get("last_active"),
-                    "is_active": (s_id == self.active_session_id)
+                    "is_active": (s_id == self.active_session_id),
+                    "pinned": bool(s_data.get("pinned", False))
                 })
 
-            res.sort(key=lambda x: x.get("last_active") or "", reverse=True)
-            return res
+            pinned_sessions = [s for s in res if s.get("pinned")]
+            unpinned_sessions = [s for s in res if not s.get("pinned")]
+            pinned_sessions.sort(key=lambda x: x.get("last_active") or "", reverse=True)
+            unpinned_sessions.sort(key=lambda x: x.get("last_active") or "", reverse=True)
+            return pinned_sessions + unpinned_sessions
+
+    def rename_session(self, session_id: str, new_title: str) -> bool:
+        """Rename an existing session title."""
+        with self.lock:
+            if not hasattr(self, "sessions_store") or session_id not in self.sessions_store:
+                return False
+            clean_title = (new_title or "").strip()
+            if not clean_title:
+                return False
+            self.sessions_store[session_id]["title"] = clean_title
+            self.save_memory()
+            return True
+
+    def toggle_pin_session(self, session_id: str, pinned: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+        """Toggle or set the pinned state of a session."""
+        with self.lock:
+            if not hasattr(self, "sessions_store") or session_id not in self.sessions_store:
+                return None
+            cur_state = bool(self.sessions_store[session_id].get("pinned", False))
+            new_state = bool(pinned) if pinned is not None else (not cur_state)
+            self.sessions_store[session_id]["pinned"] = new_state
+            if new_state:
+                self.sessions_store[session_id]["pinned_at"] = datetime.now().isoformat()
+            else:
+                self.sessions_store[session_id].pop("pinned_at", None)
+            self.save_memory()
+            return {
+                "session_id": session_id,
+                "pinned": new_state,
+                "title": self.sessions_store[session_id].get("title")
+            }
 
     def delete_session(self, session_id: str) -> bool:
         """

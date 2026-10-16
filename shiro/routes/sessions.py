@@ -88,3 +88,47 @@ def delete_session(session_id):
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@sessions_bp.route('/api/sessions/<session_id>/rename', methods=['POST'])
+def rename_session(session_id):
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        data = request.json or {}
+        new_title = data.get("title", "").strip()
+        if not new_title:
+            return jsonify({"error": "Judul percakapan tidak boleh kosong"}), 400
+        memory = state.init_memory()
+        with memory.lock:
+            ok = memory.rename_session(session_id, new_title)
+            if not ok:
+                return jsonify({"error": "Sesi tidak ditemukan"}), 404
+            return jsonify({
+                "success": True,
+                "session_id": session_id,
+                "title": new_title,
+                "sessions": memory.get_sessions_list()
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@sessions_bp.route('/api/sessions/<session_id>/pin', methods=['POST'])
+def pin_session(session_id):
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        data = request.json or {}
+        pinned = data.get("pinned", None)
+        memory = state.init_memory()
+        with memory.lock:
+            res = memory.toggle_pin_session(session_id, pinned)
+            if not res:
+                return jsonify({"error": "Sesi tidak ditemukan"}), 404
+            return jsonify({
+                "success": True,
+                "session_id": session_id,
+                "pinned": res["pinned"],
+                "sessions": memory.get_sessions_list()
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

@@ -118,9 +118,30 @@ const SHIRO_I18N = {
         fullscreen: 'Layar penuh',
         settings_subtitle: 'Konfigurasi bahasa, privasi training, profil, model inferensi, API, dan tampilan',
         tab_user: 'Anda',
-        tab_privacy: 'Privasi & Bahasa',
+        tab_privacy: 'Privasi',
         tab_model: 'Model',
         tab_theme: 'Tema',
+        chat_options: 'Menu opsi percakapan',
+        menu_share_chat: 'Bagikan percakapan',
+        menu_files_chat: 'File dalam percakapan ini',
+        menu_pin_chat: 'Sematkan',
+        menu_unpin_chat: 'Lepas sematan',
+        menu_rename_chat: 'Ganti nama',
+        menu_pinned_msgs: 'Pesan tersemat',
+        menu_export_chat: 'Ekspor percakapan',
+        menu_lang_switch: 'Ganti Bahasa (ID / EN)',
+        rename_chat_title: 'Ganti nama percakapan',
+        rename_chat_sub: 'Beri nama yang mudah diingat untuk sesi obrolan ini',
+        rename_input_label: 'Judul percakapan baru',
+        cancel: 'Batal',
+        save: 'Simpan',
+        delete: 'Hapus',
+        chat_copied_toast: 'Teks percakapan berhasil disalin ke papan klip',
+        no_files_in_chat: 'Belum ada file terlampir di percakapan ini',
+        session_pinned_toast: 'Percakapan disematkan ke daftar teratas',
+        session_unpinned_toast: 'Sematan percakapan dilepas',
+        session_renamed_toast: 'Nama percakapan berhasil diubah',
+        export_started_toast: 'Mengunduh berkas percakapan...',
         quick_prefs_title: 'Preferensi Bahasa & Data Training',
         ui_language_label: 'Bahasa Antarmuka (UI Language)',
         ui_language_help: 'Pilih bahasa tampilan aplikasi Web UI. Perubahan diterapkan seketika tanpa memuat ulang halaman.',
@@ -249,9 +270,30 @@ const SHIRO_I18N = {
         fullscreen: 'Full screen',
         settings_subtitle: 'Configure language, training privacy, profiles, inference models, API, and appearance',
         tab_user: 'You',
-        tab_privacy: 'Privacy & Language',
+        tab_privacy: 'Privacy',
         tab_model: 'Model',
         tab_theme: 'Theme',
+        chat_options: 'Conversation options',
+        menu_share_chat: 'Share conversation',
+        menu_files_chat: 'Files in this chat',
+        menu_pin_chat: 'Pin',
+        menu_unpin_chat: 'Unpin',
+        menu_rename_chat: 'Rename',
+        menu_pinned_msgs: 'Pinned messages',
+        menu_export_chat: 'Export chat',
+        menu_lang_switch: 'Switch Language (ID / EN)',
+        rename_chat_title: 'Rename conversation',
+        rename_chat_sub: 'Give this conversation a memorable title',
+        rename_input_label: 'New conversation title',
+        cancel: 'Cancel',
+        save: 'Save',
+        delete: 'Delete',
+        chat_copied_toast: 'Conversation copied to clipboard',
+        no_files_in_chat: 'No files attached in this conversation',
+        session_pinned_toast: 'Conversation pinned to top',
+        session_unpinned_toast: 'Conversation unpinned',
+        session_renamed_toast: 'Conversation renamed successfully',
+        export_started_toast: 'Downloading conversation file...',
         quick_prefs_title: 'Language & Training Data Preferences',
         ui_language_label: 'Interface Language (Bahasa UI)',
         ui_language_help: 'Choose the display language for the Web UI. Changes apply immediately without page reload.',
@@ -1411,19 +1453,26 @@ async function loadChatHistory() {
     }
 }
 
+let currentSessionsData = [];
+
 async function loadSessions() {
     try {
         const res = await fetch('/api/sessions');
         const data = await res.json();
         if (data.sessions) {
+            currentSessionsData = data.sessions;
             activeSessionId = data.active_session_id;
+
+            const activeSession = data.sessions.find(s => s.id === data.active_session_id);
+            const isCurrentSessionPinned = activeSession ? Boolean(activeSession.pinned) : false;
+            updateChatMenuPinState(isCurrentSessionPinned);
 
             if (sessionSelect) {
                 sessionSelect.innerHTML = '';
                 data.sessions.forEach(s => {
                     const opt = document.createElement('option');
                     opt.value = s.id;
-                    opt.textContent = s.title || `Chat ${s.id.slice(0, 6)}`;
+                    opt.textContent = (s.pinned ? '📌 ' : '') + (s.title || `Chat ${s.id.slice(0, 6)}`);
                     if (s.id === data.active_session_id) {
                         opt.selected = true;
                     }
@@ -1441,7 +1490,7 @@ async function loadSessions() {
                 } else {
                     data.sessions.forEach(s => {
                         const item = document.createElement('div');
-                        item.className = 'session-item' + (s.id === data.active_session_id ? ' active' : '');
+                        item.className = 'session-item' + (s.id === data.active_session_id ? ' active' : '') + (s.pinned ? ' is-pinned' : '');
                         item.dataset.sessionId = s.id;
 
                         const content = document.createElement('div');
@@ -1456,6 +1505,14 @@ async function loadSessions() {
 
                         content.appendChild(icon);
                         content.appendChild(titleSpan);
+
+                        if (s.pinned) {
+                            const pinBadge = document.createElement('span');
+                            pinBadge.className = 'session-pin-badge';
+                            pinBadge.title = t('pinned_badge');
+                            pinBadge.innerHTML = '<i class="ph-fill ph-push-pin"></i>';
+                            content.appendChild(pinBadge);
+                        }
 
                         const delBtn = document.createElement('button');
                         delBtn.type = 'button';
@@ -1659,6 +1716,224 @@ async function deleteCurrentSession() {
     deleteSessionById(activeSessionId);
 }
 
+// --- Gemini-Style 3-Dots Dropdown Actions & Session Management ---
+function updateChatMenuPinState(isPinned) {
+    const pinIcon = document.getElementById('action-pin-icon');
+    const pinLabel = document.getElementById('action-pin-label');
+    const pinItem = document.getElementById('action-pin-chat');
+    if (pinIcon) {
+        pinIcon.className = isPinned ? 'ph-fill ph-push-pin' : 'ph ph-push-pin';
+    }
+    if (pinLabel) {
+        pinLabel.setAttribute('data-i18n', isPinned ? 'menu_unpin_chat' : 'menu_pin_chat');
+        pinLabel.textContent = t(isPinned ? 'menu_unpin_chat' : 'menu_pin_chat');
+    }
+    if (pinItem) {
+        pinItem.classList.toggle('item-active', Boolean(isPinned));
+    }
+}
+
+function toggleChatActionsMenu(forceState) {
+    const menu = document.getElementById('chat-actions-menu');
+    const btn = document.getElementById('chat-actions-btn');
+    if (!menu) return;
+    const shouldOpen = forceState !== undefined ? Boolean(forceState) : menu.classList.contains('hidden');
+    if (shouldOpen) {
+        menu.classList.remove('hidden');
+        if (btn) {
+            btn.classList.add('active');
+            btn.setAttribute('aria-expanded', 'true');
+        }
+    } else {
+        menu.classList.add('hidden');
+        if (btn) {
+            btn.classList.remove('active');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    }
+}
+
+document.addEventListener('click', (e) => {
+    const menu = document.getElementById('chat-actions-menu');
+    const btn = document.getElementById('chat-actions-btn');
+    if (menu && !menu.classList.contains('hidden')) {
+        if (!e.target.closest('#chat-actions-menu') && !e.target.closest('#chat-actions-btn')) {
+            toggleChatActionsMenu(false);
+        }
+    }
+});
+
+async function togglePinActiveSession() {
+    toggleChatActionsMenu(false);
+    try {
+        const res = await fetch(`/api/sessions/${activeSessionId}/pin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (data.success) {
+            updateChatMenuPinState(data.pinned);
+            await loadSessions();
+            showToast(data.pinned ? t('session_pinned_toast') : t('session_unpinned_toast'));
+        } else {
+            showToast(data.error || 'Gagal mengubah status sematan');
+        }
+    } catch (e) {
+        console.error("Error pinning session:", e);
+        showToast('Error koneksi saat menyematkan obrolan');
+    }
+}
+
+// Rename Session Modal Handlers
+function openRenameModal() {
+    toggleChatActionsMenu(false);
+    const modal = document.getElementById('rename-modal');
+    const input = document.getElementById('rename-input');
+    if (!modal || !input) return;
+
+    const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
+    input.value = currentSession ? (currentSession.title || '') : '';
+    modal.classList.remove('hidden');
+    setTimeout(() => {
+        input.focus();
+        input.select();
+    }, 50);
+}
+
+function closeRenameModal() {
+    const modal = document.getElementById('rename-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function handleRenameBackdropClick(e) {
+    const modal = document.getElementById('rename-modal');
+    if (e.target === modal) {
+        closeRenameModal();
+    }
+}
+
+async function saveRenameSession() {
+    const input = document.getElementById('rename-input');
+    if (!input) return;
+    const newTitle = input.value.trim();
+    if (!newTitle) {
+        showToast(currentLang === 'en' ? 'Conversation title cannot be empty' : 'Judul percakapan tidak boleh kosong');
+        input.focus();
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/sessions/${activeSessionId}/rename`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle })
+        });
+        const data = await res.json();
+        if (data.success) {
+            closeRenameModal();
+            await loadSessions();
+            showToast(t('session_renamed_toast'));
+        } else {
+            showToast(data.error || 'Gagal mengubah nama percakapan');
+        }
+    } catch (e) {
+        console.error("Error renaming session:", e);
+        showToast('Error koneksi saat mengubah nama obrolan');
+    }
+}
+
+// Share Conversation (Copy Markdown transcript to clipboard)
+async function shareCurrentChat() {
+    toggleChatActionsMenu(false);
+    const msgEls = document.querySelectorAll('#chat-messages .message');
+    if (!msgEls || msgEls.length === 0) {
+        showToast(t('no_sessions'));
+        return;
+    }
+
+    const lines = [];
+    lines.push(`# Percakapan ShiroLLM`);
+    lines.push(`Tanggal: ${new Date().toLocaleString()}\n`);
+
+    msgEls.forEach(el => {
+        const isUser = el.classList.contains('user');
+        const role = isUser ? 'Kakak' : 'Shiro';
+        const bubble = el.querySelector('.bubble');
+        if (bubble) {
+            const text = bubble.innerText.trim();
+            if (text) {
+                lines.push(`### ${role}\n${text}\n`);
+            }
+        }
+    });
+
+    const fullTranscript = lines.join('\n');
+    try {
+        await navigator.clipboard.writeText(fullTranscript);
+        showToast(t('chat_copied_toast'));
+    } catch (e) {
+        console.warn('Clipboard write error:', e);
+        showToast(t('chat_copied_toast'));
+    }
+}
+
+// Export Conversation (.md file download)
+function exportCurrentChat() {
+    toggleChatActionsMenu(false);
+    const msgEls = document.querySelectorAll('#chat-messages .message');
+    if (!msgEls || msgEls.length === 0) {
+        showToast(t('no_sessions'));
+        return;
+    }
+
+    const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
+    const sessionTitle = currentSession ? (currentSession.title || 'chat') : 'chat';
+    const safeTitle = sessionTitle.replace(/[^\w\s-]/gi, '').trim().replace(/\s+/g, '_') || 'shiro_chat';
+
+    const lines = [];
+    lines.push(`# ${sessionTitle}`);
+    lines.push(`Sesi: ${activeSessionId} | Waktu Ekspor: ${new Date().toISOString()}\n`);
+
+    msgEls.forEach(el => {
+        const isUser = el.classList.contains('user');
+        const role = isUser ? 'User' : 'Assistant (Shiro)';
+        const bubble = el.querySelector('.bubble');
+        if (bubble) {
+            const text = bubble.innerText.trim();
+            if (text) {
+                lines.push(`**${role}:**\n${text}\n`);
+            }
+        }
+    });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeTitle}_${Date.now()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(t('export_started_toast'));
+}
+
+// Files in conversation
+function showChatFiles() {
+    toggleChatActionsMenu(false);
+    if (attachedDocument) {
+        openDocModal(attachedDocument.filename, attachedDocument.url || '', attachedDocument.file_type || '');
+    } else {
+        const docBadge = document.querySelector('#chat-messages .msg-attachment-badge');
+        if (docBadge) {
+            docBadge.click();
+        } else {
+            showToast(t('no_files_in_chat'));
+        }
+    }
+}
+
 // Sidebar Controls
 function isSidebarCollapsed() {
     if (!chatSidebar) return false;
@@ -1752,6 +2027,91 @@ if (sidebarSettingsBtn) {
 
 if (sessionSelect) sessionSelect.addEventListener('change', (e) => switchSession(e.target.value));
 if (deleteChatBtn) deleteChatBtn.addEventListener('click', deleteCurrentSession);
+
+// Gemini 3-Dots Menu & Rename Modal Listeners
+const chatActionsBtn = document.getElementById('chat-actions-btn');
+if (chatActionsBtn) {
+    chatActionsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleChatActionsMenu();
+    });
+}
+
+const actionShareChat = document.getElementById('action-share-chat');
+if (actionShareChat) actionShareChat.addEventListener('click', shareCurrentChat);
+
+const actionFilesChat = document.getElementById('action-files-chat');
+if (actionFilesChat) actionFilesChat.addEventListener('click', showChatFiles);
+
+const actionPinChat = document.getElementById('action-pin-chat');
+if (actionPinChat) actionPinChat.addEventListener('click', togglePinActiveSession);
+
+const actionRenameChat = document.getElementById('action-rename-chat');
+if (actionRenameChat) actionRenameChat.addEventListener('click', openRenameModal);
+
+const actionPinnedMsgs = document.getElementById('action-pinned-msgs');
+if (actionPinnedMsgs) {
+    actionPinnedMsgs.addEventListener('click', () => {
+        toggleChatActionsMenu(false);
+        togglePinnedDrawer();
+    });
+}
+
+const actionExportChat = document.getElementById('action-export-chat');
+if (actionExportChat) actionExportChat.addEventListener('click', exportCurrentChat);
+
+const actionSettingsChat = document.getElementById('action-settings-chat');
+if (actionSettingsChat) {
+    actionSettingsChat.addEventListener('click', () => {
+        toggleChatActionsMenu(false);
+        openSettings();
+    });
+}
+
+const actionLangToggle = document.getElementById('action-lang-toggle');
+if (actionLangToggle) {
+    actionLangToggle.addEventListener('click', () => {
+        toggleChatActionsMenu(false);
+        toggleQuickLanguage();
+    });
+}
+
+const actionPipelineChat = document.getElementById('action-pipeline-chat');
+if (actionPipelineChat) {
+    actionPipelineChat.addEventListener('click', () => {
+        toggleChatActionsMenu(false);
+        openPipelineModal();
+    });
+}
+
+const actionDeleteChat = document.getElementById('action-delete-chat');
+if (actionDeleteChat) {
+    actionDeleteChat.addEventListener('click', () => {
+        toggleChatActionsMenu(false);
+        deleteCurrentSession();
+    });
+}
+
+const closeRenameModalBtn = document.getElementById('close-rename-modal');
+if (closeRenameModalBtn) closeRenameModalBtn.addEventListener('click', closeRenameModal);
+
+const btnCancelRename = document.getElementById('btn-cancel-rename');
+if (btnCancelRename) btnCancelRename.addEventListener('click', closeRenameModal);
+
+const btnSaveRename = document.getElementById('btn-save-rename');
+if (btnSaveRename) btnSaveRename.addEventListener('click', saveRenameSession);
+
+const renameInput = document.getElementById('rename-input');
+if (renameInput) {
+    renameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveRenameSession();
+        } else if (e.key === 'Escape') {
+            closeRenameModal();
+        }
+    });
+}
 
 function adjustInputHeight() {
     if (!userInput) return;
@@ -2813,6 +3173,10 @@ window.addEventListener('keydown', (e) => {
             closePipelineModal();
         } else if (settingsModal && !settingsModal.classList.contains('hidden')) {
             closeSettings();
+        } else if (document.getElementById('rename-modal') && !document.getElementById('rename-modal').classList.contains('hidden')) {
+            closeRenameModal();
+        } else if (document.getElementById('chat-actions-menu') && !document.getElementById('chat-actions-menu').classList.contains('hidden')) {
+            toggleChatActionsMenu(false);
         } else if (pinnedDrawer && !pinnedDrawer.classList.contains('hidden')) {
             togglePinnedDrawer(false);
         }

@@ -586,57 +586,164 @@
             border-color: var(--accent);
         }
 
-        .nav-pill-btn {
+        /* Gemini-Style 3-Dots Dropdown Menu */
+        .chat-menu-container {
+            position: relative;
             display: inline-flex;
             align-items: center;
-            gap: 5px;
-            height: 30px;
-            padding: 0 9px;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border-subtle);
-            background: var(--bg-elevated);
+        }
+
+        .chat-actions-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid transparent;
             color: var(--text-secondary);
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 20px;
             cursor: pointer;
             transition: all 0.15s ease;
         }
 
-        .nav-pill-btn:hover {
-            border-color: var(--border-hover);
-            color: var(--text-primary);
+        .chat-actions-btn:hover,
+        .chat-actions-btn.active {
             background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-default);
         }
 
-        .nav-pill-btn.has-pins {
-            border-color: var(--accent);
+        .chat-actions-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            width: 250px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 14px 36px rgba(0, 0, 0, 0.38);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            animation: dropdownFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-sizing: border-box;
+        }
+
+        @keyframes dropdownFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-6px) scale(0.97);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .chat-dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            padding: 9px 12px;
+            border-radius: 9px;
+            border: none;
+            background: transparent;
+            color: var(--text-primary);
+            font-size: 13.5px;
+            font-weight: 500;
+            text-align: left;
+            cursor: pointer;
+            transition: background 0.12s ease, color 0.12s ease;
+            box-sizing: border-box;
+        }
+
+        .chat-dropdown-item i {
+            font-size: 17px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .chat-dropdown-item:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .chat-dropdown-item:hover i {
+            color: var(--text-primary);
+        }
+
+        .chat-dropdown-item.item-active i {
             color: var(--accent);
-            background: var(--accent-soft);
         }
 
-        .pin-count-pill {
+        .chat-dropdown-item.item-danger {
+            color: var(--danger, #ff6b6b);
+        }
+
+        .chat-dropdown-item.item-danger i {
+            color: var(--danger, #ff6b6b);
+        }
+
+        .chat-dropdown-item.item-danger:hover {
+            background: var(--danger-soft, rgba(255, 107, 107, 0.12));
+        }
+
+        .chat-dropdown-divider {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 4px 4px;
+        }
+
+        /* Sidebar Session Pinned Badge (Gemini Style) */
+        .session-item.is-pinned {
+            border-left: 2px solid var(--accent);
+        }
+
+        .session-pin-badge {
+            color: var(--accent);
+            font-size: 13px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            min-width: 17px;
-            height: 17px;
-            padding: 0 5px;
-            border-radius: 999px;
-            background: var(--accent);
-            color: var(--bg-base);
-            font-size: 10.5px;
-            font-weight: 700;
+            margin-left: auto;
+            margin-right: 4px;
+            opacity: 0.9;
         }
 
+        /* Rename Modal */
+        .rename-dialog {
+            max-width: 440px;
+        }
+        .rename-body {
+            padding: 18px 22px;
+        }
+        .rename-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 14px 22px 18px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        /* Pinned Drawer */
         .pinned-drawer {
             position: relative;
             z-index: 25;
             background: var(--bg-surface);
             border-bottom: 1px solid var(--border-default);
-            padding: 10px 18px;
+            padding: 12px 20px;
             max-height: 240px;
             overflow-y: auto;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+            -webkit-overflow-scrolling: touch;
         }
 
         .pinned-drawer-head {
@@ -727,17 +834,191 @@
             animation: pinFlash 1.4s ease;
         }
 
-        /* Toggle Switch & Language Selector in Settings */
-        .settings-toggle-card {
+        /* Symmetrical Settings Modal Styling (PC, Tablet, Android, iOS) */
+        .modal-dialog {
+            width: 100%;
+            max-width: 620px;
+            max-height: 88vh;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            border-radius: 18px;
+            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        .settings-modal-top {
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+        }
+
+        .modal-header {
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
-            gap: 14px;
-            padding: 12px 14px;
-            border-radius: var(--radius-sm);
+            padding: 20px 22px 14px;
+            box-sizing: border-box;
+        }
+
+        .modal-title-group h2,
+        .modal-title-group h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .modal-subtitle {
+            display: block;
+            margin-top: 4px;
+            font-size: 12.5px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        .modal-tabs {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 20px 14px;
+            overflow-x: auto;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+            box-sizing: border-box;
+        }
+
+        .modal-tabs::-webkit-scrollbar {
+            display: none;
+        }
+
+        .tab-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            height: 38px;
+            padding: 0 15px;
+            border-radius: 10px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            white-space: nowrap;
+            flex-shrink: 0;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-sizing: border-box;
+        }
+
+        .tab-btn:hover {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+        }
+
+        .tab-btn.active {
+            background: var(--bg-surface);
+            border-color: var(--border-default);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .settings-modal-body {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 20px 22px;
+            box-sizing: border-box;
+        }
+
+        /* Symmetrical Panels & Cards inside Settings */
+        .settings-panel {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 14px;
+            padding: 18px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        .settings-panel:last-child {
+            margin-bottom: 0;
+        }
+
+        .settings-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .settings-panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .settings-panel-title i {
+            font-size: 16px;
+            color: var(--accent);
+        }
+
+        /* Symmetrical Language Buttons Grid */
+        .lang-selector-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+            box-sizing: border-box;
+        }
+
+        .lang-option-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            height: 42px;
+            padding: 0 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-sizing: border-box;
+        }
+
+        .lang-option-btn:hover {
+            border-color: var(--border-hover);
+            color: var(--text-primary);
+        }
+
+        .lang-option-btn.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--text-primary);
+        }
+
+        /* Symmetrical Switch Card */
+        .settings-toggle-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px;
+            border-radius: 12px;
             background: var(--bg-base);
             border: 1px solid var(--border-subtle);
-            margin-bottom: 10px;
+            box-sizing: border-box;
         }
 
         .settings-toggle-info {
@@ -746,25 +1027,25 @@
         }
 
         .settings-toggle-title {
-            font-size: 13px;
+            font-size: 13.5px;
             font-weight: 600;
             color: var(--text-primary);
-            margin-bottom: 3px;
+            margin-bottom: 4px;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 7px;
         }
 
         .settings-toggle-desc {
             font-size: 12px;
             color: var(--text-muted);
-            line-height: 1.45;
+            line-height: 1.5;
         }
 
         .shiro-switch {
             position: relative;
             display: inline-block;
-            width: 42px;
+            width: 44px;
             height: 24px;
             flex-shrink: 0;
             margin-top: 2px;
@@ -781,7 +1062,7 @@
             cursor: pointer;
             inset: 0;
             background-color: var(--border-default);
-            transition: 0.2s;
+            transition: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
             border-radius: 999px;
         }
 
@@ -793,7 +1074,7 @@
             left: 3px;
             bottom: 3px;
             background-color: var(--text-primary);
-            transition: 0.2s;
+            transition: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
             border-radius: 50%;
         }
 
@@ -802,66 +1083,72 @@
         }
 
         .shiro-switch input:checked + .shiro-slider:before {
-            transform: translateX(18px);
+            transform: translateX(20px);
             background-color: #ffffff;
         }
 
-        .lang-selector-group {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin-top: 8px;
-        }
-
-        .lang-option-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 9px 12px;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border-subtle);
-            background: var(--bg-base);
-            color: var(--text-secondary);
-            font-size: 12.5px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s ease;
-        }
-
-        .lang-option-btn:hover {
-            border-color: var(--border-hover);
-            color: var(--text-primary);
-        }
-
-        .lang-option-btn.active {
-            border-color: var(--accent);
-            background: var(--accent-soft);
-            color: var(--text-primary);
-        }
-
+        /* Symmetrical Training Status Banner */
         .training-mode-banner {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 9px 12px;
-            border-radius: var(--radius-sm);
-            font-size: 12px;
+            gap: 10px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            font-size: 12.5px;
             font-weight: 500;
-            margin-top: 8px;
+            margin-top: 12px;
             border: 1px solid var(--border-subtle);
-            background: var(--bg-surface);
+            background: var(--bg-base);
             color: var(--text-secondary);
+            box-sizing: border-box;
         }
 
         .training-mode-banner.mode-on {
             border-color: rgba(95, 191, 143, 0.35);
+            background: rgba(95, 191, 143, 0.08);
             color: var(--ok);
         }
 
         .training-mode-banner.mode-off {
             border-color: rgba(224, 168, 74, 0.35);
+            background: rgba(224, 168, 74, 0.08);
             color: var(--warn);
+        }
+
+        /* Mobile & iOS Responsive Precision */
+        @media (max-width: 640px) {
+            .modal-dialog {
+                max-width: 100%;
+                max-height: 92vh;
+                border-radius: 16px;
+            }
+            .modal-header {
+                padding: 16px 16px 12px;
+            }
+            .modal-tabs {
+                padding: 0 16px 12px;
+                gap: 6px;
+            }
+            .tab-btn {
+                height: 36px;
+                padding: 0 12px;
+                font-size: 12.5px;
+            }
+            .settings-modal-body {
+                padding: 16px;
+            }
+            .settings-panel {
+                padding: 14px;
+                border-radius: 12px;
+                margin-bottom: 12px;
+            }
+            .lang-selector-group {
+                grid-template-columns: 1fr;
+            }
+            .settings-toggle-card {
+                padding: 14px;
+                align-items: flex-start;
+            }
         }
 
         @media (max-width: 768px) {
@@ -950,37 +1237,69 @@
                 </div>
 
                 <div class="nav-actions">
-                    <button id="pinned-messages-btn" class="nav-pill-btn" type="button" onclick="togglePinnedDrawer()" title="Pesan yang disematkan (PIN)" data-i18n-title="pinned_messages_tooltip">
-                        <i class="ph ph-push-pin"></i>
-                        <span data-i18n="pinned_short">PIN</span>
-                        <span id="pinned-count-badge" class="pin-count-pill hidden">0</span>
-                    </button>
-                    <button id="lang-quick-btn" class="nav-pill-btn" type="button" onclick="toggleQuickLanguage()" title="Ganti Bahasa UI (ID / EN)" data-i18n-title="switch_lang_tooltip">
-                        <i class="ph ph-translate"></i>
-                        <span id="nav-lang-code">ID</span>
-                    </button>
-                    <div class="memory-badge btn-duplicate-nav" title="Jumlah ingatan aktif" data-i18n-title="active_memory_tooltip">
-                        <i class="ph ph-brain"></i>
-                        <span class="badge-label" data-i18n="memory_label">Ingatan:</span>
-                        <span id="memory-count">0</span>
+                    <!-- Gemini-style 3-Dots Dropdown Menu -->
+                    <div class="chat-menu-container">
+                        <button id="chat-actions-btn" class="chat-actions-btn" type="button" title="Opsi percakapan" data-i18n-title="chat_options" aria-label="Opsi percakapan" aria-haspopup="true" aria-expanded="false">
+                            <i class="ph ph-dots-three-vertical"></i>
+                        </button>
+                        <div id="chat-actions-menu" class="chat-actions-dropdown hidden" role="menu">
+                            <button type="button" class="chat-dropdown-item" id="action-share-chat" role="menuitem">
+                                <i class="ph ph-share-network"></i>
+                                <span data-i18n="menu_share_chat">Bagikan percakapan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-files-chat" role="menuitem">
+                                <i class="ph ph-folder-notch"></i>
+                                <span data-i18n="menu_files_chat">File dalam percakapan ini</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-pin-chat" role="menuitem">
+                                <i class="ph ph-push-pin" id="action-pin-icon"></i>
+                                <span id="action-pin-label" data-i18n="menu_pin_chat">Sematkan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-rename-chat" role="menuitem">
+                                <i class="ph ph-pencil-simple"></i>
+                                <span data-i18n="menu_rename_chat">Ganti nama</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-pinned-msgs" role="menuitem">
+                                <i class="ph ph-bookmark-simple"></i>
+                                <span id="action-pinned-msgs-label" data-i18n="menu_pinned_msgs">Pesan tersemat</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-export-chat" role="menuitem">
+                                <i class="ph ph-download-simple"></i>
+                                <span data-i18n="menu_export_chat">Ekspor percakapan</span>
+                            </button>
+                            <div class="chat-dropdown-divider"></div>
+                            <button type="button" class="chat-dropdown-item" id="action-settings-chat" role="menuitem">
+                                <i class="ph ph-gear"></i>
+                                <span data-i18n="settings">Pengaturan</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-lang-toggle" role="menuitem">
+                                <i class="ph ph-translate"></i>
+                                <span data-i18n="menu_lang_switch">Ganti Bahasa (ID / EN)</span>
+                            </button>
+                            <button type="button" class="chat-dropdown-item" id="action-pipeline-chat" role="menuitem">
+                                <i class="ph ph-tree-structure"></i>
+                                <span data-i18n="pipeline_title">Alur eksekusi</span>
+                            </button>
+                            <div class="chat-dropdown-divider"></div>
+                            <button type="button" class="chat-dropdown-item item-danger" id="action-delete-chat" role="menuitem">
+                                <i class="ph ph-trash"></i>
+                                <span data-i18n="delete">Hapus</span>
+                            </button>
+                        </div>
                     </div>
-                    <button id="new-chat-btn" class="btn-icon btn-duplicate-nav" title="Chat baru" data-i18n-title="new_chat" aria-label="Chat baru" type="button">
-                        <i class="ph ph-plus"></i>
-                        <span class="btn-new-chat-text" data-i18n="new_chat">Chat baru</span>
-                    </button>
-                    <button id="pipeline-btn" class="btn-icon btn-duplicate-nav" title="Alur eksekusi" data-i18n-title="pipeline_title" aria-label="Alur eksekusi" type="button">
-                        <i class="ph ph-tree-structure"></i>
-                        <span class="pipeline-nav-dot hidden" id="pipeline-nav-dot"></span>
-                    </button>
-                    <button id="settings-btn" class="btn-icon btn-duplicate-nav" title="Pengaturan" data-i18n-title="settings" aria-label="Pengaturan" type="button">
-                        <i class="ph ph-gear"></i>
-                    </button>
-                    <span class="nav-divider btn-duplicate-nav" aria-hidden="true"></span>
-                    <button id="reset-btn" class="btn-icon btn-danger-hover" title="Hapus percakapan sesi ini" data-i18n-title="reset_session_tooltip" aria-label="Hapus percakapan sesi ini" type="button">
-                        <i class="ph ph-trash"></i>
-                    </button>
+
+                    <!-- Hidden alias elements for existing script hooks -->
                     <select id="session-select" class="hidden" title="Pilih percakapan"></select>
                     <button id="delete-chat-btn" class="hidden" type="button"></button>
+                    <button id="reset-btn" class="hidden" type="button"></button>
+                    <button id="pinned-messages-btn" class="hidden" type="button"></button>
+                    <button id="lang-quick-btn" class="hidden" type="button"></button>
+                    <button id="new-chat-btn" class="hidden" type="button"></button>
+                    <button id="pipeline-btn" class="hidden" type="button"></button>
+                    <button id="settings-btn" class="hidden" type="button"></button>
+                    <span id="pinned-count-badge" class="hidden">0</span>
+                    <span id="nav-lang-code" class="hidden">ID</span>
+                    <span id="memory-count" class="hidden">0</span>
                 </div>
             </header>
 
@@ -1174,7 +1493,7 @@
                     </button>
                     <button class="tab-btn" data-tab="privacy" type="button">
                         <i class="ph ph-shield-check"></i>
-                        <span data-i18n="tab_privacy">Privasi &amp; Bahasa</span>
+                        <span data-i18n="tab_privacy">Privasi</span>
                     </button>
                     <button class="tab-btn" data-tab="ai" type="button">
                         <i class="ph ph-robot"></i>
@@ -1471,6 +1790,33 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Ganti Nama Percakapan (Rename Session) -->
+    <div id="rename-modal" class="modal-backdrop hidden" onclick="handleRenameBackdropClick(event)">
+        <div class="modal-dialog rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <h3 id="rename-title" data-i18n="rename_chat_title">Ganti nama percakapan</h3>
+                    <span class="modal-subtitle" data-i18n="rename_chat_sub">Beri nama yang mudah diingat untuk sesi obrolan ini</span>
+                </div>
+                <button id="close-rename-modal" class="btn-icon" type="button" title="Tutup (Esc)">
+                    <i class="ph ph-x"></i>
+                </button>
+            </div>
+            <div class="modal-body rename-body">
+                <div class="form-field" style="margin-bottom: 0;">
+                    <label for="rename-input" data-i18n="rename_input_label">Judul percakapan baru</label>
+                    <input type="text" id="rename-input" class="form-input" placeholder="Misal: Diskusi Proyek Web, Cerita Shiro..." maxlength="80">
+                </div>
+            </div>
+            <div class="modal-footer rename-footer">
+                <button type="button" id="btn-cancel-rename" class="btn-secondary" data-i18n="cancel">Batal</button>
+                <button type="button" id="btn-save-rename" class="btn-primary" data-i18n="save">
+                    <i class="ph ph-check"></i> <span data-i18n="save">Simpan</span>
+                </button>
             </div>
         </div>
     </div>
