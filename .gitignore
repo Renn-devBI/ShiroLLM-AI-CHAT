@@ -24,4 +24,5 @@ Thumbs.db
 # Private user uploads
 *.log
 data/uploads/
+clean_and_disable_winupdate.ps1
 
