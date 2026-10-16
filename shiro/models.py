@@ -253,55 +253,70 @@ def load_model_config() -> Dict[str, Any]:
         except Exception as e:
             print(f"Error loading model config: {e}")
 
-    current_list = list(config.get("available_models", []))
-    for m in scanned_models:
-        if m not in current_list:
-            current_list.append(m)
-    config["available_models"] = current_list
+    # AUTO-DETECT: Hanya tampilkan model yang berkas fisiknya benar-benar ada di disk!
+    # Model yang tercantum di JSON tetapi berkas fisiknya tidak ada TIDAK BOLEH ditampilkan di web atau dimuat.
+    detected_models = []
     
-    if "model_info" not in config:
-        config["model_info"] = {}
-    for m in config["available_models"]:
-        if m not in config["model_info"]:
+    # 1. Pertahankan urutan model dari config jika berkasnya benar-benar ada di disk
+    for m in config.get("available_models", []):
+        if os.path.exists(m) and m not in detected_models:
+            detected_models.append(m)
+            
+    # 2. Tambahkan semua model hasil scan otomatis dari folder model/ yang ada di disk
+    for m in scanned_models:
+        if os.path.exists(m) and m not in detected_models:
+            detected_models.append(m)
+            
+    config["available_models"] = detected_models
+    
+    # Filter dan susun model_info hanya untuk model yang benar-benar ada di disk
+    filtered_info = {}
+    saved_info = config.get("model_info", {})
+    if not isinstance(saved_info, dict):
+        saved_info = {}
+
+    for m in detected_models:
+        if m in saved_info and isinstance(saved_info[m], dict):
+            filtered_info[m] = saved_info[m]
+        else:
             basename = os.path.basename(m).replace(".gguf", "")
-            size_gb = 0
-            if os.path.exists(m):
-                size_gb = os.path.getsize(m) / (1024 * 1024 * 1024)
+            size_gb = os.path.getsize(m) / (1024 * 1024 * 1024) if os.path.exists(m) else 0
             size_str = f"~{size_gb:.1f} GB" if size_gb > 0 else "GGUF"
             is_trained = "shiroai-llm-v" in basename.lower()
             quant = "Fine-Tuned (LoRA)" if is_trained else "Manual/Auto"
             desc = f"Model Pelatihan Mandiri: {basename} ({size_str})" if is_trained else f"Model Lokal: {basename} ({size_str})"
-            config["model_info"][m] = {
+            filtered_info[m] = {
                 "name": basename,
                 "size": size_str,
                 "quantization": quant,
                 "description": desc
             }
+    config["model_info"] = filtered_info
 
     in_colab = is_running_in_colab()
     current_model = config.get("current_model", "")
     
-    if not in_colab:
-        local_default = config.get("local_default_model", "model/Qwen3-4B-Q4_K_M.gguf")
-        if not current_model or not os.path.exists(current_model) or ("32b" in current_model.lower() and not os.path.exists(current_model)):
+    # Validasi current_model: jika tidak ada di disk atau kosong, auto-fallback ke model yang ada
+    if not current_model or not os.path.exists(current_model) or ("32b" in current_model.lower() and not os.path.exists(current_model)):
+        if not in_colab:
+            local_default = config.get("local_default_model", "model/Qwen3-4B-Q4_K_M.gguf")
             if os.path.exists(local_default):
                 config["current_model"] = local_default
-            elif scanned_models:
-                sorted_by_size = sorted(scanned_models, key=lambda p: os.path.getsize(p) if os.path.exists(p) else 999999999999)
+            elif detected_models:
+                sorted_by_size = sorted(detected_models, key=lambda p: os.path.getsize(p) if os.path.exists(p) else 999999999999)
                 config["current_model"] = sorted_by_size[0]
             else:
-                config["current_model"] = local_default
-    else:
-        colab_default = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
-        if not os.path.exists(colab_default):
-            colab_default = "model/Qwen3-32B-Q4_K_M.gguf"
-        if not current_model or not os.path.exists(current_model):
+                config["current_model"] = ""
+        else:
+            colab_default = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+            if not os.path.exists(colab_default):
+                colab_default = "model/Qwen3-32B-Q4_K_M.gguf"
             if os.path.exists(colab_default):
                 config["current_model"] = colab_default
-            elif scanned_models:
-                config["current_model"] = scanned_models[0]
+            elif detected_models:
+                config["current_model"] = detected_models[0]
             else:
-                config["current_model"] = colab_default
+                config["current_model"] = ""
                 
     return config
 
