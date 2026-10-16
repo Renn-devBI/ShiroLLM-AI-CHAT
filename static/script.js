@@ -56,6 +56,7 @@ let attachedDocument = null;
 let attachedImage = null;
 let enableTrainingLogging = true;
 let currentLang = localStorage.getItem('shiro_lang') || 'id';
+let currentUILang = currentLang;
 
 // Kamus Bahasa UI (ID & EN)
 const SHIRO_I18N = {
@@ -407,6 +408,7 @@ function applyI18nToDOM() {
 async function setUILanguage(lang, syncBackend = true) {
     if (lang !== 'id' && lang !== 'en') return;
     currentLang = lang;
+    currentUILang = lang;
     try {
         localStorage.setItem('shiro_lang', lang);
     } catch (e) {}
@@ -2417,7 +2419,7 @@ async function uploadDocumentFile(file) {
     const formData = new FormData();
     formData.append('file', file);
 
-    status.textContent = currentUILang === 'en' ? 'Extracting file...' : 'Mengekstrak dokumen...';
+    status.textContent = currentLang === 'en' ? 'Extracting file...' : 'Mengekstrak dokumen...';
     try {
         const res = await fetch('/api/upload/document', {
             method: 'POST',
@@ -2432,15 +2434,15 @@ async function uploadDocumentFile(file) {
                 char_count: data.char_count,
                 url: data.url
             });
-            status.textContent = currentUILang === 'en' ? 'File ready' : 'Dokumen siap';
+            status.textContent = currentLang === 'en' ? 'File ready' : 'Dokumen siap';
         } else {
-            showToast(`${currentUILang === 'en' ? 'Failed to read file' : 'Gagal membaca berkas'}: ${data.error || 'Format tidak didukung'}`);
+            showToast(`${currentLang === 'en' ? 'Failed to read file' : 'Gagal membaca berkas'}: ${data.error || 'Format tidak didukung'}`);
             clearAttachedDocument();
             status.textContent = t('status_ready');
         }
     } catch (err) {
         console.error("Document upload error:", err);
-        showToast((currentUILang === 'en' ? "Failed to upload file: " : "Gagal mengunggah dokumen: ") + (err.message || "Koneksi bermasalah"));
+        showToast((currentLang === 'en' ? "Failed to upload file: " : "Gagal mengunggah dokumen: ") + (err.message || "Koneksi bermasalah"));
         clearAttachedDocument();
         status.textContent = t('status_ready');
     }
@@ -3023,7 +3025,7 @@ async function openDocModal(filename, url, ext = "") {
     }
 
     if (docModalFilename) docModalFilename.textContent = filename;
-    if (docModalSub) docModalSub.textContent = `${currentUILang === 'en' ? 'File Preview' : 'Pratinjau Berkas'} (${ext.toUpperCase()})`;
+    if (docModalSub) docModalSub.textContent = `${currentLang === 'en' ? 'File Preview' : 'Pratinjau Berkas'} (${ext.toUpperCase()})`;
     
     const fileUrl = url || `/api/files/${encodeURIComponent(filename)}`;
     if (docModalDownloadLink) {
@@ -3079,14 +3081,14 @@ async function openDocModal(filename, url, ext = "") {
     };
 
     if (docModalTextDisplay) {
-        docModalTextDisplay.textContent = currentUILang === 'en' ? "Reading file content..." : "Sedang membaca isi berkas...";
+        docModalTextDisplay.textContent = currentLang === 'en' ? "Reading file content..." : "Sedang membaca isi berkas...";
     }
 
     if (attachedDocument && attachedDocument.filename === filename && attachedDocument.text) {
         currentDocModalContent = attachedDocument.text;
         renderDocTextContent(currentDocModalContent);
         if (docModalSub) {
-            docModalSub.textContent = `${ext.toUpperCase()} · ${currentDocModalContent.length.toLocaleString()} ${currentUILang === 'en' ? 'chars · Attached' : 'karakter · Teks Terlampir'}`;
+            docModalSub.textContent = `${ext.toUpperCase()} · ${currentDocModalContent.length.toLocaleString()} ${currentLang === 'en' ? 'chars · Attached' : 'karakter · Teks Terlampir'}`;
         }
         docViewerModal.classList.remove('hidden');
         return;
@@ -3096,22 +3098,22 @@ async function openDocModal(filename, url, ext = "") {
         const res = await fetch(`/api/document/preview?filename=${encodeURIComponent(filename)}`);
         if (res.ok) {
             const data = await res.json();
-            currentDocModalContent = data.text || (currentUILang === 'en' ? "// Empty file or no extractable text." : "// Dokumen kosong atau tidak memiliki teks yang dapat diekstrak.");
+            currentDocModalContent = data.text || (currentLang === 'en' ? "// Empty file or no extractable text." : "// Dokumen kosong atau tidak memiliki teks yang dapat diekstrak.");
             renderDocTextContent(currentDocModalContent);
             if (docModalSub) {
                 const chars = data.char_count || currentDocModalContent.length;
-                docModalSub.textContent = `${ext.toUpperCase()} · ${chars.toLocaleString()} ${currentUILang === 'en' ? 'chars' : 'karakter'} · ${data.page_count ? data.page_count + (currentUILang === 'en' ? ' pages' : ' halaman') : (currentUILang === 'en' ? 'Parsed text' : 'Teks terurai')}`;
+                docModalSub.textContent = `${ext.toUpperCase()} · ${chars.toLocaleString()} ${currentLang === 'en' ? 'chars' : 'karakter'} · ${data.page_count ? data.page_count + (currentLang === 'en' ? ' pages' : ' halaman') : (currentLang === 'en' ? 'Parsed text' : 'Teks terurai')}`;
             }
         } else {
             if (docModalTextDisplay) {
-                docModalTextDisplay.textContent = currentUILang === 'en'
+                docModalTextDisplay.textContent = currentLang === 'en'
                     ? `File '${filename}' is ready to download or open.\nClick 'Open original' to view the full file.`
                     : `Dokumen '${filename}' siap diunduh atau dibuka langsung.\nKlik 'Buka asli' untuk membuka berkas lengkap.`;
             }
         }
     } catch (err) {
         if (docModalTextDisplay) {
-            docModalTextDisplay.textContent = `${currentUILang === 'en' ? 'Failed to load text' : 'Gagal memuat teks'}: ${err.message || 'Error'}`;
+            docModalTextDisplay.textContent = `${currentLang === 'en' ? 'Failed to load text' : 'Gagal memuat teks'}: ${err.message || 'Error'}`;
         }
     }
 
@@ -3206,16 +3208,40 @@ if (docPreviewCardEl) {
 }
 
 // Init
-document.addEventListener('DOMContentLoaded', () => {
-    applyI18nToDOM(currentUILang);
-    initSidebarState();
-    loadPrivacySettings();
-    loadProfiles().then(() => {
-        loadChatHistory();
-        loadSessions();
-        loadModels();
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        applyI18nToDOM();
+    } catch (e) {
+        console.error('i18n error:', e);
+    }
+    try {
+        initSidebarState();
+    } catch (e) {
+        console.error('sidebar error:', e);
+    }
+
+    // Always fetch and render sessions immediately so sidebar is ready right away
+    loadSessions().catch(e => console.error('Error loading sessions:', e));
+
+    try {
+        await Promise.allSettled([
+            loadPrivacySettings(),
+            loadProfiles(),
+            loadModels()
+        ]);
+    } catch (e) {
+        console.error('Profiles/models error:', e);
+    }
+
+    try {
+        await loadChatHistory();
+    } catch (e) {
+        console.error('Chat history error:', e);
+    }
+
+    if (userInput) {
         userInput.focus();
-    });
+    }
 });
 
 // --- Pengaturan Tema ---
