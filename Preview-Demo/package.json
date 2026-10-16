@@ -1,0 +1,15 @@
+{
+  "name": "shiro-ui-preview",
+  "version": "2.0.0",
+  "description": "Shiro AI Web UI Static Preview (Node.js & Vercel)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
