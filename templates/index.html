@@ -1218,6 +1218,9 @@
             </div>
         </aside>
 
+        <!-- ChatGPT-style Draggable Sidebar Resizer -->
+        <div class="sidebar-resizer" id="sidebar-resizer" title="Geser untuk mengatur lebar sidebar (Klik 2x untuk reset)"></div>
+
         <div class="sidebar-backdrop hidden" id="sidebar-backdrop"></div>
 
         <div class="main-content" id="main-content">
@@ -1486,7 +1489,7 @@
                     </button>
                 </div>
 
-                <div class="modal-tabs" role="group" aria-label="Bagian pengaturan">
+                <div class="modal-tabs" id="settings-modal-tabs" role="tablist" aria-label="Bagian pengaturan">
                     <button class="tab-btn active" data-tab="user" type="button">
                         <i class="ph ph-user"></i>
                         <span data-i18n="tab_user">Anda</span>

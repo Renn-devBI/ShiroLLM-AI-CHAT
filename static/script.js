@@ -1503,7 +1503,10 @@ async function loadSessions() {
 
                         const titleSpan = document.createElement('span');
                         titleSpan.className = 'session-item-title';
-                        titleSpan.textContent = s.title || `Chat ${s.id.slice(0, 6)}`;
+                        const sessionFullTitle = s.title || `Chat ${s.id.slice(0, 6)}`;
+                        titleSpan.textContent = sessionFullTitle;
+                        item.title = sessionFullTitle;
+                        titleSpan.title = sessionFullTitle;
 
                         content.appendChild(icon);
                         content.appendChild(titleSpan);
@@ -2000,6 +2003,145 @@ function initSidebarState() {
     }
 }
 
+function initSidebarResizer() {
+    const resizer = document.getElementById('sidebar-resizer');
+    const sidebar = document.getElementById('chat-sidebar');
+    if (!resizer || !sidebar) return;
+
+    try {
+        const savedWidth = localStorage.getItem('shiro_sidebar_width');
+        if (savedWidth) {
+            const w = parseInt(savedWidth, 10);
+            if (w >= 220 && w <= 520) {
+                document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
+                sidebar.style.width = `${w}px`;
+            }
+        }
+    } catch (e) {}
+
+    let isDragging = false;
+    let startX = 0;
+    let startWidth = 260;
+
+    const onMouseDown = (e) => {
+        if (window.innerWidth <= 768 || sidebar.classList.contains('collapsed')) return;
+        isDragging = true;
+        startX = e.clientX;
+        startWidth = sidebar.getBoundingClientRect().width;
+        resizer.classList.add('is-dragging');
+        document.body.classList.add('sidebar-resizing');
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        e.preventDefault();
+    };
+
+    const onMouseMove = (e) => {
+        if (!isDragging) return;
+        const deltaX = e.clientX - startX;
+        const newWidth = Math.min(Math.max(startWidth + deltaX, 220), 520);
+        document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
+        sidebar.style.width = `${newWidth}px`;
+    };
+
+    const onMouseUp = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        resizer.classList.remove('is-dragging');
+        document.body.classList.remove('sidebar-resizing');
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+
+        try {
+            const currentW = Math.round(sidebar.getBoundingClientRect().width);
+            localStorage.setItem('shiro_sidebar_width', currentW);
+        } catch (e) {}
+    };
+
+    resizer.addEventListener('mousedown', onMouseDown);
+
+    // Double-click to reset width to default 260px
+    resizer.addEventListener('dblclick', () => {
+        document.documentElement.style.setProperty('--sidebar-width', '260px');
+        sidebar.style.width = '260px';
+        try {
+            localStorage.removeItem('shiro_sidebar_width');
+        } catch (e) {}
+        showToast(currentLang === 'en' ? 'Sidebar width reset to 260px' : 'Lebar sidebar di-reset ke 260px');
+    });
+
+    // Touch dragging for hybrid laptops / tablets
+    resizer.addEventListener('touchstart', (e) => {
+        if (window.innerWidth <= 768 || sidebar.classList.contains('collapsed')) return;
+        const touch = e.touches[0];
+        isDragging = true;
+        startX = touch.clientX;
+        startWidth = sidebar.getBoundingClientRect().width;
+        resizer.classList.add('is-dragging');
+        document.body.classList.add('sidebar-resizing');
+    }, { passive: true });
+
+    window.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - startX;
+        const newWidth = Math.min(Math.max(startWidth + deltaX, 220), 520);
+        document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
+        sidebar.style.width = `${newWidth}px`;
+    }, { passive: true });
+
+    window.addEventListener('touchend', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        resizer.classList.remove('is-dragging');
+        document.body.classList.remove('sidebar-resizing');
+        try {
+            const currentW = Math.round(sidebar.getBoundingClientRect().width);
+            localStorage.setItem('shiro_sidebar_width', currentW);
+        } catch (e) {}
+    });
+}
+
+function initModalTabsScroll() {
+    const tabsContainer = document.getElementById('settings-modal-tabs') || document.querySelector('.modal-tabs');
+    if (!tabsContainer) return;
+
+    let isDown = false;
+    let startX = 0;
+    let scrollLeft = 0;
+
+    tabsContainer.addEventListener('mousedown', (e) => {
+        isDown = true;
+        tabsContainer.classList.add('is-dragging');
+        startX = e.pageX - tabsContainer.offsetLeft;
+        scrollLeft = tabsContainer.scrollLeft;
+    });
+
+    tabsContainer.addEventListener('mouseleave', () => {
+        isDown = false;
+        tabsContainer.classList.remove('is-dragging');
+    });
+
+    tabsContainer.addEventListener('mouseup', () => {
+        isDown = false;
+        tabsContainer.classList.remove('is-dragging');
+    });
+
+    tabsContainer.addEventListener('mousemove', (e) => {
+        if (!isDown) return;
+        e.preventDefault();
+        const x = e.pageX - tabsContainer.offsetLeft;
+        const walk = (x - startX) * 1.5;
+        tabsContainer.scrollLeft = scrollLeft - walk;
+    });
+
+    tabsContainer.addEventListener('wheel', (e) => {
+        if (e.deltaY !== 0) {
+            e.preventDefault();
+            tabsContainer.scrollLeft += e.deltaY;
+        }
+    }, { passive: false });
+}
+
 // Event Listeners
 sendBtn.addEventListener('click', sendMessage);
 stopBtn.addEventListener('click', stopGeneration);
@@ -2160,6 +2302,10 @@ function openSettings() {
     loadProfiles();
     loadModels();
     loadPrivacySettings();
+    loadMoeSettings();
+    setTimeout(() => {
+        initModalTabsScroll();
+    }, 40);
 }
 
 function closeSettings() {
@@ -2760,11 +2906,12 @@ async function saveMoeSettings() {
             body: JSON.stringify({ mode: mode })
         });
         const data = await res.json();
-        if (res.ok && data.success) {
-            showToast(`Mode MoE berhasil disimpan: ${data.mode}`);
+        if (res.ok && (data.success || data.mode)) {
+            const modeName = data.mode || mode;
+            showToast(currentLang === 'en' ? `Vision MoE mode saved: ${modeName}` : `Mode MoE berhasil disimpan: ${modeName}`);
             loadMoeSettings();
         } else {
-            showToast(`Gagal menyimpan MoE: ${data.error || 'Unknown error'}`);
+            showToast((currentLang === 'en' ? 'Failed to save MoE: ' : 'Gagal menyimpan MoE: ') + (data.error || 'Unknown error'));
         }
     } catch (e) {
         showToast(`Error: ${e.message}`);
@@ -3218,6 +3365,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         initSidebarState();
     } catch (e) {
         console.error('sidebar error:', e);
+    }
+    try {
+        initSidebarResizer();
+    } catch (e) {
+        console.error('sidebar resizer error:', e);
+    }
+    try {
+        initModalTabsScroll();
+    } catch (e) {
+        console.error('modal tabs scroll error:', e);
     }
 
     // Always fetch and render sessions immediately so sidebar is ready right away

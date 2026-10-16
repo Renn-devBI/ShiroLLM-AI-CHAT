@@ -78,6 +78,21 @@ def find_vision_expert_path(preferred: str = "") -> Optional[str]:
         return preferred
 
     candidates = [p for p in get_available_gguf_models() if is_vision_model(p)]
+
+    # Fallback pencarian langsung jika get_available_gguf_models belum mendeteksi file
+    if not candidates:
+        search_dirs = ["model", "/content/model", "/content", "."]
+        for d in search_dirs:
+            if os.path.exists(d):
+                try:
+                    for f in os.listdir(d):
+                        if f.endswith(".gguf") and not f.startswith("mmproj-") and is_vision_model(f):
+                            p = os.path.join(d, f).replace("\\", "/")
+                            if p not in candidates:
+                                candidates.append(p)
+                except Exception:
+                    pass
+
     if not candidates:
         return None
 
@@ -196,14 +211,25 @@ class MoEOrchestrator:
         if handler is None:
             raise RuntimeError(f"Vision projector (mmproj) untuk {os.path.basename(path)} tidak ditemukan.")
         print(f"[MoE] Memuat Visual Cortex Expert: {os.path.basename(path)}")
-        return Llama(
-            model_path=path,
-            chat_handler=handler,
-            n_ctx=VISION_EXPERT_CTX,
-            n_gpu_layers=get_gpu_layers(),
-            n_threads=4,
-            verbose=False,
-        )
+        try:
+            return Llama(
+                model_path=path,
+                chat_handler=handler,
+                n_ctx=VISION_EXPERT_CTX,
+                n_gpu_layers=get_gpu_layers(),
+                n_threads=4,
+                verbose=False,
+            )
+        except Exception as e_gpu:
+            print(f"[MoE] Gagal memuat expert dengan full GPU ({e_gpu}). Fallback ke n_gpu_layers=0 (CPU/RAM)...")
+            return Llama(
+                model_path=path,
+                chat_handler=handler,
+                n_ctx=4096,
+                n_gpu_layers=0,
+                n_threads=4,
+                verbose=False,
+            )
 
     def _get_expert(self, path: str):
         if self._expert is not None and self._expert_path == path:
@@ -242,7 +268,16 @@ class MoEOrchestrator:
                     expert = self._get_expert(path)
                     blocks = []
                     for idx, img in enumerate(images[:4]):
-                        url = img if img.startswith("data:image/") else f"data:image/jpeg;base64,{img}"
+                        clean_img = str(img or "").strip()
+                        if clean_img.startswith("data:image/") or clean_img.startswith("http://") or clean_img.startswith("https://"):
+                            url = clean_img
+                        elif os.path.exists(clean_img):
+                            import base64
+                            with open(clean_img, "rb") as f_img:
+                                b64 = base64.b64encode(f_img.read()).decode("utf-8")
+                            url = f"data:image/jpeg;base64,{b64}"
+                        else:
+                            url = f"data:image/jpeg;base64,{clean_img}"
                         prompt = EVIDENCE_PROMPT
                         if user_query:
                             prompt += f"\nPertanyaan pengguna tentang gambar (jangan dijawab, cukup amati bagian relevan): \"{user_query[:500]}\""

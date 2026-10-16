@@ -115,19 +115,72 @@ button, input, select, textarea {
    Sidebar
    -------------------------------------------------------------------------- */
 .chat-sidebar {
-    width: 260px;
-    min-width: 260px;
+    width: var(--sidebar-width, 260px);
+    min-width: 220px;
+    max-width: 520px;
     height: 100%;
     background: var(--bg-surface);
     border-right: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
     z-index: 50;
+    flex-shrink: 0;
     transition: margin-left 0.18s ease, transform 0.18s ease;
 }
 
 .chat-sidebar.collapsed {
-    margin-left: -260px;
+    margin-left: calc(-1 * var(--sidebar-width, 260px));
+}
+
+/* ChatGPT-style Sidebar Resizer Divider */
+.sidebar-resizer {
+    width: 8px;
+    margin-left: -4px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 55;
+    flex-shrink: 0;
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+    background: transparent;
+    transition: background 0.15s ease;
+}
+
+.sidebar-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background: transparent;
+    transition: background 0.15s ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer.is-dragging::after {
+    background: var(--accent);
+}
+
+.sidebar-resizer.is-dragging {
+    background: rgba(99, 102, 241, 0.14);
+}
+
+body.sidebar-resizing {
+    cursor: col-resize !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+body.sidebar-resizing iframe {
+    pointer-events: none !important;
+}
+
+@media (max-width: 768px) {
+    .sidebar-resizer {
+        display: none !important;
+    }
 }
 
 .sidebar-header {
@@ -1397,9 +1450,9 @@ button, input, select, textarea {
 }
 
 .modal-dialog {
-    width: 92%;
-    max-width: 500px;
-    max-height: 86vh;
+    width: min(94vw, 580px);
+    max-width: 580px;
+    max-height: 88vh;
     overflow-y: auto;
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
@@ -1433,29 +1486,53 @@ button, input, select, textarea {
 
 .modal-tabs {
     display: flex;
-    gap: 2px;
+    gap: 4px;
     margin-bottom: 18px;
-    padding: 3px;
+    padding: 4px;
     background: var(--bg-base);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    cursor: grab;
+    user-select: none;
+    flex-wrap: nowrap;
+}
+
+.modal-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.modal-tabs.is-dragging {
+    cursor: grabbing;
 }
 
 .tab-btn {
-    flex: 1;
-    padding: 6px 8px;
+    flex: 0 0 auto;
+    min-width: max-content;
+    padding: 7px 12px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     color: var(--text-muted);
     cursor: pointer;
     font-size: 12.5px;
     font-weight: 600;
     transition: background 0.12s, color 0.12s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
 }
 
 .tab-btn:hover {
     color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
 }
 
 .tab-btn.active {
@@ -2063,8 +2140,8 @@ button, input, select, textarea {
    -------------------------------------------------------------------------- */
 .theme-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+    gap: 10px;
     margin-bottom: 18px;
 }
 
