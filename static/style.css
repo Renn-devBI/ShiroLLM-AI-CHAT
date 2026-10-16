@@ -1487,12 +1487,12 @@ body.sidebar-resizing iframe {
 .modal-tabs {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
-    gap: 6px;
+    gap: 4px;
     margin-bottom: 18px;
     padding: 4px;
-    background: var(--bg-base);
+    background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: 12px;
     box-sizing: border-box;
     width: 100%;
 }
@@ -1504,41 +1504,42 @@ body.sidebar-resizing iframe {
 .tab-btn {
     width: 100%;
     min-width: 0;
-    padding: 7px 4px;
+    padding: 6px 2px;
     background: transparent;
-    border: none;
-    border-radius: 6px;
+    border: 1px solid transparent;
+    border-radius: 8px;
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    transition: background 0.12s, color 0.12s;
+    font-size: 11.5px;
+    font-weight: 500;
+    transition: all 0.15s ease;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 5px;
     box-sizing: border-box;
 }
 
 .tab-btn span {
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .tab-btn i {
-    font-size: 14px;
+    font-size: 13.5px;
     flex-shrink: 0;
 }
 
 .tab-btn:hover {
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--bg-elevated);
 }
 
 .tab-btn.active {
-    background: var(--bg-elevated);
+    background: var(--bg-base);
+    border-color: var(--border-default);
     color: var(--text-primary);
+    font-weight: 600;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
 
 .tab-content {
@@ -2476,21 +2477,22 @@ body.sidebar-resizing iframe {
    Claude-Style Share Conversation Dialog
    ========================================================================== */
 .share-dialog {
-    max-width: 480px;
+    max-width: 500px;
 }
 
 .share-body {
-    padding: 18px 22px;
+    padding: 20px 24px;
 }
 
 .share-info-card {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 14px;
+    gap: 14px;
+    padding: 14px 16px;
     background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
-    border-radius: 12px;
+    border-radius: 14px;
+    margin-bottom: 16px;
 }
 
 .share-info-left {
@@ -2500,13 +2502,13 @@ body.sidebar-resizing iframe {
 }
 
 .share-info-left i {
-    font-size: 24px;
+    font-size: 26px;
     color: var(--accent);
 }
 
 .share-meta-title {
     display: block;
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
 }
@@ -2519,36 +2521,316 @@ body.sidebar-resizing iframe {
     margin-top: 2px;
 }
 
-.share-link-input-group {
+.share-box-container {
     display: flex;
-    gap: 8px;
     align-items: center;
-    margin-top: 6px;
+    gap: 10px;
+    margin-top: 8px;
+    width: 100%;
+}
+
+.share-input-wrapper {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 44px;
+    padding: 0 14px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 10px;
+    box-sizing: border-box;
+    transition: border-color 0.15s ease;
+}
+
+.share-input-wrapper:focus-within {
+    border-color: var(--accent);
+}
+
+.share-link-icon {
+    font-size: 18px;
+    color: var(--text-muted);
+    flex-shrink: 0;
 }
 
 .share-url-input {
     flex: 1;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    background: var(--bg-base);
-    color: var(--text-primary);
+    min-width: 0;
+    width: 100%;
+    border: none !important;
+    background: transparent !important;
+    color: var(--text-primary) !important;
+    font-family: var(--font-mono) !important;
+    font-size: 12.5px !important;
+    padding: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
     cursor: text;
 }
 
+.btn-copy-share {
+    flex: 0 0 auto;
+    width: auto !important;
+    height: 44px;
+    padding: 0 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    box-sizing: border-box;
+}
+
+.btn-copy-share:hover {
+    filter: brightness(1.12);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+/* Custom Profile Photo Upload Button & Name */
+.custom-file-upload {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+}
+
+.btn-file-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-file-select:hover {
+    background: var(--bg-surface);
+    border-color: var(--border-hover);
+    color: var(--accent);
+}
+
+.file-chosen-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Custom In-App Confirmation Dialog */
+.confirm-dialog {
+    max-width: 440px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    animation: modalScaleUp 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalScaleUp {
+    from {
+        opacity: 0;
+        transform: scale(0.96) translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.confirm-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 20px 22px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.confirm-icon-badge {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+}
+
+.confirm-icon-badge.is-danger {
+    background: rgba(239, 68, 68, 0.14);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.28);
+}
+
+.confirm-icon-badge.is-info {
+    background: rgba(59, 130, 246, 0.14);
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+}
+
+.confirm-header-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.confirm-header-text h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.confirm-subtitle {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.confirm-body {
+    padding: 16px 22px;
+}
+
+.confirm-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.confirm-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+}
+
+.confirm-note-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.confirm-note-item i {
+    font-size: 14px;
+    color: var(--accent);
+    margin-top: 1px;
+    flex-shrink: 0;
+}
+
+.confirm-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 14px 22px 18px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-base);
+}
+
+.btn-danger-confirm {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 18px;
+    border-radius: var(--radius-sm);
+    background: #ef4444;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-danger-confirm:hover {
+    background: #dc2626;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
+}
+
 /* Mobile & Tablet Precision Grid Rules */
-@media (max-width: 640px) {
+@media (max-width: 660px) {
+    .modal-dialog {
+        width: 100% !important;
+        max-width: 100% !important;
+        max-height: 94vh !important;
+        border-radius: 16px !important;
+    }
+    .modal-header {
+        padding: 16px 18px 12px !important;
+    }
     .modal-tabs {
         grid-template-columns: repeat(3, 1fr) !important;
-        gap: 6px !important;
+        margin: 0 16px 12px !important;
+        width: calc(100% - 32px) !important;
+        gap: 5px !important;
         padding: 4px !important;
     }
     .tab-btn {
-        height: 36px !important;
-        padding: 6px 4px !important;
+        height: 38px !important;
+        padding: 0 4px !important;
+        font-size: 12px !important;
+        gap: 5px !important;
+    }
+    .tab-btn i {
+        font-size: 14px !important;
+        display: inline-block !important;
+    }
+    .tab-btn span {
         font-size: 11.5px !important;
     }
+    .settings-modal-body {
+        padding: 16px 18px !important;
+    }
+    .settings-panel {
+        padding: 14px !important;
+        border-radius: 12px !important;
+        margin-bottom: 12px !important;
+    }
+    .lang-selector-group {
+        grid-template-columns: 1fr !important;
+    }
+    .settings-toggle-card {
+        padding: 14px !important;
+        align-items: flex-start !important;
+    }
     .chat-files-drawer {
-        width: 100%;
-        max-width: 100vw;
+        width: 100% !important;
+        max-width: 100vw !important;
+    }
+    .share-box-container {
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+    .btn-copy-share {
+        width: 100% !important;
     }
 }

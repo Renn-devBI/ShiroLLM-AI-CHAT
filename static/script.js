@@ -18,6 +18,16 @@ function showToast(message, duration = 2200) {
     stack.appendChild(el);
     setTimeout(() => el.remove(), duration);
 }
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 const typingIndicator = document.getElementById('typing-indicator');
 
 // Session & Sidebar Controls
@@ -223,6 +233,9 @@ const SHIRO_I18N = {
         share_modal_sub: 'Tautan unik untuk mengakses percakapan ini secara langsung',
         share_link_label: 'Tautan sesi percakapan',
         copy_link_btn: 'Salin Tautan',
+        copied: 'Tersalin!',
+        choose_file: 'Pilih Berkas',
+        no_file_chosen: 'Belum ada berkas dipilih',
         link_copied_toast: 'Tautan percakapan berhasil disalin ke clipboard!',
         session_not_found_toast: 'Sesi percakapan tidak ditemukan.'
     },
@@ -389,6 +402,9 @@ const SHIRO_I18N = {
         share_modal_sub: 'Unique link to access this conversation directly',
         share_link_label: 'Conversation session link',
         copy_link_btn: 'Copy Link',
+        copied: 'Copied!',
+        choose_file: 'Choose File',
+        no_file_chosen: 'No file chosen',
         link_copied_toast: 'Conversation link copied to clipboard!',
         session_not_found_toast: 'Conversation session not found.'
     }
@@ -1398,11 +1414,118 @@ function stopGeneration() {
     }
 }
 
+// ==========================================================================
+// In-App Modern Confirmation Dialog System (Zero native alert/confirm popups)
+// ==========================================================================
+let pendingConfirmResolve = null;
+
+function showConfirmDialog({
+    title = 'Konfirmasi Tindakan',
+    subtitle = 'Tindakan ini tidak dapat dibatalkan',
+    message = 'Apakah Anda yakin ingin melanjutkan tindakan ini?',
+    notes = [],
+    confirmText = 'Lanjutkan',
+    cancelText = 'Batal',
+    isDanger = true,
+    icon = 'ph-warning'
+} = {}) {
+    return new Promise((resolve) => {
+        if (typeof pendingConfirmResolve === 'function') {
+            pendingConfirmResolve(false);
+            pendingConfirmResolve = null;
+        }
+        pendingConfirmResolve = resolve;
+
+        const modal = document.getElementById('confirm-modal');
+        const titleEl = document.getElementById('confirm-modal-title');
+        const subEl = document.getElementById('confirm-modal-subtitle');
+        const msgEl = document.getElementById('confirm-modal-msg');
+        const notesEl = document.getElementById('confirm-modal-notes');
+        const badgeEl = document.getElementById('confirm-modal-badge');
+        const iconEl = document.getElementById('confirm-modal-icon');
+        const okBtn = document.getElementById('confirm-modal-ok-btn');
+        const cancelBtn = document.getElementById('confirm-modal-cancel-btn');
+
+        if (!modal) {
+            resolve(false);
+            return;
+        }
+
+        if (titleEl) titleEl.textContent = title;
+        if (subEl) subEl.textContent = subtitle;
+        if (msgEl) msgEl.textContent = message;
+
+        if (badgeEl) {
+            badgeEl.className = isDanger ? 'confirm-icon-badge is-danger' : 'confirm-icon-badge is-info';
+        }
+        if (iconEl) {
+            iconEl.className = `ph ${icon}`;
+        }
+        if (okBtn) {
+            okBtn.textContent = confirmText;
+            okBtn.className = isDanger ? 'btn-danger-confirm' : 'btn-primary';
+        }
+        if (cancelBtn) {
+            cancelBtn.textContent = cancelText;
+        }
+
+        if (notesEl) {
+            if (notes && notes.length > 0) {
+                notesEl.innerHTML = notes.map(n => `
+                    <div class="confirm-note-item">
+                        <i class="ph ph-info"></i>
+                        <span>${escapeHtml(n)}</span>
+                    </div>
+                `).join('');
+                notesEl.classList.remove('hidden');
+            } else {
+                notesEl.innerHTML = '';
+                notesEl.classList.add('hidden');
+            }
+        }
+
+        modal.classList.remove('hidden');
+    });
+}
+
+function resolveConfirmDialog(confirmed) {
+    const modal = document.getElementById('confirm-modal');
+    if (modal) modal.classList.add('hidden');
+    if (typeof pendingConfirmResolve === 'function') {
+        const res = pendingConfirmResolve;
+        pendingConfirmResolve = null;
+        res(Boolean(confirmed));
+    }
+}
+
+function handleConfirmBackdropClick(e) {
+    if (e.target && e.target.id === 'confirm-modal') {
+        resolveConfirmDialog(false);
+    }
+}
+
 async function resetMemory() {
-    const confirmMsg = currentLang === 'en'
-        ? 'Clear all previous conversation history?'
-        : 'Lupakan semua percakapan sebelumnya?';
-    if (!confirm(confirmMsg)) return;
+    const isEnglish = currentLang === 'en';
+    const confirmed = await showConfirmDialog({
+        title: isEnglish ? 'Clear conversation history?' : 'Lupakan percakapan?',
+        subtitle: isEnglish ? 'Active session memory reset' : 'Reset riwayat sesi aktif',
+        message: isEnglish 
+            ? 'Clear all previous messages in this active chat window?' 
+            : 'Lupakan semua percakapan sebelumnya dan mulai kembali dari pesan awal?',
+        notes: isEnglish ? [
+            'Chat bubbles in the active window will be cleared.',
+            'Long-term learned facts in settings memory will remain intact.'
+        ] : [
+            'Semua pesan pada jendela obrolan aktif akan dibersihkan.',
+            'Memori fakta jangka panjang Shiro tetap tersimpan aman di pengaturan.'
+        ],
+        confirmText: isEnglish ? 'Clear' : 'Lupakan',
+        cancelText: isEnglish ? 'Cancel' : 'Batal',
+        isDanger: true,
+        icon: 'ph-trash'
+    });
+
+    if (!confirmed) return;
 
     const originalIcon = resetBtn.innerHTML;
     resetBtn.innerHTML = '<i class="ph ph-spinner ph-spin"></i>';
@@ -1695,17 +1818,42 @@ async function deleteSessionById(sessionId, title) {
     if (isGenerating) return;
 
     const sessionName = title || (currentLang === 'en' ? 'this conversation' : 'percakapan ini');
-    let confirmMsg = '';
-    if (currentLang === 'en') {
-        confirmMsg = enableTrainingLogging
-            ? `Delete "${sessionName}"?\n\nNote:\n- Visible messages in this session will be removed.\n- Training dataset & learned facts remain safely preserved.`
-            : `Delete "${sessionName}"?\n\nNote:\n- Private Session Mode is active (Training Logging OFF).\n- This session will be permanently erased without saving to training data.`;
-    } else {
-        confirmMsg = enableTrainingLogging
-            ? `Hapus "${sessionName}"?\n\nCatatan:\n- Percakapan di sesi ini akan dihapus.\n- Seluruh data pelatihan (training dataset) dan fakta ingatan Shiro tetap tersimpan aman.`
-            : `Hapus "${sessionName}"?\n\nCatatan:\n- Mode Sesi Privat aktif (Simpan Data Training: OFF).\n- Percakapan sesi ini akan dihapus permanen tanpa direkam ke dataset training.`;
-    }
-    if (!confirm(confirmMsg)) return;
+    const isEnglish = currentLang === 'en';
+
+    const dialogTitle = isEnglish ? 'Delete conversation?' : 'Hapus percakapan?';
+    const dialogSubtitle = `"${sessionName}"`;
+    const dialogMessage = isEnglish
+        ? 'Are you sure you want to delete this conversation session?'
+        : 'Apakah Anda yakin ingin menghapus sesi percakapan ini?';
+
+    const dialogNotes = isEnglish ? [
+        enableTrainingLogging
+            ? 'Visible messages in this session will be removed.'
+            : 'Private Session Mode is active (Training Logging OFF).',
+        enableTrainingLogging
+            ? 'Training dataset & previously learned memories remain safely preserved.'
+            : 'This session will be permanently erased without saving to training data.'
+    ] : [
+        enableTrainingLogging
+            ? 'Percakapan di sesi ini akan dihapus.'
+            : 'Mode Sesi Privat aktif (Simpan Data Training: OFF).',
+        enableTrainingLogging
+            ? 'Seluruh data pelatihan (training dataset) dan fakta ingatan Shiro tetap tersimpan aman.'
+            : 'Percakapan sesi ini akan dihapus permanen tanpa direkam ke dataset training.'
+    ];
+
+    const confirmed = await showConfirmDialog({
+        title: dialogTitle,
+        subtitle: dialogSubtitle,
+        message: dialogMessage,
+        notes: dialogNotes,
+        confirmText: isEnglish ? 'Delete' : 'Hapus',
+        cancelText: isEnglish ? 'Cancel' : 'Batal',
+        isDanger: true,
+        icon: 'ph-trash'
+    });
+
+    if (!confirmed) return;
 
     try {
         status.textContent = '...';
@@ -2740,11 +2888,29 @@ function copyApiKey() {
 
 function copyEndpointUrl(path) {
     const fullUrl = window.location.origin + path;
-    navigator.clipboard.writeText(fullUrl).then(() => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(fullUrl).then(() => {
+            showToast(`URL ${fullUrl} berhasil disalin`);
+        }).catch(() => {
+            fallbackCopyEndpoint(fullUrl);
+        });
+    } else {
+        fallbackCopyEndpoint(fullUrl);
+    }
+}
+
+function fallbackCopyEndpoint(fullUrl) {
+    const tempInput = document.createElement('input');
+    tempInput.value = fullUrl;
+    document.body.appendChild(tempInput);
+    tempInput.select();
+    try {
+        document.execCommand('copy');
         showToast(`URL ${fullUrl} berhasil disalin`);
-    }).catch(() => {
-        prompt('Salin URL:', fullUrl);
-    });
+    } catch (e) {
+        showToast(`URL: ${fullUrl}`);
+    }
+    document.body.removeChild(tempInput);
 }
 
 async function regenerateApiKey() {
@@ -2768,29 +2934,55 @@ async function regenerateApiKey() {
     }
 }
 
-document.getElementById('user-image').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const preview = document.getElementById('user-preview');
-            preview.innerHTML = `<img src="${event.target.result}" alt="Pratinjau Profil">`;
-        };
-        reader.readAsDataURL(file);
-    }
-});
+const userImageEl = document.getElementById('user-image');
+if (userImageEl) {
+    userImageEl.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const filenameEl = document.getElementById('user-image-filename');
+        if (file) {
+            if (filenameEl) {
+                filenameEl.textContent = file.name;
+                filenameEl.style.color = 'var(--text-primary)';
+            }
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const preview = document.getElementById('user-preview');
+                if (preview) preview.innerHTML = `<img src="${event.target.result}" alt="Pratinjau Profil">`;
+            };
+            reader.readAsDataURL(file);
+        } else {
+            if (filenameEl) {
+                filenameEl.textContent = t('no_file_chosen') || 'Belum ada berkas dipilih';
+                filenameEl.style.color = 'var(--text-muted)';
+            }
+        }
+    });
+}
 
-document.getElementById('ai-image').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const preview = document.getElementById('ai-preview');
-            preview.innerHTML = `<img src="${event.target.result}" alt="Pratinjau Avatar">`;
-        };
-        reader.readAsDataURL(file);
-    }
-});
+const aiImageEl = document.getElementById('ai-image');
+if (aiImageEl) {
+    aiImageEl.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const filenameEl = document.getElementById('ai-image-filename');
+        if (file) {
+            if (filenameEl) {
+                filenameEl.textContent = file.name;
+                filenameEl.style.color = 'var(--text-primary)';
+            }
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const preview = document.getElementById('ai-preview');
+                if (preview) preview.innerHTML = `<img src="${event.target.result}" alt="Pratinjau Avatar">`;
+            };
+            reader.readAsDataURL(file);
+        } else {
+            if (filenameEl) {
+                filenameEl.textContent = t('no_file_chosen') || 'Belum ada berkas dipilih';
+                filenameEl.style.color = 'var(--text-muted)';
+            }
+        }
+    });
+}
 
 // --- Media & Real-Time Camera Management ---
 const imageFileInput = document.getElementById('image-file-input');
@@ -3605,6 +3797,21 @@ if (closeDocModalBtn) closeDocModalBtn.addEventListener('click', closeDocModal);
 // Global Keyboard Shortcuts
 window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+        const confirmModal = document.getElementById('confirm-modal');
+        if (confirmModal && !confirmModal.classList.contains('hidden')) {
+            resolveConfirmDialog(false);
+            return;
+        }
+        const shareModal = document.getElementById('share-modal');
+        if (shareModal && !shareModal.classList.contains('hidden')) {
+            closeShareModal();
+            return;
+        }
+        const chatFilesDrawer = document.getElementById('chat-files-drawer');
+        if (chatFilesDrawer && !chatFilesDrawer.classList.contains('hidden')) {
+            closeChatFilesDrawer();
+            return;
+        }
         if (imageLightboxModal && !imageLightboxModal.classList.contains('hidden')) {
             closeImageLightbox();
         } else if (docViewerModal && !docViewerModal.classList.contains('hidden')) {
