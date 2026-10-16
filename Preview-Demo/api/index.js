@@ -7,6 +7,18 @@ const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Middleware normalisasi route untuk Vercel Serverless Function & Edge Rewrites
+app.use((req, res, next) => {
+    const original = req.headers['x-matched-path'] || 
+                     req.headers['x-vercel-matched-path'] || 
+                     req.headers['x-forwarded-uri'] || 
+                     req.headers['x-original-uri'];
+    if (original && (req.url === '/api/index.js' || req.url.startsWith('/api/index.js') || req.url === '/api/[...slug].js')) {
+        req.url = original;
+    }
+    next();
+});
+
 // Helper untuk menemukan lokasi berkas relatif
 function resolveFilePath(relPath) {
     const candidates = [
@@ -29,18 +41,27 @@ function resolveFilePath(relPath) {
 const staticDir = resolveFilePath('static');
 app.use('/static', express.static(staticDir));
 
-// Memuat profil AI & User
+// Memuat profil AI & User (Static require agar dibundel 100% oleh Vercel)
+let bundledAi = null;
+let bundledUser = null;
+try { bundledAi = require('../profile/ai.json'); } catch (_) {}
+try { bundledUser = require('../profile/user.json'); } catch (_) {}
+
 function getProfileData() {
-    let ai = null;
-    let user = null;
-    try {
-        const aiPath = resolveFilePath('profile/ai.json');
-        if (fs.existsSync(aiPath)) ai = JSON.parse(fs.readFileSync(aiPath, 'utf8'));
-    } catch (_) {}
-    try {
-        const userPath = resolveFilePath('profile/user.json');
-        if (fs.existsSync(userPath)) user = JSON.parse(fs.readFileSync(userPath, 'utf8'));
-    } catch (_) {}
+    let ai = bundledAi;
+    let user = bundledUser;
+    if (!ai) {
+        try {
+            const aiPath = resolveFilePath('profile/ai.json');
+            if (fs.existsSync(aiPath)) ai = JSON.parse(fs.readFileSync(aiPath, 'utf8'));
+        } catch (_) {}
+    }
+    if (!user) {
+        try {
+            const userPath = resolveFilePath('profile/user.json');
+            if (fs.existsSync(userPath)) user = JSON.parse(fs.readFileSync(userPath, 'utf8'));
+        } catch (_) {}
+    }
     return {
         ai: ai || { name: 'Shiro', description: '' },
         user: user || { name: 'Kakak' }
