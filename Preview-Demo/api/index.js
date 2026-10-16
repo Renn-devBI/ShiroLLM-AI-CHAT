@@ -45,63 +45,8 @@ function getProfileData() {
 
 // In-memory data store untuk demo interaktif (sama persis dengan tampilan running app.py)
 let activeSessionId = 'session-1';
+const { sessionsStore, samplePipelineTrace } = require('./mock_data.js');
 
-const initialFolderStructureCode = 
-`garukura-py/
-├── app.py                  # Entry point Flask + server start
-├── config.py               # Konfigurasi aplikasi
-├── requirements.txt        # Dependencies (Flask)
-├── routes/
-│   ├── __init__.py         # Blueprint registration
-│   └── main_routes.py      # Page & API endpoints
-└── data/
-    ├── __init__.py         # Data exports ke app
-    ├── characters.py       # 5 anggota Togenashi Togeari + bio
-    ├── series_info.py      # Production details (studio, director, dll)
-    └── media_list.py       # Multi-media resources`;
-
-const sessionsStore = {
-    'session-1': {
-        id: 'session-1',
-        title: 'Shiro Buatin Website Dari...',
-        pinned: false,
-        last_active: new Date().toISOString(),
-        messages: [
-            {
-                id: 'msg-u-1',
-                role: 'user',
-                content: 'Shiro tolong buatin website dan file struktur lengkap untuk proyek garukura!',
-                timestamp: '01:25'
-            },
-            {
-                id: 'msg-a-1',
-                role: 'assistant',
-                content: `*memegang laptop Kakak sambil ngetik cepat dengan jari-jari kecilnya*\n\nOke Kak! Shiro lanjutin semua file lengkap dari awal sampai akhir~ UI-nya clean, dark theme tanpa emoji, glow subtle banget kayak yang Kakak mau sebelumnya. Data di-render dynamic via Jinja2 loop biar rapi dan gampang ditambah nanti.\n\nStruktur folder:\n\n\`\`\`kode\n${initialFolderStructureCode}\n\`\`\``,
-                timestamp: '01:26'
-            }
-        ]
-    },
-    'session-2': {
-        id: 'session-2',
-        title: 'Shiro Sedang Apa',
-        pinned: false,
-        last_active: new Date(Date.now() - 3600000).toISOString(),
-        messages: [
-            {
-                id: 'msg-u-2',
-                role: 'user',
-                content: 'Shiro lagi ngapain sekarang?',
-                timestamp: '00:30'
-            },
-            {
-                id: 'msg-a-2',
-                role: 'assistant',
-                content: '*tersenyum manis sambil melirik Kakak* Shiro lagi nungguin Kakak ngajak ngobrol atau ngoding bareng! Kakak mau bikin program apa hari ini?',
-                timestamp: '00:31'
-            }
-        ]
-    }
-};
 
 // -------------------------------------------------------------
 // API Endpoints (Mock Identik Shiro Backend)
@@ -309,68 +254,8 @@ app.get('/api/key', (req, res) => {
 app.post('/api/key/regenerate', (req, res) => {
     res.json({ success: true, api_key: `sk-shiro-${Date.now()}` });
 });
-
 // Pipeline Latest & Events (Inspector Modal)
-const samplePipelineTrace = {
-    id: 'trace-demo-latest',
-    timestamp: new Date().toISOString(),
-    status: 'success',
-    total_duration_ms: 248.5,
-    user_input: 'Shiro tolong buatin website dan file struktur lengkap untuk proyek garukura!',
-    reply: 'Struktur proyek garukura-py berhasil dibuat.',
-    nodes: [
-        {
-            id: 'node_context',
-            name: 'Memory & Context Retrieval',
-            type: 'input',
-            icon: 'ph-brain',
-            color: '#8b5cf6',
-            status: 'success',
-            duration_ms: 12.4,
-            summary: '2 Sesi • 26 Fakta Aktif'
-        },
-        {
-            id: 'node_emotion',
-            name: 'Emotion & Tone Classifier',
-            type: 'analyzer',
-            icon: 'ph-heartbeat',
-            color: '#ec4899',
-            status: 'success',
-            duration_ms: 18.2,
-            summary: 'Semangat • Permintaan Coding'
-        },
-        {
-            id: 'node_prompt',
-            name: 'Dynamic Prompt Synthesizer',
-            type: 'transform',
-            icon: 'ph-brackets-curly',
-            color: '#06b6d4',
-            status: 'success',
-            duration_ms: 8.5,
-            summary: 'ShiroAI-v2-Agent Persona'
-        },
-        {
-            id: 'node_llm',
-            name: 'Neural Inference Engine',
-            type: 'ai_model',
-            icon: 'ph-cpu',
-            color: '#f59e0b',
-            status: 'success',
-            duration_ms: 195.1,
-            summary: 'ShiroAI-v2-Agent • 100% Selesai'
-        },
-        {
-            id: 'node_filter',
-            name: 'Neural Output Filter',
-            type: 'filter',
-            icon: 'ph-shield-check',
-            color: '#10b981',
-            status: 'success',
-            duration_ms: 14.3,
-            summary: 'Output Terlindungi & Bersih'
-        }
-    ]
-};
+
 
 app.get('/api/pipeline/latest', (req, res) => {
     res.json(samplePipelineTrace);
