@@ -980,6 +980,157 @@ class AdvancedMemoryManager:
             self.save_memory()
             print("[Memory] All memory reset (learned patterns & facts cleared)")
 
+    @staticmethod
+    def _is_generic_title(title: Optional[str]) -> bool:
+        """Check if a session title is generic / placeholder."""
+        if not title:
+            return True
+        t = title.strip().lower()
+        if t in {
+            "new chat", "chat baru", "obrolan baru", "sesi baru",
+            "obrolan utama", "default", "shiro", "untitled", "chat", "obrolan",
+            "obrolan 1", "obrolan 2", "obrolan 3", "sesi 1", "sesi 2"
+        }:
+            return True
+        # Matches e.g. "chat 1", "chat bd16e5", "chat session_2026...", "chat 4b3d"
+        if re.match(r'^(chat|obrolan|sesi)\s*[\d\w_-]{0,10}$', t):
+            return True
+        return False
+
+    @staticmethod
+    def generate_smart_session_title(text: str, doc_name: Optional[str] = None) -> str:
+        """
+        Derive an intelligent, clean, contextual session title (3-6 words)
+        from a user prompt or document name (ChatGPT / Claude style).
+        """
+        if not text and doc_name:
+            clean_doc = re.sub(r'\.[a-zA-Z0-9]+$', '', doc_name)
+            return f"Berkas: {clean_doc[:25]}"
+        if not text:
+            return "Obrolan Utama"
+        
+        t = text.strip()
+        # Strip markdown code blocks, inline code, URLs, and markdown links
+        t = re.sub(r'```[\s\S]*?```', '', t)
+        t = re.sub(r'`[^`]*`', '', t)
+        t = re.sub(r'https?://\S+', '', t)
+        t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)
+        t = re.sub(r'[\r\n]+', ' ', t)
+        t = re.sub(r'[^\w\s\-\.,\?&]', ' ', t)
+        t = re.sub(r'\s+', ' ', t).strip()
+
+        fillers = [
+            r'^(bisa\s+tolong\s+buatkan|bisa\s+tolong|tolong\s+buatkan|tolong\s+bantu|tolong|coba\s+buatkan|coba|buatkan|bikin|bikinin)\s+',
+            r'^(bagaimana\s+cara\s+mengatur|bagaimana\s+cara|bagaimana|gimana\s+cara|gimana|kenapa|mengapa|apakah|apa\s+itu|jelaskan)\s+',
+            r'^(cari\s+penyebab\s+kenapa\s+ketika|cari\s+penyebab\s+kenapa|cari\s+penyebab|kenapa\s+ketika|ketika)\s+',
+            r'^(saya\s+mau|saya\s+ingin|ingin|mau|bantu\s+saya|bantu|carikan|tuliskan|perbaiki|tampilkan|pengaturan\s+nya\s+biar|masuk\s+ke)\s+',
+            r'^(di\s+collabs\s+perbaiki\s+agar|di\s+colab\s+perbaiki\s+agar|perbaiki\s+agar)\s+',
+            r'^(please\s+help\s+me|please|can\s+you\s+please|can\s+you|could\s+you|how\s+to|how\s+do\s+i|why\s+does|what\s+is|explain)\s+'
+        ]
+
+        changed = True
+        while changed:
+            changed = False
+            for pattern in fillers:
+                new_t = re.sub(pattern, '', t, flags=re.IGNORECASE).strip()
+                if new_t and new_t != t:
+                    t = new_t
+                    changed = True
+
+        t = re.sub(r'[\?\.,!]+$', '', t).strip()
+        t = re.sub(r'\s+(gimana|dong|ya|kan|nih|deh|please)$', '', t, flags=re.IGNORECASE).strip()
+
+        words = t.split()
+        if not words:
+            return "Obrolan " + (doc_name or "Utama")
+
+        selected = []
+        curr_len = 0
+        for w in words[:6]:
+            if curr_len + len(w) > 38 and len(selected) >= 3:
+                break
+            selected.append(w)
+            curr_len += len(w) + 1
+
+        trailing_stopwords = {
+            'nya', 'karena', 'agar', 'ketika', 'untuk', 'dan', 'di', 'ke', 'dari', 'yang', 
+            'pada', 'seperti', 'dengan', 'seharus', 'for', 'to', 'in', 'and', 'or', 'of', 'with', 'about'
+        }
+        while selected and selected[-1].lower() in trailing_stopwords:
+            selected.pop()
+
+        if not selected:
+            selected = words[:4]
+
+        acronyms = {
+            'ui': 'UI', 'ux': 'UX', 'ai': 'AI', 'id': 'ID', 'en': 'EN',
+            'api': 'API', 'ios': 'iOS', 'pdf': 'PDF', 'url': 'URL',
+            'llm': 'LLM', 'colab': 'Colab', 'colabs': 'Colab', 'moe': 'MoE',
+            'ocr': 'OCR', 'vl': 'VL', 'voicevox': 'VoiceVox', 'voicechanger': 'VoiceChanger'
+        }
+
+        def format_word(w):
+            wl = w.lower().strip()
+            if wl in acronyms:
+                return acronyms[wl]
+            if len(w) <= 3 and w.isupper():
+                return w
+            return w.capitalize()
+
+        formatted = [format_word(w) for w in selected]
+        result = " ".join(formatted).strip()
+
+        if len(formatted) == 1 and not doc_name:
+            low = text.lower()
+            if "setting" in low or "pengaturan" in low or "atur" in low:
+                result = f"Pengaturan {result}"
+            elif "error" in low or "bug" in low or "debug" in low:
+                result = f"Debug {result}"
+            elif "buat" in low or "bikin" in low or "create" in low:
+                result = f"Proyek {result}"
+
+        if len(result) < 3:
+            return "Obrolan Utama"
+        return result
+
+    def _derive_session_title_from_messages(self, messages: List[Dict[str, Any]]) -> str:
+        """Derive title from the first substantive user message in a message list."""
+        if not messages:
+            return "Obrolan Utama"
+        first_user_text = ""
+        doc_name = None
+        for m in messages:
+            if m.get("role") == "user":
+                c = (m.get("content") or "").strip()
+                if not doc_name and m.get("document_name"):
+                    doc_name = m.get("document_name")
+                if c and not first_user_text:
+                    first_user_text = c
+                    break
+        return self.generate_smart_session_title(first_user_text, doc_name=doc_name)
+
+    def auto_update_session_title(self, session_id: str, user_message: str, document_name: Optional[str] = None) -> str:
+        """
+        Auto-update a session's title to its conversation topic on first substantive interaction.
+        Never overwrites titles manually set by user.
+        """
+        with self.lock:
+            if not hasattr(self, "sessions_store") or session_id not in self.sessions_store:
+                return "Obrolan"
+            s_data = self.sessions_store[session_id]
+            if s_data.get("is_custom_named", False):
+                return s_data.get("title", "Obrolan")
+
+            cur_title = (s_data.get("title") or "").strip()
+            if self._is_generic_title(cur_title):
+                new_title = self.generate_smart_session_title(user_message, doc_name=document_name)
+                if new_title and new_title != cur_title:
+                    s_data["title"] = new_title
+                    self.save_memory()
+                    print(f"[Session Title] Auto-titled session '{session_id}': {new_title}")
+                    return new_title
+            return cur_title
+
     def create_new_session(self, title: Optional[str] = None) -> str:
         """
         Finalize current session into episodic memory, save its history,
@@ -1005,10 +1156,12 @@ class AdvancedMemoryManager:
             
             session_num = len(self.sessions_store) + 1
             new_title = title.strip() if title else f"Obrolan {session_num}"
+            is_custom = bool(title and not self._is_generic_title(title))
 
             self.sessions_store[new_id] = {
                 "id": new_id,
                 "title": new_title,
+                "is_custom_named": is_custom,
                 "created_at": datetime.now().isoformat(),
                 "last_active": datetime.now().isoformat(),
                 "messages": []
@@ -1040,7 +1193,7 @@ class AdvancedMemoryManager:
             return True
 
     def get_sessions_list(self) -> List[Dict[str, Any]]:
-        """List all available sessions with metadata."""
+        """List all available sessions with metadata and auto-upgraded contextual titles."""
         with self.lock:
             if not hasattr(self, "sessions_store") or not self.sessions_store:
                 self.sessions_store = {
@@ -1055,16 +1208,35 @@ class AdvancedMemoryManager:
                 self.active_session_id = "default"
 
             res = []
+            updated_any = False
             for s_id, s_data in self.sessions_store.items():
+                cur_title = (s_data.get("title") or "").strip()
+                is_custom = s_data.get("is_custom_named", False)
+
+                msgs = s_data.get("messages", [])
+                if s_id == self.active_session_id and self.short_term_history:
+                    msgs = list(self.short_term_history)
+
+                # Auto-upgrade generic/placeholder titles if session has conversation messages
+                if not is_custom and self._is_generic_title(cur_title) and msgs:
+                    derived = self._derive_session_title_from_messages(msgs)
+                    if derived and derived != cur_title:
+                        s_data["title"] = derived
+                        cur_title = derived
+                        updated_any = True
+
                 res.append({
                     "id": s_id,
-                    "title": s_data.get("title", f"Sesi {s_id}"),
-                    "message_count": len(s_data.get("messages", [])),
+                    "title": cur_title or f"Chat {s_id[:6]}",
+                    "message_count": len(msgs),
                     "created_at": s_data.get("created_at"),
                     "last_active": s_data.get("last_active"),
                     "is_active": (s_id == self.active_session_id),
                     "pinned": bool(s_data.get("pinned", False))
                 })
+
+            if updated_any:
+                self.save_memory()
 
             pinned_sessions = [s for s in res if s.get("pinned")]
             unpinned_sessions = [s for s in res if not s.get("pinned")]
@@ -1081,6 +1253,7 @@ class AdvancedMemoryManager:
             if not clean_title:
                 return False
             self.sessions_store[session_id]["title"] = clean_title
+            self.sessions_store[session_id]["is_custom_named"] = True
             self.save_memory()
             return True
 

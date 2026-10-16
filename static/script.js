@@ -1379,8 +1379,12 @@ async function sendMessage() {
             renderModalPipeline(activePipelineTrace);
         }
         
+        if (data.session_title) {
+            const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
+            if (currentSession) currentSession.title = data.session_title;
+        }
         updateMemoryCount(); 
-        loadSessions();
+        await loadSessions();
         status.textContent = t('status_ready');
         startTriggerTimer(); 
         
@@ -1619,6 +1623,12 @@ async function loadSessions() {
             const activeSession = data.sessions.find(s => s.id === data.active_session_id);
             const isCurrentSessionPinned = activeSession ? Boolean(activeSession.pinned) : false;
             updateChatMenuPinState(isCurrentSessionPinned);
+
+            if (activeSession && activeSession.title && activeSession.title !== 'New chat' && activeSession.title !== 'Chat baru') {
+                document.title = `${activeSession.title} · Shiro`;
+            } else {
+                document.title = 'Shiro · AI Assistant';
+            }
 
             if (sessionSelect) {
                 sessionSelect.innerHTML = '';

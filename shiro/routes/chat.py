@@ -247,6 +247,15 @@ def chat():
             if training_enabled and (not image_base64 or "poster tersebut" not in reply.lower()):
                 memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
             
+            # Auto-update session title with smart contextual topic name if currently generic
+            session_title = None
+            if hasattr(memory, "auto_update_session_title"):
+                session_title = memory.auto_update_session_title(
+                    session_id=getattr(memory, "active_session_id", "default"),
+                    user_message=user_message,
+                    document_name=document_name
+                )
+
             # Menjaga seluruh riwayat percakapan tetap tersimpan utuh
             if len(memory.short_term_history) > 500:
                 compress_old_messages(memory, keep_count=500)
@@ -268,6 +277,7 @@ def chat():
                 "document_url": doc_url,
                 "document_type": doc_type,
                 "active_session_id": getattr(memory, "active_session_id", "default"),
+                "session_title": session_title,
                 "pipeline_trace": trace,
                 "agent_action": trace.get("agent_action")
             })
