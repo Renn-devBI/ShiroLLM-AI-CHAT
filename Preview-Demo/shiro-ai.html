@@ -1057,6 +1057,49 @@
             color: #fff;
         }
 
+        /* Scroll Bottom Button (ChatGPT-Style) */
+        .scroll-bottom-btn {
+            position: absolute;
+            bottom: 118px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 30;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 30px;
+            padding: 0 12px;
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-full);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .scroll-bottom-btn:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-surface-hover);
+        }
+
+        .scroll-bottom-btn.is-streaming {
+            border-color: rgba(99, 102, 241, 0.45);
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+        }
+
+        .scroll-bottom-btn.is-streaming i.ph-arrow-down {
+            animation: bounceSoft 1s infinite alternate ease-in-out;
+            color: #6366f1;
+        }
+
+        @keyframes bounceSoft {
+            0% { transform: translateY(-2px); }
+            100% { transform: translateY(2px); }
+        }
+
         /* --------------------------------------------------------------------------
            Modals
            -------------------------------------------------------------------------- */
@@ -1545,6 +1588,12 @@
                 </div>
             </section>
 
+            <!-- Scroll Bottom Button (ChatGPT-Style) -->
+            <button type="button" id="scroll-bottom-btn" class="scroll-bottom-btn hidden" title="Gulir ke pesan terbaru" aria-label="Gulir ke pesan terbaru" onclick="scrollDemoToBottom(true)">
+                <i class="ph ph-arrow-down"></i>
+                <span>Pesan terbaru</span>
+            </button>
+
             <!-- Composer Input Bar -->
             <footer class="composer-container">
                 <div class="composer-box">
@@ -1891,9 +1940,90 @@
         }
 
         // --------------------------------------------------------------------------
-        // Interactive Composer Simulation
+        // Interactive Composer Simulation & Smart Auto-Scroll (ChatGPT-Style)
         // --------------------------------------------------------------------------
         let isGenerating = false;
+        let isUserScrolledUp = false;
+        let isProgrammaticScroll = false;
+
+        function scrollDemoToBottom(force = false) {
+            const vp = document.getElementById('chat-viewport');
+            const btn = document.getElementById('scroll-bottom-btn');
+            if (!vp) return;
+            if (force) isUserScrolledUp = false;
+            if (isUserScrolledUp && !force) return;
+            isProgrammaticScroll = true;
+            vp.scrollTo({ top: vp.scrollHeight, behavior: 'smooth' });
+            if (btn) {
+                btn.classList.add('hidden');
+                btn.classList.remove('is-streaming');
+            }
+        }
+
+        // Setup scroll listeners on chat-viewport
+        (function initDemoScroll() {
+            const vp = document.getElementById('chat-viewport');
+            const btn = document.getElementById('scroll-bottom-btn');
+            if (!vp) return;
+
+            vp.addEventListener('wheel', (e) => {
+                if (e.deltaY < 0) {
+                    isUserScrolledUp = true;
+                    if (btn) {
+                        btn.classList.remove('hidden');
+                        if (isGenerating) btn.classList.add('is-streaming');
+                    }
+                } else if (e.deltaY > 0) {
+                    const dist = vp.scrollHeight - vp.scrollTop - vp.clientHeight;
+                    if (dist <= 30) {
+                        isUserScrolledUp = false;
+                        if (btn) {
+                            btn.classList.add('hidden');
+                            btn.classList.remove('is-streaming');
+                        }
+                    }
+                }
+            }, { passive: true });
+
+            vp.addEventListener('touchmove', () => {
+                const dist = vp.scrollHeight - vp.scrollTop - vp.clientHeight;
+                if (dist > 70) {
+                    isUserScrolledUp = true;
+                    if (btn) {
+                        btn.classList.remove('hidden');
+                        if (isGenerating) btn.classList.add('is-streaming');
+                    }
+                } else if (dist <= 30) {
+                    isUserScrolledUp = false;
+                    if (btn) {
+                        btn.classList.add('hidden');
+                        btn.classList.remove('is-streaming');
+                    }
+                }
+            }, { passive: true });
+
+            vp.addEventListener('scroll', () => {
+                if (isProgrammaticScroll) {
+                    isProgrammaticScroll = false;
+                    return;
+                }
+                const dist = vp.scrollHeight - vp.scrollTop - vp.clientHeight;
+                if (dist > 70) {
+                    isUserScrolledUp = true;
+                    if (btn) {
+                        btn.classList.remove('hidden');
+                        if (isGenerating) btn.classList.add('is-streaming');
+                    }
+                } else if (dist <= 30) {
+                    isUserScrolledUp = false;
+                    if (btn) {
+                        btn.classList.add('hidden');
+                        btn.classList.remove('is-streaming');
+                    }
+                }
+            }, { passive: true });
+        })();
+
         function adjustTextarea(el) {
             el.style.height = 'auto';
             el.style.height = Math.min(el.scrollHeight, 180) + 'px';
@@ -1925,8 +2055,16 @@
             `;
             container.appendChild(userMsg);
 
-            // Scroll down
+            // Reset scroll state saat user mengirim pesan baru
+            isUserScrolledUp = false;
+            const scrollBtn = document.getElementById('scroll-bottom-btn');
+            if (scrollBtn) {
+                scrollBtn.classList.add('hidden');
+                scrollBtn.classList.remove('is-streaming');
+            }
+
             const viewport = document.getElementById('chat-viewport');
+            isProgrammaticScroll = true;
             viewport.scrollTop = viewport.scrollHeight;
 
             // Simulasikan inferensi ShiroAI-v2-Agent
@@ -1945,6 +2083,7 @@
                 </div>
             `;
             container.appendChild(replyMsg);
+            isProgrammaticScroll = true;
             viewport.scrollTop = viewport.scrollHeight;
 
             const sampleResponse = `Halo Kakak! Sebagai **ShiroAI-v2-Agent**, permintaan Anda telah saya proses.\n\nBerikut kode JavaScript pembantu untuk tugas tersebut:\n\`\`\`javascript\n// filename: agent_tool.js\nfunction runAgentTask(command) {\n  console.log("ShiroAI-v2-Agent executing:", command);\n  return { status: "success", timestamp: Date.now() };\n}\n\`\`\`\nTombol **Unduh** sudah otomatis terpasang di atas blok kode!`;
@@ -1983,10 +2122,25 @@ function runAgentTask(command) {
                         Kode di atas siap langsung diunduh ke komputer Anda.
                     `;
                     hljs.highlightAll();
-                    viewport.scrollTop = viewport.scrollHeight;
+                    
+                    if (scrollBtn) {
+                        scrollBtn.classList.remove('is-streaming');
+                        const dist = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+                        scrollBtn.classList.toggle('hidden', dist <= 70);
+                    }
+                    if (!isUserScrolledUp) {
+                        isProgrammaticScroll = true;
+                        viewport.scrollTop = viewport.scrollHeight;
+                    }
                 } else {
                     bubbleEl.innerHTML = sampleResponse.slice(0, i).replace(/\n/g, '<br>') + ' ▌';
-                    viewport.scrollTop = viewport.scrollHeight;
+                    if (!isUserScrolledUp) {
+                        isProgrammaticScroll = true;
+                        viewport.scrollTop = viewport.scrollHeight;
+                    } else if (scrollBtn) {
+                        scrollBtn.classList.remove('hidden');
+                        scrollBtn.classList.add('is-streaming');
+                    }
                 }
             }, 30);
         }

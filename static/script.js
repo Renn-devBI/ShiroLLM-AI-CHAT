@@ -548,11 +548,96 @@ async function loadPrivacySettings() {
     }
 }
 
-// Auto-scroll
-function scrollToBottom() {
-    chatViewport.scrollTo({
-        top: chatViewport.scrollHeight,
-        behavior: 'smooth'
+// Smart Auto-Scroll State & Controls (ChatGPT-Style)
+const scrollBottomBtn = document.getElementById('scroll-bottom-btn');
+let isUserScrolledUp = false;
+let isProgrammaticScroll = false;
+
+function scrollToBottom(force = false, smooth = true) {
+    if (!chatViewport) return;
+    if (force) {
+        isUserScrolledUp = false;
+    }
+    if (isUserScrolledUp && !force) {
+        return;
+    }
+    isProgrammaticScroll = true;
+    if (smooth) {
+        chatViewport.scrollTo({
+            top: chatViewport.scrollHeight,
+            behavior: 'smooth'
+        });
+    } else {
+        chatViewport.scrollTop = chatViewport.scrollHeight;
+    }
+}
+
+function updateScrollBottomBtnVisibility() {
+    if (!chatViewport || !scrollBottomBtn) return;
+    const dist = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
+    const shouldShow = dist > 70;
+    scrollBottomBtn.classList.toggle('hidden', !shouldShow);
+    if (shouldShow && isGenerating) {
+        scrollBottomBtn.classList.add('is-streaming');
+    } else if (scrollBottomBtn) {
+        scrollBottomBtn.classList.remove('is-streaming');
+    }
+}
+
+if (chatViewport) {
+    // Wheel scroll: jika scroll ke atas, langsung lock userScrolledUp agar streaming tidak menarik layar ke bawah
+    chatViewport.addEventListener('wheel', (e) => {
+        if (e.deltaY < 0) {
+            isUserScrolledUp = true;
+            if (scrollBottomBtn) {
+                scrollBottomBtn.classList.remove('hidden');
+                if (isGenerating) scrollBottomBtn.classList.add('is-streaming');
+            }
+        } else if (e.deltaY > 0) {
+            const dist = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
+            if (dist <= 30) {
+                isUserScrolledUp = false;
+                if (scrollBottomBtn) {
+                    scrollBottomBtn.classList.add('hidden');
+                    scrollBottomBtn.classList.remove('is-streaming');
+                }
+            }
+        }
+    }, { passive: true });
+
+    // Touch scroll (Android / iOS)
+    chatViewport.addEventListener('touchmove', () => {
+        const dist = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
+        if (dist > 70) {
+            isUserScrolledUp = true;
+        } else if (dist <= 30) {
+            isUserScrolledUp = false;
+        }
+        updateScrollBottomBtnVisibility();
+    }, { passive: true });
+
+    // Scroll event umum (drag scrollbar / key navigation)
+    chatViewport.addEventListener('scroll', () => {
+        if (isProgrammaticScroll) {
+            isProgrammaticScroll = false;
+            return;
+        }
+        const dist = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
+        if (dist > 70) {
+            isUserScrolledUp = true;
+        } else if (dist <= 30) {
+            isUserScrolledUp = false;
+        }
+        updateScrollBottomBtnVisibility();
+    }, { passive: true });
+}
+
+if (scrollBottomBtn) {
+    scrollBottomBtn.addEventListener('click', () => {
+        isUserScrolledUp = false;
+        scrollBottomBtn.classList.add('hidden');
+        scrollBottomBtn.classList.remove('is-streaming');
+        scrollToBottom(true, true);
     });
 }
 
@@ -616,10 +701,17 @@ let mermaidCounter = 0;
 function parseMessageContent(text) {
     if (!text) return '';
 
+    // Auto-heal unclosed code fence agar potongan kode yang sedang di-generate atau terpotong tetap di-render utuh
+    let normalizedText = text;
+    const fenceMatches = normalizedText.match(/```/g);
+    if (fenceMatches && fenceMatches.length % 2 === 1) {
+        normalizedText += '\n```';
+    }
+
     const codeBlocks = [];
 
     // 1. Ekstrak Fenced Code Blocks: ```lang ... ```
-    let content = text.replace(/```([a-zA-Z0-9_\-\.]*)\s*\n?([\s\S]*?)```/g, function(match, lang, code) {
+    let content = normalizedText.replace(/```([a-zA-Z0-9_\-\.]*)\s*\n?([\s\S]*?)```/g, function(match, lang, code) {
         const cleanLang = (lang || '').trim().toLowerCase();
         const rawCode = (code || '').trim();
         const placeholder = `___SHIRO_BLOCK_${codeBlocks.length}___`;
@@ -1234,7 +1326,11 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     `;
     
     chatMessages.appendChild(messageDiv);
-    scrollToBottom();
+    if (role === 'user') {
+        scrollToBottom(true, true);
+    } else {
+        scrollToBottom(false, false);
+    }
 
     if (typeof hljs !== 'undefined') {
         messageDiv.querySelectorAll('pre code[class*="language-"]').forEach(block => {
@@ -1479,6 +1575,11 @@ async function sendMessage() {
 
     clearTimeout(triggerTimer); 
     isGenerating = true;
+    isUserScrolledUp = false;
+    if (scrollBottomBtn) {
+        scrollBottomBtn.classList.add('hidden');
+        scrollBottomBtn.classList.remove('is-streaming');
+    }
     userInput.disabled = true;
     sendBtn.disabled = true;
     sendBtn.classList.add('hidden');
@@ -1591,17 +1692,34 @@ async function sendMessage() {
                 }
                 if (assistantTextEl) {
                     let displayContent = text;
-                    if (!isDone) {
-                        const codeBlockCount = (displayContent.match(/```/g) || []).length;
-                        if (codeBlockCount % 2 === 1) {
-                            displayContent += '\n```';
-                        }
+                    const codeBlockCount = (displayContent.match(/```/g) || []).length;
+                    if (codeBlockCount % 2 === 1) {
+                        displayContent += '\n```';
                     }
+
+                    // Kunci scroll viewport agar layar tidak bergeser atau berkedip saat re-render innerHTML
+                    const prevScrollTop = chatViewport.scrollTop;
+                    const distFromBottom = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
+                    const isAtBottom = distFromBottom <= 60;
+
                     assistantTextEl.innerHTML = parseMessageContent(displayContent);
                     if (assistantBubble) {
                         assistantBubble.setAttribute('data-original-text', text);
                     }
-                    scrollToBottom();
+
+                    if (isUserScrolledUp) {
+                        // User sedang membaca chat sebelumnya di atas: pertahankan posisi scroll user!
+                        isProgrammaticScroll = true;
+                        chatViewport.scrollTop = prevScrollTop;
+                        if (scrollBottomBtn) {
+                            scrollBottomBtn.classList.remove('hidden');
+                            scrollBottomBtn.classList.add('is-streaming');
+                        }
+                    } else if (isAtBottom || !isDone) {
+                        // User berada di dasar: auto-follow seketika (non-smooth) agar streaming tidak lag
+                        isProgrammaticScroll = true;
+                        chatViewport.scrollTop = chatViewport.scrollHeight;
+                    }
                 }
             };
 
@@ -1786,6 +1904,10 @@ async function sendMessage() {
         clearPipelineSimulation();
         if (pipelineNavDot) pipelineNavDot.classList.add('hidden');
         isGenerating = false;
+        if (scrollBottomBtn) {
+            scrollBottomBtn.classList.remove('is-streaming');
+            updateScrollBottomBtnVisibility();
+        }
         userInput.disabled = false;
         sendBtn.disabled = false;
         sendBtn.classList.remove('hidden');
@@ -1982,6 +2104,12 @@ function renderMessagesList(messages) {
     if (drawer && !drawer.classList.contains('hidden')) {
         renderChatFilesList();
     }
+    isUserScrolledUp = false;
+    if (scrollBottomBtn) {
+        scrollBottomBtn.classList.add('hidden');
+        scrollBottomBtn.classList.remove('is-streaming');
+    }
+    scrollToBottom(true, false);
 }
 
 async function loadChatHistory() {

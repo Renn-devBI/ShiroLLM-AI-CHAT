@@ -227,6 +227,21 @@
             background: var(--bg-surface);
         }
 
+        .scroll-bottom-btn.is-streaming {
+            border-color: rgba(99, 102, 241, 0.45);
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+        }
+
+        .scroll-bottom-btn.is-streaming i.ph-arrow-down {
+            animation: bounceSoft 1s infinite alternate ease-in-out;
+            color: #6366f1;
+        }
+
+        @keyframes bounceSoft {
+            0% { transform: translateY(-2px); }
+            100% { transform: translateY(2px); }
+        }
+
         /* Composer & Footer Meta */
         .composer-bar {
             padding-top: 4px;
@@ -2317,20 +2332,5 @@
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
     <script src="/static/script.js"></script>
-    <script>
-        // Perilaku tambahan non-intrusif: tombol gulir cepat saat membaca riwayat panjang
-        (function () {
-            var vp = document.getElementById('chat-viewport');
-            var btn = document.getElementById('scroll-bottom-btn');
-            if (!vp || !btn) return;
-            vp.addEventListener('scroll', function () {
-                var dist = vp.scrollHeight - vp.scrollTop - vp.clientHeight;
-                btn.classList.toggle('hidden', dist < 180);
-            }, { passive: true });
-            btn.addEventListener('click', function () {
-                vp.scrollTo({ top: vp.scrollHeight, behavior: 'smooth' });
-            });
-        })();
-    </script>
 </body>
 </html>

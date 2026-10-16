@@ -532,11 +532,11 @@ def _prepare_inference_payload(
     if max_tokens:
         desired_max = int(max_tokens)
     elif api_version == "v2":
-        desired_max = 2048
+        desired_max = max(model_max_out, 4096)
     elif is_reasoning_enabled or tools:
         desired_max = max(model_max_out, 8192)
     else:
-        desired_max = model_max_out
+        desired_max = max(model_max_out, 4096)
 
     remaining_space = max(256, active_ctx - prompt_tokens_est - 128)
     max_output_tokens = min(desired_max, remaining_space)

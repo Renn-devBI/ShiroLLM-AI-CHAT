@@ -94,8 +94,8 @@ def validate_response(response: str, user_input: str = "") -> bool:
             if en_count >= 4 and en_count > (id_count * 1.5):
                 return False
     
-    # Batas panjang diperluas (8000 karakter) agar dapat memuat kode, ringkasan dokumen, dan cerita panjang
-    if len(response) > 8000:
+    # Batas panjang diperluas (64.000 karakter) agar dapat memuat kode website utuh, ringkasan dokumen, dan cerita panjang
+    if len(response) > 64000:
         return False
     
     if len(response.strip()) < 5:
@@ -123,6 +123,10 @@ def clean_response(response: str) -> str:
         inner = re.sub(r'</?think>', '', pre_think_raw, flags=re.IGNORECASE).strip()
         if inner:
             response = inner
+
+    # 1a. Lengkapi unclosed fenced code block jika terpotong batas token (agar indentasi dan HTML tags tidak rusak)
+    if response.count("```") % 2 == 1:
+        response += "\n```"
 
     # 1b. Lindungi blok kode agar indentasi dan karakter kode tidak rusak selama pembersihan teks
     code_blocks = []
@@ -286,6 +290,8 @@ def clean_vtuber_response(response: str, user_input: str = "") -> str:
             tag_prefix = f"[{tag_name}]"
             cleaned_text = cleaned.replace(tag_match.group(0), "").strip()
             cleaned = f"{tag_prefix} {cleaned_text}"
+        elif cleaned.startswith("```"):
+            cleaned = f"{tag_prefix}\n{cleaned}"
         else:
             cleaned = f'[Mouth Smile] "{cleaned}"' if not cleaned.startswith('"') else f'[Mouth Smile] {cleaned}'
     
