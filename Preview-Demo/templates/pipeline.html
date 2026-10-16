@@ -1,0 +1,1894 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alur eksekusi - Shiro</title>
+    <meta name="theme-color" content="#121315">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f2125'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%23ececef'%3ES%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+    <script>
+(function () {
+    // Mesin tema bersama (index.html dan pipeline.html). Tema "default" tidak
+    // menimpa apa pun, jadi tampilan awal persis seperti di style.css.
+    var KEY = 'shiro_theme_v1';
+    var PRESETS = [
+        { id: 'default',  name: 'Grafit',       bg: '#121315', fg: '#ececef', accent: '#94a3b8' },
+        { id: 'shiro',    name: 'Shiro',        bg: '#f4f4f2', fg: '#1d1e21', accent: '#3d6a8c' },
+        { id: 'midnight', name: 'Tengah malam', bg: '#10151d', fg: '#e4e8ef', accent: '#6f9cc4' },
+        { id: 'forest',   name: 'Hutan',        bg: '#121713', fg: '#e4eae3', accent: '#8fce9e' },
+        { id: 'dusk',     name: 'Senja',        bg: '#191615', fg: '#ece5e0', accent: '#d9a066' },
+        { id: 'sakura',   name: 'Sakura',       bg: '#191416', fg: '#eee5e9', accent: '#e596b2' }
+    ];
+    var TOKENS = ['--bg-base', '--bg-surface', '--bg-elevated', '--bg-input', '--bg-code',
+        '--border-subtle', '--border-default', '--border-hover',
+        '--text-primary', '--text-secondary', '--text-muted',
+        '--accent', '--accent-soft', '--ok', '--warn', '--danger', '--danger-soft',
+        '--wire', '--wire-done', '--grid-dot', '--grid-line',
+        '--code-fg', '--code-secondary', '--code-muted', '--code-border', '--code-hover'];
+    var HEX = /^#[0-9a-f]{6}$/i;
+
+    function toRgb(h) { var n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+    function toHex(r) { return '#' + r.map(function (v) { return Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0'); }).join(''); }
+    function mix(a, b, t) { var A = toRgb(a), B = toRgb(b); return toHex(A.map(function (v, i) { return v + (B[i] - v) * t; })); }
+    function rgba(h, a) { var c = toRgb(h); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+    function lum(h) {
+        var c = toRgb(h).map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    }
+    function contrast(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+    function isLight(h) { return lum(h) > 0.35; }
+
+    function derive(bg, fg, ac) {
+        var light = isLight(bg);
+        var surface = light ? mix(bg, '#ffffff', 0.55) : mix(bg, fg, 0.035);
+        var ok = light ? '#2e9467' : '#5fbf8f', warn = light ? '#b57a14' : '#e0a84a', danger = light ? '#d04a45' : '#e5736f';
+        var secondary = mix(fg, bg, 0.35), muted = mix(fg, bg, 0.58);
+        var codeBg = light ? '#1f2126' : mix(bg, '#000000', 0.28);
+        var codeFg = light ? '#e8e8ea' : fg;
+        var t = {
+            '--bg-base': bg, '--bg-surface': surface, '--bg-elevated': mix(bg, fg, light ? 0.07 : 0.075),
+            '--bg-input': surface, '--bg-code': codeBg,
+            '--border-subtle': mix(bg, fg, 0.09), '--border-default': mix(bg, fg, 0.17), '--border-hover': mix(bg, fg, 0.3),
+            '--text-primary': fg, '--text-secondary': secondary, '--text-muted': muted,
+            '--accent': ac, '--accent-soft': rgba(ac, 0.16),
+            '--ok': ok, '--warn': warn, '--danger': danger, '--danger-soft': rgba(danger, 0.12),
+            '--wire': mix(bg, fg, 0.2), '--wire-done': light ? '#3f8a68' : '#4f8f72',
+            '--grid-dot': mix(bg, fg, light ? 0.18 : 0.12), '--grid-line': mix(bg, fg, 0.07),
+            '--code-fg': codeFg,
+            '--code-secondary': light ? '#a3a5ab' : secondary,
+            '--code-muted': light ? '#80848c' : muted,
+            '--code-border': light ? '#2c2e33' : mix(codeBg, fg, 0.1),
+            '--code-hover': light ? '#2a2c31' : mix(codeBg, fg, 0.09)
+        };
+        return t;
+    }
+
+    function defaults() { var p = PRESETS[0]; return { preset: 'default', custom: { bg: p.bg, fg: p.fg, accent: p.accent } }; }
+
+    function validCustom(c) { return c && HEX.test(c.bg) && HEX.test(c.fg) && HEX.test(c.accent); }
+
+    function get() {
+        try {
+            var s = JSON.parse(localStorage.getItem(KEY));
+            if (s) {
+                var custom = validCustom(s.custom) ? s.custom : defaults().custom;
+                if (s.preset === 'custom' && validCustom(s.custom)) return { preset: 'custom', custom: custom };
+                if (PRESETS.some(function (p) { return p.id === s.preset; })) return { preset: s.preset, custom: custom };
+            }
+        } catch (e) { /* pakai default */ }
+        return defaults();
+    }
+
+    function resolve(theme) {
+        if (theme.preset === 'custom') return theme.custom;
+        var p = PRESETS.filter(function (x) { return x.id === theme.preset; })[0] || PRESETS[0];
+        return { bg: p.bg, fg: p.fg, accent: p.accent };
+    }
+
+    function apply(theme) {
+        var root = document.documentElement;
+        if (theme.preset === 'default') {
+            TOKENS.forEach(function (k) { root.style.removeProperty(k); });
+            root.style.colorScheme = '';
+            return;
+        }
+        var c = resolve(theme), t = derive(c.bg, c.fg, c.accent);
+        Object.keys(t).forEach(function (k) { root.style.setProperty(k, t[k]); });
+        root.style.colorScheme = isLight(c.bg) ? 'light' : 'dark';
+    }
+
+    function set(theme) {
+        try { localStorage.setItem(KEY, JSON.stringify(theme)); } catch (e) { /* penyimpanan dinonaktifkan */ }
+        apply(theme);
+    }
+
+    window.ShiroTheme = { presets: PRESETS, get: get, set: set, apply: apply, resolve: resolve, derive: derive, defaults: defaults, contrast: contrast, isLight: isLight, key: KEY };
+    apply(get());
+})();
+    </script>
+    <script>
+        // Mode embed: dipakai saat halaman ini dimuat di dalam modal pada halaman chat
+        if (new URLSearchParams(location.search).has('embed')) document.documentElement.classList.add('embed');
+    </script>
+    <style>
+        /* ==========================================================================
+           Shiro — Editor & Inspektur Alur Eksekusi
+           Desain: Matte presisi, garis 1px tegas, bebas warna neon/ungu & bebas glow.
+           ========================================================================== */
+        :root {
+            --bg-base: #121315;
+            --bg-surface: #17181b;
+            --bg-elevated: #1f2125;
+            --bg-code: #0e0f11;
+            --border-subtle: #23252a;
+            --border-default: #2e3138;
+            --border-hover: #434750;
+            --text-primary: #ececef;
+            --text-secondary: #9ea2ad;
+            --text-muted: #686c77;
+            --accent: #94a3b8;
+            --accent-soft: rgba(148, 163, 184, 0.12);
+            --ok: #4d9e78;
+            --warn: #c8913b;
+            --danger: #cf5c58;
+            --danger-soft: rgba(207, 92, 88, 0.12);
+            --wire: #3a3d44;
+            --wire-done: #4d9e78;
+            --grid-dot: #262930;
+            --grid-line: #1b1d22;
+            --code-fg: #e6e7ea;
+            --code-secondary: #9ea2ad;
+            --code-muted: #686c77;
+            --code-border: #23252a;
+            --code-hover: #1f2125;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --font-ui: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: var(--font-ui); font-size: 14px; background: var(--bg-base); color: var(--text-primary); overflow: hidden; -webkit-font-smoothing: antialiased; }
+        .hidden { display: none !important; }
+        button, input, select { font-family: inherit; }
+        :focus-visible { outline: 1.5px solid var(--border-hover); outline-offset: 1px; border-radius: var(--radius-sm); }
+        .ph-spin { animation: spin 0.9s linear infinite; display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .app { display: flex; flex-direction: column; width: 100vw; height: 100vh; height: 100dvh; }
+
+        /* ---------- Bilah Atas (Topbar) ---------- */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            height: 52px;
+            padding: 0 16px;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }
+        .tb-left, .tb-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .tb-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 12.5px;
+            font-weight: 600;
+            height: 32px;
+            padding: 0 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            transition: background 0.12s, border-color 0.12s, color 0.12s;
+        }
+        .tb-back:hover { background: var(--bg-elevated); border-color: var(--border-hover); color: var(--text-primary); }
+        .tb-sep { width: 1px; height: 16px; background: var(--border-subtle); }
+        .tb-title-wrap { display: flex; align-items: center; gap: 8px; }
+        .tb-title { font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }
+        .tb-badge {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            padding: 2px 7px;
+            border-radius: var(--radius-sm);
+        }
+
+        .test-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 0 1 440px;
+            height: 34px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            padding: 0 4px 0 10px;
+            transition: border-color 0.12s;
+        }
+        .test-bar:focus-within { border-color: var(--border-hover); }
+        .test-bar-icon { color: var(--text-muted); font-size: 14px; flex-shrink: 0; }
+        .test-bar input {
+            flex: 1;
+            min-width: 0;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-primary);
+            font-size: 12.5px;
+        }
+        .test-bar input::placeholder { color: var(--text-muted); }
+        .btn-run {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            height: 26px;
+            background: var(--text-primary);
+            color: var(--bg-base);
+            border: none;
+            border-radius: 4px;
+            padding: 0 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.12s;
+        }
+        .btn-run:hover { opacity: 0.88; }
+        .btn-run:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .conn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            height: 28px;
+            padding: 0 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+        .conn[data-state="on"] .conn-dot { background: var(--ok); }
+        .conn[data-state="retry"] .conn-dot { background: var(--warn); }
+        .total {
+            display: inline-flex;
+            align-items: center;
+            height: 28px;
+            padding: 0 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ---------- Area Kerja & Kanvas ---------- */
+        .workspace { flex: 1; display: flex; min-height: 0; }
+
+        .viewport {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            min-width: 0;
+            outline: none;
+            user-select: none;
+            touch-action: none;
+            background-color: var(--bg-base);
+            background-image: radial-gradient(circle, var(--grid-dot) 1px, transparent 1.2px);
+            background-size: 24px 24px;
+        }
+        .viewport.grid-lines {
+            background-image:
+                linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+        }
+        .viewport.grid-none { background-image: none; }
+        .viewport.panning, .viewport.pan-ready.panning { cursor: grabbing; }
+        .viewport.pan-ready { cursor: grab; }
+        .viewport.marquee-active { cursor: crosshair; }
+
+        .surface { position: absolute; left: 0; top: 0; width: 1px; height: 1px; transform-origin: 0 0; will-change: transform; }
+        .wires { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; z-index: 1; }
+        #nodes-layer { position: absolute; left: 0; top: 0; z-index: 2; }
+
+        /* ---------- Garis Koneksi ---------- */
+        .wire-hit { fill: none; stroke: transparent; stroke-width: 16px; pointer-events: stroke; cursor: pointer; }
+        .wire-line { fill: none; stroke: var(--wire); stroke-width: 1.75px; stroke-linecap: round; pointer-events: none; transition: stroke 0.15s; }
+        .wire:hover .wire-line { stroke: var(--border-hover); }
+        .wire.done .wire-line { stroke: var(--wire-done); }
+        .wire.selected .wire-line { stroke: var(--text-primary); stroke-width: 2.25px; }
+        .wire-flow { fill: none; stroke: var(--warn); stroke-width: 2px; stroke-linecap: round; stroke-dasharray: 5 9; pointer-events: none; opacity: 0; }
+        .wire.live .wire-flow { opacity: 1; animation: flow 0.6s linear infinite; }
+        @keyframes flow { to { stroke-dashoffset: -14; } }
+        .wire-draft { fill: none; stroke: var(--text-secondary); stroke-width: 1.75px; stroke-dasharray: 5 6; stroke-linecap: round; pointer-events: none; }
+
+        .wire-tools {
+            position: absolute;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 3px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            transform: translate(-50%, -50%) scale(calc(1 / var(--z, 1)));
+            transform-origin: center;
+        }
+        .wire-handle {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            cursor: ns-resize;
+            font-size: 13px;
+        }
+        .wire-handle:hover { background: var(--bg-elevated); color: var(--text-primary); }
+        .wire-tools button {
+            width: 24px;
+            height: 24px;
+            border: none;
+            background: transparent;
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .wire-tools button:hover { background: var(--danger-soft); color: var(--danger); }
+
+        /* ---------- Kartu Node (Matte, Tanpa Glow) ---------- */
+        .node {
+            position: absolute;
+            width: 240px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 12px 0 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            cursor: grab;
+            touch-action: none;
+            transition: border-color 0.12s, background 0.12s;
+        }
+        .node:hover { border-color: var(--border-hover); }
+        .node.selected {
+            border-color: var(--text-primary);
+            background: var(--bg-elevated);
+        }
+        .node[data-status="running"] { border-color: var(--warn); }
+        .node[data-status="error"] { border-color: var(--danger); }
+        .node.dragging {
+            cursor: grabbing;
+            z-index: 20;
+            border-color: var(--text-primary);
+            transition: none;
+        }
+
+        .node-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 17px;
+            flex-shrink: 0;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            color: var(--c, var(--text-secondary));
+        }
+        .node.selected .node-icon {
+            background: var(--bg-base);
+            border-color: var(--border-default);
+        }
+        .node-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .node-title-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+        .node-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); }
+        .node-step-num { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+        .node-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+        .node-sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .node-state {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .node[data-status="success"] .node-state { color: var(--ok); }
+        .node[data-status="running"] .node-state { color: var(--warn); }
+        .node[data-status="error"] .node-state { color: var(--danger); }
+
+        .port {
+            position: absolute;
+            top: 50%;
+            width: 10px;
+            height: 10px;
+            margin-top: -5px;
+            border-radius: 50%;
+            background: var(--bg-base);
+            border: 1.5px solid var(--border-hover);
+            cursor: crosshair;
+            z-index: 3;
+            transition: transform 0.12s, background 0.12s, border-color 0.12s;
+        }
+        .port.in { left: -6px; }
+        .port.out { right: -6px; }
+        .port:hover { transform: scale(1.25); border-color: var(--text-primary); background: var(--text-primary); }
+        .connecting .node.can-drop .port { border-color: var(--ok); }
+        .connecting .node.drop-target { border-color: var(--ok); background: var(--bg-elevated); }
+
+        .marquee {
+            position: absolute;
+            z-index: 6;
+            border: 1px solid var(--border-hover);
+            background: var(--accent-soft);
+            border-radius: 4px;
+            pointer-events: none;
+        }
+
+        /* ---------- Elemen Melayang di Kanvas ---------- */
+        .hint-chip {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 10;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            color: var(--text-secondary);
+            max-width: calc(100% - 24px);
+        }
+        .hint-chip i { font-size: 14px; color: var(--text-muted); flex-shrink: 0; }
+
+        .canvas-status {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 10;
+            display: none;
+            align-items: center;
+            gap: 10px;
+        }
+        .embed .canvas-status { display: inline-flex; }
+        .embed .topbar { display: none; }
+
+        .toolbar {
+            position: absolute;
+            bottom: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 4px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            max-width: calc(100% - 24px);
+            overflow-x: auto;
+        }
+        .tool-btn {
+            width: 30px;
+            height: 30px;
+            flex-shrink: 0;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.12s, color 0.12s, border-color 0.12s;
+        }
+        .tool-btn:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text-primary); }
+        .tool-btn:disabled { opacity: 0.35; cursor: default; }
+        .tool-btn.active {
+            background: var(--bg-elevated);
+            border-color: var(--border-default);
+            color: var(--text-primary);
+        }
+        .tool-sep { width: 1px; height: 18px; background: var(--border-subtle); margin: 0 4px; flex-shrink: 0; }
+        .zoom-text {
+            min-width: 44px;
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .tool-select {
+            height: 30px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-default);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: var(--radius-sm);
+            padding: 0 8px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .tool-select:hover { border-color: var(--border-hover); color: var(--text-primary); }
+
+        /* ---------- Panel Inspektur Kanan ---------- */
+        .inspector {
+            width: 350px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-surface);
+            border-left: 1px solid var(--border-subtle);
+            min-height: 0;
+        }
+        .insp-empty {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px;
+            color: var(--text-muted);
+            font-size: 12.5px;
+            line-height: 1.55;
+            overflow-y: auto;
+        }
+        .insp-section-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .insp-empty-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .insp-empty-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        /* Daftar Ringkasan Tahap di Panel Kosong */
+        .stage-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .stage-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 7px 10px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            text-align: left;
+            color: var(--text-secondary);
+            transition: border-color 0.12s, background 0.12s, color 0.12s;
+        }
+        .stage-item:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+        .stage-item-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+        .stage-item-num {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--text-muted);
+        }
+        .stage-item-name {
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .stage-item-meta {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .stage-item[data-status="success"] .stage-item-meta { color: var(--ok); }
+        .stage-item[data-status="running"] .stage-item-meta { color: var(--warn); }
+        .stage-item[data-status="error"] .stage-item-meta { color: var(--danger); }
+
+        .shortcuts { border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+        .shortcuts-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
+        .shortcut { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12px; }
+        .shortcut dt { color: var(--text-secondary); }
+        .shortcut dd {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        /* Panel Detail Node Terpilih */
+        .insp-main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+        .insp-nav-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-base);
+        }
+        .insp-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .insp-head .node-icon { width: 38px; height: 38px; font-size: 19px; }
+        .insp-head-info { flex: 1; min-width: 0; }
+        .insp-name { font-size: 13.5px; font-weight: 700; line-height: 1.3; word-break: break-word; }
+        .insp-status { font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); margin-top: 2px; }
+        .insp-extra { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+        .insp-summary {
+            padding: 10px 16px;
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            background: var(--bg-base);
+            border-bottom: 1px solid var(--border-subtle);
+            line-height: 1.5;
+        }
+        .insp-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 10px 16px; }
+        .seg {
+            display: flex;
+            padding: 2px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+        }
+        .seg button {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s;
+        }
+        .seg button:hover { color: var(--text-primary); }
+        .seg button.active { background: var(--bg-elevated); color: var(--text-primary); }
+        .btn-ghost {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 8px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s, border-color 0.12s;
+        }
+        .btn-ghost:hover { background: var(--bg-elevated); border-color: var(--border-subtle); color: var(--text-primary); }
+        .insp-body { flex: 1; overflow: auto; padding: 0 12px 12px; min-height: 0; }
+        .insp-body::-webkit-scrollbar { width: 6px; height: 6px; }
+        .insp-body::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 999px; }
+        .json-view {
+            --text-primary: var(--code-fg);
+            --text-secondary: var(--code-secondary);
+            --text-muted: var(--code-muted);
+            --border-subtle: var(--code-border);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            background: var(--bg-code);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 0;
+        }
+        .j-key { color: var(--text-primary); }
+        .j-str { color: #8ab89a; }
+        .j-num { color: #cf9f63; }
+        .j-bool, .j-null { color: var(--accent); }
+        .json-note { margin-top: 8px; font-size: 11.5px; color: var(--text-muted); }
+
+        .toast {
+            position: fixed;
+            bottom: 66px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-hover);
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 12.5px;
+            font-weight: 600;
+        }
+
+        @media (max-width: 860px) {
+            .workspace { flex-direction: column; }
+            .inspector { width: 100%; height: 42%; border-left: none; border-top: 1px solid var(--border-subtle); }
+            .test-bar { display: none; }
+            .hint-chip { display: none; }
+            .shortcuts { display: none; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .wire.live .wire-flow { animation: none; }
+            .ph-spin { animation-duration: 2s; }
+            * { transition-duration: 0.01ms !important; }
+        }
+    </style>
+</head>
+<body>
+<div class="app">
+    <header class="topbar">
+        <div class="tb-left">
+            <a href="/" class="tb-back" title="Kembali ke percakapan"><i class="ph ph-arrow-left"></i><span>Chat</span></a>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <div class="tb-title-wrap">
+                <span class="tb-title">Alur eksekusi</span>
+                <span class="tb-badge">8 tahap</span>
+            </div>
+        </div>
+
+        <form id="test-run-form" class="test-bar" autocomplete="off">
+            <i class="ph ph-terminal-window test-bar-icon" aria-hidden="true"></i>
+            <input type="text" id="test-input" placeholder="Kirim pesan uji untuk menginspeksi alur...">
+            <button type="submit" id="test-submit-btn" class="btn-run"><i class="ph ph-play"></i> Jalankan</button>
+        </form>
+
+        <div class="tb-right">
+            <span class="conn" id="conn" data-state="off" role="status"><span class="conn-dot"></span><span id="sse-status-text">Menyambung</span></span>
+            <span class="total" id="total-time-badge" title="Total durasi eksekusi">0 ms</span>
+        </div>
+    </header>
+
+    <div class="workspace">
+        <div class="viewport" id="canvas-viewport" tabindex="0" aria-label="Kanvas alur eksekusi">
+            <div class="surface" id="canvas-surface">
+                <svg id="connections-svg" class="wires" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <path id="draft-wire" class="wire-draft" d=""></path>
+                </svg>
+                <div id="nodes-layer"></div>
+                <div id="wire-tools" class="wire-tools hidden">
+                    <div class="wire-handle" id="wire-handle" title="Tarik untuk melengkungkan garis"><i class="ph ph-arrows-vertical"></i></div>
+                    <button type="button" id="wire-delete" title="Hapus garis (Delete)" aria-label="Hapus garis"><i class="ph ph-trash"></i></button>
+                </div>
+                <div id="selection-marquee" class="marquee hidden"></div>
+            </div>
+
+            <div class="hint-chip">
+                <i class="ph ph-info"></i>
+                <span>Tata letak hanya mengubah tampilan kanvas, urutan eksekusi tetap sama.</span>
+            </div>
+
+            <div class="canvas-status">
+                <span class="conn" id="conn-embed" data-state="off"><span class="conn-dot"></span><span id="sse-status-text-embed">Menyambung</span></span>
+            </div>
+
+            <div class="toolbar" role="toolbar" aria-label="Kontrol kanvas">
+                <button type="button" class="tool-btn" id="tb-undo" title="Urungkan (Ctrl+Z)" aria-label="Urungkan"><i class="ph ph-arrow-counter-clockwise"></i></button>
+                <button type="button" class="tool-btn" id="tb-redo" title="Ulangi (Ctrl+Shift+Z)" aria-label="Ulangi"><i class="ph ph-arrow-clockwise"></i></button>
+                <span class="tool-sep"></span>
+                <button type="button" class="tool-btn" id="tb-zoom-out" title="Perkecil (-)" aria-label="Perkecil"><i class="ph ph-minus"></i></button>
+                <span class="zoom-text" id="zoom-level-text">100%</span>
+                <button type="button" class="tool-btn" id="tb-zoom-in" title="Perbesar (+)" aria-label="Perbesar"><i class="ph ph-plus"></i></button>
+                <button type="button" class="tool-btn" id="tb-fit" title="Sesuaikan ke layar (Shift+1)" aria-label="Sesuaikan ke layar"><i class="ph ph-corners-out"></i></button>
+                <span class="tool-sep"></span>
+                <button type="button" class="tool-btn active" id="tb-tool-select" title="Pilih dan seret node" aria-label="Mode pilih"><i class="ph ph-cursor"></i></button>
+                <button type="button" class="tool-btn" id="tb-tool-pan" title="Geser kanvas (atau tahan Spasi)" aria-label="Mode geser"><i class="ph ph-hand"></i></button>
+                <span class="tool-sep"></span>
+                <button type="button" class="tool-btn" id="tb-tidy" title="Kembalikan posisi node bawaan" aria-label="Kembalikan posisi node bawaan"><i class="ph ph-squares-four"></i></button>
+                <button type="button" class="tool-btn" id="tb-reset-wires" title="Kembalikan sambungan garis bawaan" aria-label="Kembalikan sambungan garis bawaan"><i class="ph ph-flow-arrow"></i></button>
+                <select id="wire-style-select" class="tool-select" title="Gaya garis penghubung" aria-label="Gaya garis penghubung">
+                    <option value="curved">Melengkung</option>
+                    <option value="step">Siku</option>
+                    <option value="straight">Lurus</option>
+                </select>
+                <button type="button" class="tool-btn" id="tb-grid" title="Ganti latar kanvas: titik, garis, polos" aria-label="Ganti latar"><i class="ph ph-grid-four"></i></button>
+            </div>
+        </div>
+
+        <aside class="inspector" aria-label="Inspektur data node">
+            <div class="insp-empty" id="insp-empty">
+                <div>
+                    <div class="insp-section-head">
+                        <div class="insp-empty-title">Tahap eksekusi</div>
+                    </div>
+                    <p class="insp-empty-sub">Pilih node pada kanvas atau daftar di bawah untuk memeriksa muatan JSON input dan output.</p>
+                    <div class="stage-list" id="insp-stage-list"></div>
+                </div>
+                <div class="shortcuts">
+                    <div class="shortcuts-title">Pintasan kanvas</div>
+                    <dl>
+                        <div class="shortcut"><dt>Geser kanvas</dt><dd>Scroll / Spasi + seret</dd></div>
+                        <div class="shortcut"><dt>Perbesar / perkecil</dt><dd>Ctrl + Scroll</dd></div>
+                        <div class="shortcut"><dt>Multi-pilihan</dt><dd>Shift + Klik</dd></div>
+                        <div class="shortcut"><dt>Sambungkan node</dt><dd>Tarik titik kanan</dd></div>
+                        <div class="shortcut"><dt>Hapus garis</dt><dd>Delete</dd></div>
+                        <div class="shortcut"><dt>Urungkan</dt><dd>Ctrl + Z</dd></div>
+                        <div class="shortcut"><dt>Sesuaikan layar</dt><dd>Shift + 1</dd></div>
+                    </dl>
+                </div>
+            </div>
+            <div class="insp-main hidden" id="insp-main">
+                <div class="insp-nav-bar">
+                    <button type="button" class="btn-ghost" id="insp-back-btn" title="Kembali ke daftar tahap">
+                        <i class="ph ph-arrow-left"></i> Semua tahap
+                    </button>
+                    <button type="button" class="btn-ghost" id="insp-focus-btn" title="Pusatkan node di kanvas">
+                        <i class="ph ph-crosshair"></i> Fokus node
+                    </button>
+                </div>
+                <div class="insp-head">
+                    <div class="node-icon" id="insp-icon"><i class="ph ph-gear"></i></div>
+                    <div class="insp-head-info">
+                        <div class="insp-name" id="side-node-name">-</div>
+                        <div class="insp-status" id="side-node-meta"></div>
+                        <div class="insp-extra hidden" id="insp-extra"></div>
+                    </div>
+                </div>
+                <div class="insp-summary hidden" id="insp-summary"></div>
+                <div class="insp-bar">
+                    <div class="seg">
+                        <button type="button" id="tab-out-btn" class="active">Output</button>
+                        <button type="button" id="tab-in-btn">Input</button>
+                    </div>
+                    <button type="button" class="btn-ghost" id="insp-copy" title="Salin muatan JSON"><i class="ph ph-copy"></i> Salin JSON</button>
+                </div>
+                <div class="insp-body" id="insp-body" aria-live="polite">
+                    <pre class="json-view"><code id="side-code-view"></code></pre>
+                    <div class="json-note hidden" id="json-note"></div>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+<div class="toast hidden" id="toast" role="status"></div>
+
+<script>
+(() => {
+    'use strict';
+
+    /* ======================================================================
+       Prinsip: kanvas ini hanya lapisan TAMPILAN.
+       - Posisi node, sambungan garis, zoom, dan pilihan disimpan di sini
+         (localStorage) dan tidak pernah dikirim ke server.
+       - Data eksekusi (trace) hanya mengubah isi/status node yang SUDAH ada.
+         Elemen node dan garis dibuat sekali lalu diperbarui di tempat, jadi
+         update dari server tidak memutus drag atau menggeser apa pun.
+       ====================================================================== */
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const NODE_W = 240, NODE_H = 60, GRID = 16;
+    const MIN_ZOOM = 0.3, MAX_ZOOM = 2;
+    const STORE_KEY = 'shiro_flow_v4';
+
+    const $ = (id) => document.getElementById(id);
+    const viewport = $('canvas-viewport');
+    const surface = $('canvas-surface');
+    const svg = $('connections-svg');
+    const draft = $('draft-wire');
+    const nodesLayer = $('nodes-layer');
+    const marquee = $('selection-marquee');
+    const tools = $('wire-tools');
+    const stageListEl = $('insp-stage-list');
+
+    /* ---------------- Definisi node bawaan (selaras dengan script.js) ---------------- */
+    const NODE_ORDER = ['node_input', 'node_emotion', 'node_memory', 'node_prompt', 'node_llm', 'node_filter', 'node_state', 'node_output'];
+    const NODE_META = {
+        node_input:   { step: '01', name: 'Input Ingestion',                icon: 'ph-chat-circle-dots',  color: '#6488a8' },
+        node_emotion: { step: '02', name: 'Emotion & Tone Classifier',      icon: 'ph-heartbeat',         color: '#b87366' },
+        node_memory:  { step: '03', name: 'Cognitive Memory & RDF Retrieval', icon: 'ph-brain',           color: '#788896' },
+        node_prompt:  { step: '04', name: 'Dynamic Prompt Synthesizer',     icon: 'ph-brackets-curly',    color: '#569499' },
+        node_llm:     { step: '05', name: 'Neural Inference Engine',        icon: 'ph-cpu',               color: '#c8913b' },
+        node_filter:  { step: '06', name: 'Anti-Hallucination & CoT Filter', icon: 'ph-shield-check',     color: '#4d9e78' },
+        node_state:   { step: '07', name: 'State & Persistence Sync',       icon: 'ph-database',          color: '#6e7f91' },
+        node_output:  { step: '08', name: 'Response Delivery Stream',       icon: 'ph-paper-plane-right', color: '#6488a8' }
+    };
+
+    // Dua baris, kiri ke kanan; semua kelipatan GRID agar rapi saat snap
+    const DEFAULT_POS = {};
+    NODE_ORDER.forEach((id, i) => {
+        DEFAULT_POS[id] = { x: 64 + (i % 4) * 320, y: 96 + Math.floor(i / 4) * 160 };
+    });
+    const DEFAULT_EDGES = NODE_ORDER.slice(0, -1).map((id, i) => ({ from: id, to: NODE_ORDER[i + 1], curvature: 0 }));
+
+    const clone = (o) => JSON.parse(JSON.stringify(o));
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const edgeId = (e) => e.from + '>' + e.to;
+
+    /* ---------------- Penyimpanan (hanya tampilan) ---------------- */
+    const OLD_DEFAULT = {
+        node_input: { x: 60, y: 80 }, node_emotion: { x: 330, y: 80 }, node_memory: { x: 600, y: 80 }, node_prompt: { x: 870, y: 80 },
+        node_llm: { x: 60, y: 280 }, node_filter: { x: 330, y: 280 }, node_state: { x: 600, y: 280 }, node_output: { x: 870, y: 280 }
+    };
+
+    function sanitizeEdges(list) {
+        const seen = new Set();
+        return (Array.isArray(list) ? list : []).filter((e) => {
+            if (!e || typeof e.from !== 'string' || typeof e.to !== 'string' || e.from === e.to) return false;
+            const id = edgeId(e);
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        }).map((e) => ({ from: e.from, to: e.to, curvature: Number.isFinite(e.curvature) ? e.curvature : 0 }));
+    }
+
+    function loadState() {
+        const base = { pos: clone(DEFAULT_POS), edges: clone(DEFAULT_EDGES), wireStyle: 'curved', grid: 0 };
+        try {
+            const raw = localStorage.getItem(STORE_KEY);
+            if (raw) {
+                const s = JSON.parse(raw);
+                return {
+                    pos: { ...base.pos, ...(s.pos || {}) },
+                    edges: Array.isArray(s.edges) ? sanitizeEdges(s.edges) : base.edges,
+                    wireStyle: ['curved', 'step', 'straight'].includes(s.wireStyle) ? s.wireStyle : 'curved',
+                    grid: [0, 1, 2].includes(s.grid) ? s.grid : 0
+                };
+            }
+            const lp = JSON.parse(localStorage.getItem('shiro_flowchart_layout_v3') || 'null');
+            if (lp && Object.keys(OLD_DEFAULT).some((k) => !lp[k] || lp[k].x !== OLD_DEFAULT[k].x || lp[k].y !== OLD_DEFAULT[k].y)) {
+                base.pos = { ...base.pos, ...lp };
+            }
+            const ep = sanitizeEdges(JSON.parse(localStorage.getItem('shiro_flowchart_edges_v3') || 'null'));
+            if (ep.length && JSON.stringify(ep.map(({ from, to }) => ({ from, to }))) !== JSON.stringify(DEFAULT_EDGES.map(({ from, to }) => ({ from, to })))) {
+                base.edges = ep;
+            }
+            const ws = localStorage.getItem('shiro_wire_style');
+            if (['curved', 'step', 'straight'].includes(ws)) base.wireStyle = ws;
+        } catch (e) { /* abaikan, pakai bawaan */ }
+        return base;
+    }
+
+    const initial = loadState();
+    let pos = initial.pos;
+    let edges = initial.edges;
+    let wireStyle = initial.wireStyle;
+    let gridMode = initial.grid;
+
+    function save() {
+        try { localStorage.setItem(STORE_KEY, JSON.stringify({ pos, edges, wireStyle, grid: gridMode })); } catch (e) { /* penyimpanan penuh/dinonaktifkan */ }
+    }
+
+    /* ---------------- State runtime ---------------- */
+    let trace = null;
+    let nodesById = new Map();
+    const nodeEls = new Map();
+    const wireEls = new Map();
+    const stageEls = new Map();
+
+    let selected = new Set();
+    let selectedWire = null;
+    let pan = { x: 0, y: 0 };
+    let zoom = 1;
+    let viewTouched = false;
+    let tool = 'select';
+    let spaceDown = false;
+    let gesture = null;
+    let inspectTab = 'output';
+    let lastInspectKey = '';
+
+    /* ---------------- Riwayat (undo/redo, hanya tata letak) ---------------- */
+    const history = [];
+    const future = [];
+    const snapshot = () => JSON.stringify({ pos, edges });
+
+    function beginChange() {
+        history.push(snapshot());
+        if (history.length > 80) history.shift();
+        future.length = 0;
+        updateHistoryUi();
+    }
+
+    function restore(s) {
+        const o = JSON.parse(s);
+        pos = o.pos;
+        edges = o.edges;
+        selectedWire = null;
+        applyAllPositions();
+        rebuildWires();
+        save();
+    }
+
+    function undo() { if (!history.length) return; future.push(snapshot()); restore(history.pop()); updateHistoryUi(); }
+    function redo() { if (!future.length) return; history.push(snapshot()); restore(future.pop()); updateHistoryUi(); }
+
+    function updateHistoryUi() {
+        $('tb-undo').disabled = history.length === 0;
+        $('tb-redo').disabled = future.length === 0;
+    }
+
+    /* ---------------- Geometri garis ---------------- */
+    function roundedPath(pts, r) {
+        let d = `M${pts[0][0]} ${pts[0][1]}`;
+        for (let i = 1; i < pts.length - 1; i++) {
+            const [px, py] = pts[i - 1], [cx, cy] = pts[i], [nx, ny] = pts[i + 1];
+            const l1 = Math.hypot(cx - px, cy - py), l2 = Math.hypot(nx - cx, ny - cy);
+            const rr = Math.min(r, l1 / 2, l2 / 2);
+            if (rr < 0.5) { d += `L${cx} ${cy}`; continue; }
+            const ax = cx + (px - cx) / l1 * rr, ay = cy + (py - cy) / l1 * rr;
+            const bx = cx + (nx - cx) / l2 * rr, by = cy + (ny - cy) / l2 * rr;
+            d += `L${ax} ${ay}Q${cx} ${cy} ${bx} ${by}`;
+        }
+        const last = pts[pts.length - 1];
+        return d + `L${last[0]} ${last[1]}`;
+    }
+
+    function isBackEdge(x1, x2) { return x2 < x1 + 48; }
+
+    function edgePath(x1, y1, x2, y2, curv, style) {
+        style = style || wireStyle;
+        if (style === 'straight') return `M${x1} ${y1}L${x2} ${y2}`;
+        if (isBackEdge(x1, x2)) {
+            const out = x1 + 28, inn = x2 - 28;
+            let midY = (y1 + y2) / 2 + curv;
+            if (Math.abs(y2 - y1) < NODE_H) midY = Math.min(y1, y2) - 56 + curv;
+            return roundedPath([[x1, y1], [out, y1], [out, midY], [inn, midY], [inn, y2], [x2, y2]], 12);
+        }
+        if (style === 'step') {
+            const mx = (x1 + x2) / 2 + curv;
+            return roundedPath([[x1, y1], [mx, y1], [mx, y2], [x2, y2]], 10);
+        }
+        const off = Math.max(50, (x2 - x1) * 0.5);
+        return `M${x1} ${y1}C${x1 + off} ${y1 + curv},${x2 - off} ${y2 - curv},${x2} ${y2}`;
+    }
+
+    const outPoint = (id) => ({ x: pos[id].x + NODE_W, y: pos[id].y + NODE_H / 2 });
+    const inPoint = (id) => ({ x: pos[id].x, y: pos[id].y + NODE_H / 2 });
+
+    /* ---------------- Node & Daftar Tahap ---------------- */
+    function freeSlot() {
+        for (let i = 0; i < 40; i++) {
+            const p = { x: 64 + (i % 4) * 320, y: 96 + Math.floor(i / 4) * 160 };
+            const taken = Object.values(pos).some((q) => Math.abs(q.x - p.x) < NODE_W && Math.abs(q.y - p.y) < NODE_H);
+            if (!taken) return p;
+        }
+        return { x: 64, y: 96 };
+    }
+
+    function placeNode(el, id) {
+        el.style.left = pos[id].x + 'px';
+        el.style.top = pos[id].y + 'px';
+    }
+
+    function applyAllPositions() {
+        nodeEls.forEach((rec, id) => { if (pos[id]) placeNode(rec.el, id); });
+    }
+
+    function ensureStageItem(id) {
+        let srec = stageEls.get(id);
+        if (srec || !stageListEl) return srec;
+        const meta = NODE_META[id] || {};
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'stage-item';
+        btn.dataset.id = id;
+        btn.innerHTML =
+            '<span class="stage-item-left">' +
+                '<span class="stage-item-num">' + (meta.step || '--') + '</span>' +
+                '<span class="stage-item-name"></span>' +
+            '</span>' +
+            '<span class="stage-item-meta">Menunggu</span>';
+        btn.addEventListener('click', () => {
+            selected = new Set([id]);
+            selectedWire = null;
+            paintWireStates();
+            refreshTools();
+            updateSelectionUi();
+        });
+        stageListEl.appendChild(btn);
+        srec = {
+            el: btn,
+            name: btn.querySelector('.stage-item-name'),
+            meta: btn.querySelector('.stage-item-meta')
+        };
+        stageEls.set(id, srec);
+        return srec;
+    }
+
+    function ensureNode(id) {
+        let rec = nodeEls.get(id);
+        if (rec) return rec;
+        if (!pos[id]) pos[id] = freeSlot();
+        const meta = NODE_META[id] || {};
+        const idx = NODE_ORDER.indexOf(id);
+        const stepStr = meta.step || (idx >= 0 ? String(idx + 1).padStart(2, '0') : '');
+        const el = document.createElement('div');
+        el.className = 'node';
+        el.id = id;
+        el.dataset.id = id;
+        el.tabIndex = 0;
+        el.setAttribute('role', 'button');
+        el.innerHTML =
+            '<div class="port in" data-port="in" title="Masuk"></div>' +
+            '<div class="port out" data-port="out" title="Tarik ke node lain untuk menyambung"></div>' +
+            '<div class="node-icon"><i class="ph"></i></div>' +
+            '<div class="node-body">' +
+                '<div class="node-title-row"><span class="node-title"></span><span class="node-step-num">' + stepStr + '</span></div>' +
+                '<div class="node-meta"><span class="node-sub"></span><span class="node-state"></span></div>' +
+            '</div>';
+        placeNode(el, id);
+        nodesLayer.appendChild(el);
+        rec = {
+            el,
+            icon: el.querySelector('.node-icon i'),
+            title: el.querySelector('.node-title'),
+            sub: el.querySelector('.node-sub'),
+            state: el.querySelector('.node-state'),
+            key: ''
+        };
+        nodeEls.set(id, rec);
+        ensureStageItem(id);
+        return rec;
+    }
+
+    function stateHtml(status, ms) {
+        if (status === 'running') return '<i class="ph ph-spinner ph-spin"></i><span>Berjalan</span>';
+        if (status === 'success') return '<i class="ph ph-check"></i><span>' + Math.round(ms || 0) + ' ms</span>';
+        if (status === 'error') return '<i class="ph ph-warning"></i><span>Gagal</span>';
+        return '';
+    }
+
+    function stageMetaText(status, ms) {
+        if (status === 'running') return 'Berjalan...';
+        if (status === 'success') return Math.round(ms || 0) + ' ms';
+        if (status === 'error') return 'Gagal';
+        return 'Menunggu';
+    }
+
+    // Memperbarui isi node yang sudah ada. Tidak pernah membuat ulang elemen.
+    function paintNode(id, n) {
+        n = n || {};
+        const rec = ensureNode(id);
+        const meta = NODE_META[id] || {};
+        const name = n.name || meta.name || id;
+        const icon = n.icon || meta.icon || 'ph-gear';
+        const color = n.color || meta.color || '#6488a8';
+        const status = n.status || 'idle';
+        const summary = n.summary || (status === 'idle' ? 'Menunggu' : '');
+        const key = [name, icon, color, status, n.duration_ms, summary].join('|');
+        if (rec.key === key) return;
+        rec.key = key;
+        rec.el.style.setProperty('--c', color);
+        rec.el.dataset.status = status;
+        rec.icon.className = 'ph ' + icon;
+        rec.title.textContent = name;
+        rec.title.title = name;
+        rec.sub.textContent = summary;
+        rec.state.innerHTML = stateHtml(status, n.duration_ms);
+        rec.el.setAttribute('aria-label', name + ', ' + (status === 'idle' ? 'menunggu' : status));
+
+        const srec = ensureStageItem(id);
+        if (srec) {
+            srec.el.dataset.status = status;
+            srec.name.textContent = name;
+            srec.meta.textContent = stageMetaText(status, n.duration_ms);
+        }
+    }
+
+    function nodeData(id) {
+        return nodesById.get(id) || { id, ...(NODE_META[id] || {}), status: 'idle', duration_ms: 0, summary: '', data_in: {}, data_out: {} };
+    }
+
+    /* ---------------- Garis ---------------- */
+    function mkPath(cls) {
+        const p = document.createElementNS(NS, 'path');
+        p.setAttribute('class', cls);
+        return p;
+    }
+
+    function createWire(id) {
+        const g = document.createElementNS(NS, 'g');
+        g.setAttribute('class', 'wire');
+        g.setAttribute('data-id', id);
+        const hit = mkPath('wire-hit'), line = mkPath('wire-line'), flow = mkPath('wire-flow');
+        g.append(hit, line, flow);
+        svg.insertBefore(g, draft);
+        wireEls.set(id, { g, hit, line, flow });
+    }
+
+    function updateWire(e) {
+        const rec = wireEls.get(edgeId(e));
+        if (!rec) return;
+        if (!pos[e.from] || !pos[e.to]) { rec.g.style.display = 'none'; return; }
+        rec.g.style.display = '';
+        const a = outPoint(e.from), b = inPoint(e.to);
+        const d = edgePath(a.x, a.y, b.x, b.y, e.curvature || 0);
+        rec.hit.setAttribute('d', d);
+        rec.line.setAttribute('d', d);
+        rec.flow.setAttribute('d', d);
+    }
+
+    function paintWireStates() {
+        edges.forEach((e) => {
+            const rec = wireEls.get(edgeId(e));
+            if (!rec) return;
+            const f = (nodesById.get(e.from) || {}).status, t = (nodesById.get(e.to) || {}).status;
+            rec.g.classList.toggle('done', f === 'success' && t === 'success');
+            rec.g.classList.toggle('live', t === 'running');
+            rec.g.classList.toggle('selected', selectedWire === edgeId(e));
+        });
+    }
+
+    function rebuildWires() {
+        const ids = new Set(edges.map(edgeId));
+        wireEls.forEach((rec, id) => { if (!ids.has(id)) { rec.g.remove(); wireEls.delete(id); } });
+        edges.forEach((e) => { if (!wireEls.has(edgeId(e))) createWire(edgeId(e)); });
+        edges.forEach(updateWire);
+        paintWireStates();
+        refreshTools();
+    }
+
+    function updateWiresFor(idSet) {
+        edges.forEach((e) => { if (idSet.has(e.from) || idSet.has(e.to)) updateWire(e); });
+        refreshTools();
+    }
+
+    function refreshTools() {
+        const rec = selectedWire && wireEls.get(selectedWire);
+        if (!rec) { tools.classList.add('hidden'); return; }
+        const len = rec.line.getTotalLength();
+        const p = rec.line.getPointAtLength(len / 2);
+        tools.style.left = p.x + 'px';
+        tools.style.top = p.y + 'px';
+        tools.classList.remove('hidden');
+    }
+
+    function selectWire(id) {
+        selectedWire = id;
+        selected = new Set();
+        paintWireStates();
+        refreshTools();
+        updateSelectionUi();
+    }
+
+    function deleteSelectedWire() {
+        if (!selectedWire) return;
+        beginChange();
+        edges = edges.filter((e) => edgeId(e) !== selectedWire);
+        selectedWire = null;
+        rebuildWires();
+        save();
+    }
+
+    function addEdge(from, to) {
+        if (from === to || edges.some((e) => e.from === from && e.to === to)) return false;
+        beginChange();
+        edges.push({ from, to, curvature: 0 });
+        rebuildWires();
+        save();
+        selectWire(from + '>' + to);
+        return true;
+    }
+
+    /* ---------------- Seleksi & Inspektur ---------------- */
+    function updateSelectionUi() {
+        nodeEls.forEach((rec, id) => rec.el.classList.toggle('selected', selected.has(id)));
+        updateInspector(false);
+    }
+
+    function highlightJson(text) {
+        const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return esc.replace(/("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (m) => {
+            let cls = 'j-num';
+            if (m.charAt(0) === '"') cls = /:$/.test(m) ? 'j-key' : 'j-str';
+            else if (m === 'true' || m === 'false') cls = 'j-bool';
+            else if (m === 'null') cls = 'j-null';
+            return '<span class="' + cls + '">' + m + '</span>';
+        });
+    }
+
+    const JSON_LIMIT = 60000;
+    let currentJsonText = '';
+
+    function updateInspector(force) {
+        const ordered = NODE_ORDER.filter((id) => selected.has(id)).concat([...selected].filter((id) => !NODE_ORDER.includes(id)));
+        const id = ordered[0];
+        $('insp-empty').classList.toggle('hidden', !!id);
+        $('insp-main').classList.toggle('hidden', !id);
+        if (!id) { lastInspectKey = ''; return; }
+
+        const n = nodeData(id);
+        const data = inspectTab === 'output' ? n.data_out : n.data_in;
+        let text = JSON.stringify(data || {}, null, 2);
+        const key = [id, inspectTab, n.status, n.duration_ms, n.summary, n.name, ordered.length, text.length].join('|');
+        if (!force && key === lastInspectKey) return;
+        lastInspectKey = key;
+
+        const color = n.color || (NODE_META[id] || {}).color || '#6488a8';
+        const iconWrap = $('insp-icon');
+        iconWrap.style.setProperty('--c', color);
+        iconWrap.firstElementChild.className = 'ph ' + (n.icon || (NODE_META[id] || {}).icon || 'ph-gear');
+        $('side-node-name').textContent = n.name || id;
+
+        const labels = { idle: 'Menunggu', running: 'Berjalan', success: 'Berhasil', error: 'Gagal' };
+        let st = labels[n.status || 'idle'] || n.status;
+        if (n.status === 'success' || (n.duration_ms && n.status !== 'idle')) st += ' · ' + Math.round(n.duration_ms || 0) + ' ms';
+        $('side-node-meta').textContent = st;
+
+        const extra = $('insp-extra');
+        extra.textContent = ordered.length > 1 ? 'dan ' + (ordered.length - 1) + ' node lain dipilih' : '';
+        extra.classList.toggle('hidden', ordered.length <= 1);
+
+        const sum = $('insp-summary');
+        sum.textContent = n.summary || '';
+        sum.classList.toggle('hidden', !n.summary);
+
+        currentJsonText = text;
+        const note = $('json-note');
+        if (text.length > JSON_LIMIT) {
+            text = text.slice(0, JSON_LIMIT);
+            note.textContent = 'Data panjang, hanya sebagian ditampilkan. Gunakan Salin JSON untuk mengambil seluruhnya.';
+            note.classList.remove('hidden');
+        } else {
+            note.classList.add('hidden');
+        }
+        $('side-code-view').innerHTML = highlightJson(text);
+    }
+
+    function setTab(tab) {
+        inspectTab = tab;
+        $('tab-out-btn').classList.toggle('active', tab === 'output');
+        $('tab-in-btn').classList.toggle('active', tab === 'input');
+        updateInspector(true);
+    }
+
+    function focusSelectedNode() {
+        const id = [...selected][0];
+        if (!id || !pos[id]) return;
+        const vw = viewport.clientWidth, vh = viewport.clientHeight;
+        pan.x = vw / 2 - (pos[id].x + NODE_W / 2) * zoom;
+        pan.y = vh / 2 - (pos[id].y + NODE_H / 2) * zoom;
+        viewTouched = true;
+        applyView();
+    }
+
+    function toast(msg) {
+        const t = $('toast');
+        t.textContent = msg;
+        t.classList.remove('hidden');
+        clearTimeout(toast._t);
+        toast._t = setTimeout(() => t.classList.add('hidden'), 1600);
+    }
+
+    /* ---------------- Data eksekusi ---------------- */
+    function applyTrace(t) {
+        if (!t || !Array.isArray(t.nodes) || t.nodes.length === 0) return;
+        trace = t;
+        nodesById = new Map(t.nodes.map((n) => [n.id, n]));
+        let created = false;
+        t.nodes.forEach((n) => {
+            if (!nodeEls.has(n.id)) created = true;
+            paintNode(n.id, n);
+        });
+        if (created) { rebuildWires(); if (!viewTouched) fitView(); }
+        if (t.total_duration_ms != null) $('total-time-badge').textContent = Math.round(t.total_duration_ms) + ' ms';
+        paintWireStates();
+        updateInspector(false);
+    }
+
+    /* ---------------- Viewport: pan, zoom, fit ---------------- */
+    function applyView() {
+        surface.style.transform = 'translate(' + pan.x + 'px,' + pan.y + 'px) scale(' + zoom + ')';
+        surface.style.setProperty('--z', zoom);
+        viewport.style.backgroundPosition = pan.x + 'px ' + pan.y + 'px';
+        viewport.style.backgroundSize = (24 * zoom) + 'px ' + (24 * zoom) + 'px';
+        $('zoom-level-text').textContent = Math.round(zoom * 100) + '%';
+    }
+
+    function setZoom(next, cx, cy) {
+        const z = clamp(next, MIN_ZOOM, MAX_ZOOM);
+        const rect = viewport.getBoundingClientRect();
+        const fx = cx === undefined ? rect.width / 2 : cx - rect.left;
+        const fy = cy === undefined ? rect.height / 2 : cy - rect.top;
+        pan.x = fx - (fx - pan.x) * (z / zoom);
+        pan.y = fy - (fy - pan.y) * (z / zoom);
+        zoom = z;
+        viewTouched = true;
+        applyView();
+    }
+
+    function fitView() {
+        const ids = [...nodeEls.keys()].filter((id) => pos[id]);
+        const vw = viewport.clientWidth, vh = viewport.clientHeight;
+        if (!ids.length || vw < 80 || vh < 80) return;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        ids.forEach((id) => {
+            minX = Math.min(minX, pos[id].x); minY = Math.min(minY, pos[id].y);
+            maxX = Math.max(maxX, pos[id].x + NODE_W); maxY = Math.max(maxY, pos[id].y + NODE_H);
+        });
+        const pad = 72, bw = maxX - minX, bh = maxY - minY;
+        zoom = clamp(Math.min((vw - pad * 2) / bw, (vh - pad * 2) / bh), MIN_ZOOM, 1);
+        pan.x = (vw - bw * zoom) / 2 - minX * zoom;
+        pan.y = (vh - bh * zoom) / 2 - minY * zoom;
+        applyView();
+    }
+
+    function toCanvas(clientX, clientY) {
+        const r = viewport.getBoundingClientRect();
+        return { x: (clientX - r.left - pan.x) / zoom, y: (clientY - r.top - pan.y) / zoom };
+    }
+
+    const snapV = (v, free) => (free ? Math.round(v) : Math.round(v / GRID) * GRID);
+
+    /* ---------------- Gestur pointer ---------------- */
+    viewport.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('#wire-tools button')) return;
+        if (e.button !== 0 && e.button !== 1) return;
+        if (e.button === 1) e.preventDefault();
+        viewport.focus({ preventScroll: true });
+
+        const portEl = e.target.closest('.port');
+        const nodeEl = e.target.closest('.node');
+        const wireEl = e.target.closest('.wire');
+        const handleEl = e.target.closest('#wire-handle');
+
+        if (e.button === 1 || spaceDown || tool === 'pan') {
+            gesture = { type: 'pan', sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+            viewport.classList.add('panning');
+            viewport.setPointerCapture(e.pointerId);
+            return;
+        }
+
+        if (handleEl && selectedWire) {
+            const edge = edges.find((x) => edgeId(x) === selectedWire);
+            if (!edge) return;
+            const a = outPoint(edge.from), b = inPoint(edge.to);
+            const horizontal = wireStyle === 'step' && !isBackEdge(a.x, b.x);
+            gesture = { type: 'bend', edge, horizontal, sx: e.clientX, sy: e.clientY, c0: edge.curvature || 0, started: false };
+            viewport.setPointerCapture(e.pointerId);
+            return;
+        }
+
+        if (portEl && nodeEl) {
+            const id = nodeEl.dataset.id;
+            const reverse = portEl.dataset.port === 'in';
+            gesture = { type: 'connect', id, reverse };
+            viewport.classList.add('connecting');
+            nodeEls.forEach((rec, nid) => rec.el.classList.toggle('can-drop', nid !== id));
+            viewport.setPointerCapture(e.pointerId);
+            drawDraft(e.clientX, e.clientY);
+            return;
+        }
+
+        if (nodeEl) {
+            const id = nodeEl.dataset.id;
+            const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+            selectedWire = null;
+            paintWireStates();
+            refreshTools();
+            if (additive) {
+                if (selected.has(id)) selected.delete(id); else selected.add(id);
+                updateSelectionUi();
+                if (!selected.has(id)) return;
+            } else if (!selected.has(id)) {
+                selected = new Set([id]);
+                updateSelectionUi();
+            }
+            const origin = new Map();
+            selected.forEach((sid) => { if (pos[sid]) origin.set(sid, { ...pos[sid] }); });
+            gesture = { type: 'drag', id, additive, sx: e.clientX, sy: e.clientY, origin, moved: false };
+            viewport.setPointerCapture(e.pointerId);
+            return;
+        }
+
+        if (wireEl) { selectWire(wireEl.getAttribute('data-id')); return; }
+
+        const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+        const start = toCanvas(e.clientX, e.clientY);
+        gesture = { type: 'marquee', sx: e.clientX, sy: e.clientY, x0: start.x, y0: start.y, base: additive ? new Set(selected) : new Set(), moved: false };
+        selectedWire = null;
+        if (!additive) selected = new Set();
+        paintWireStates();
+        refreshTools();
+        updateSelectionUi();
+        viewport.setPointerCapture(e.pointerId);
+    });
+
+    viewport.addEventListener('pointermove', (e) => {
+        if (!gesture) return;
+        const g = gesture;
+
+        if (g.type === 'pan') {
+            pan.x = g.px + (e.clientX - g.sx);
+            pan.y = g.py + (e.clientY - g.sy);
+            viewTouched = true;
+            applyView();
+        } else if (g.type === 'drag') {
+            const dx = (e.clientX - g.sx) / zoom, dy = (e.clientY - g.sy) / zoom;
+            if (!g.moved) {
+                if (Math.hypot(dx, dy) * zoom < 3) return;
+                g.moved = true;
+                beginChange();
+                g.origin.forEach((_, sid) => nodeEls.get(sid) && nodeEls.get(sid).el.classList.add('dragging'));
+            }
+            g.origin.forEach((o, sid) => {
+                pos[sid] = { x: snapV(o.x + dx, e.altKey), y: snapV(o.y + dy, e.altKey) };
+                placeNode(nodeEls.get(sid).el, sid);
+            });
+            updateWiresFor(new Set(g.origin.keys()));
+        } else if (g.type === 'marquee') {
+            if (!g.moved && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 3) return;
+            g.moved = true;
+            const p = toCanvas(e.clientX, e.clientY);
+            const x = Math.min(g.x0, p.x), y = Math.min(g.y0, p.y), w = Math.abs(p.x - g.x0), h = Math.abs(p.y - g.y0);
+            marquee.style.left = x + 'px'; marquee.style.top = y + 'px';
+            marquee.style.width = w + 'px'; marquee.style.height = h + 'px';
+            marquee.classList.remove('hidden');
+            viewport.classList.add('marquee-active');
+            const next = new Set(g.base);
+            nodeEls.forEach((_, id) => {
+                const q = pos[id];
+                if (q && q.x + NODE_W >= x && q.x <= x + w && q.y + NODE_H >= y && q.y <= y + h) next.add(id);
+            });
+            selected = next;
+            updateSelectionUi();
+        } else if (g.type === 'connect') {
+            drawDraft(e.clientX, e.clientY);
+            const under = document.elementFromPoint(e.clientX, e.clientY);
+            const overNode = under && under.closest && under.closest('.node');
+            nodeEls.forEach((rec, nid) => rec.el.classList.toggle('drop-target', !!overNode && overNode.dataset.id === nid && nid !== g.id));
+        } else if (g.type === 'bend') {
+            const delta = g.horizontal ? (e.clientX - g.sx) / zoom : (e.clientY - g.sy) / zoom;
+            if (!g.started) {
+                if (Math.abs(delta) * zoom < 2) return;
+                g.started = true;
+                beginChange();
+            }
+            g.edge.curvature = Math.round(g.c0 + delta);
+            updateWire(g.edge);
+            refreshTools();
+        }
+    });
+
+    function finishGesture(e, cancelled) {
+        const g = gesture;
+        if (!g) return;
+        gesture = null;
+        try { viewport.releasePointerCapture(e.pointerId); } catch (err) { /* sudah dilepas */ }
+
+        if (g.type === 'pan') {
+            viewport.classList.remove('panning');
+        } else if (g.type === 'drag') {
+            nodeEls.forEach((rec) => rec.el.classList.remove('dragging'));
+            if (g.moved) save();
+            else if (!g.additive && !cancelled) { selected = new Set([g.id]); updateSelectionUi(); }
+        } else if (g.type === 'marquee') {
+            marquee.classList.add('hidden');
+            viewport.classList.remove('marquee-active');
+        } else if (g.type === 'connect') {
+            let targetId = null;
+            if (!cancelled) {
+                const under = document.elementFromPoint(e.clientX, e.clientY);
+                const overNode = under && under.closest && under.closest('.node');
+                if (overNode && overNode.dataset.id !== g.id) targetId = overNode.dataset.id;
+            }
+            viewport.classList.remove('connecting');
+            nodeEls.forEach((rec) => rec.el.classList.remove('can-drop', 'drop-target'));
+            draft.setAttribute('d', '');
+            if (targetId) { if (g.reverse) addEdge(targetId, g.id); else addEdge(g.id, targetId); }
+        } else if (g.type === 'bend') {
+            if (g.started) save();
+        }
+    }
+
+    viewport.addEventListener('pointerup', (e) => finishGesture(e, false));
+    viewport.addEventListener('pointercancel', (e) => finishGesture(e, true));
+
+    function drawDraft(clientX, clientY) {
+        if (!gesture || gesture.type !== 'connect') return;
+        const m = toCanvas(clientX, clientY);
+        const a = gesture.reverse ? m : outPoint(gesture.id);
+        const b = gesture.reverse ? inPoint(gesture.id) : m;
+        const off = Math.max(40, Math.abs(b.x - a.x) * 0.4);
+        draft.setAttribute('d', `M${a.x} ${a.y}C${a.x + off} ${a.y},${b.x - off} ${b.y},${b.x} ${b.y}`);
+    }
+
+    viewport.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+            setZoom(zoom * clamp(Math.exp(-e.deltaY * 0.01), 0.8, 1.25), e.clientX, e.clientY);
+        } else {
+            const horizontal = e.shiftKey && !e.deltaX;
+            pan.x -= horizontal ? e.deltaY : e.deltaX;
+            pan.y -= horizontal ? 0 : e.deltaY;
+            viewTouched = true;
+            applyView();
+        }
+    }, { passive: false });
+
+    /* ---------------- Keyboard ---------------- */
+    let nudgeTimer = null;
+
+    window.addEventListener('keydown', (e) => {
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+        const mod = e.ctrlKey || e.metaKey;
+        const key = e.key.toLowerCase();
+
+        if (mod && key === 'a') {
+            e.preventDefault();
+            selected = new Set(nodeEls.keys());
+            selectedWire = null;
+            paintWireStates(); refreshTools(); updateSelectionUi();
+        } else if (mod && key === 'z') {
+            e.preventDefault();
+            if (e.shiftKey) redo(); else undo();
+        } else if (mod && key === 'y') {
+            e.preventDefault();
+            redo();
+        } else if ((key === 'delete' || key === 'backspace') && selectedWire) {
+            e.preventDefault();
+            deleteSelectedWire();
+        } else if (key === 'escape') {
+            selected = new Set(); selectedWire = null;
+            paintWireStates(); refreshTools(); updateSelectionUi();
+        } else if (key.startsWith('arrow') && selected.size) {
+            e.preventDefault();
+            const step = e.shiftKey ? GRID * 4 : GRID;
+            const dx = key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0;
+            const dy = key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0;
+            if (!nudgeTimer) beginChange();
+            clearTimeout(nudgeTimer);
+            nudgeTimer = setTimeout(() => { nudgeTimer = null; save(); }, 500);
+            selected.forEach((id) => {
+                if (!pos[id]) return;
+                pos[id] = { x: pos[id].x + dx, y: pos[id].y + dy };
+                placeNode(nodeEls.get(id).el, id);
+            });
+            updateWiresFor(selected);
+        } else if (e.code === 'Space' && !mod) {
+            if (!spaceDown) { spaceDown = true; viewport.classList.add('pan-ready'); }
+            e.preventDefault();
+        } else if (key === '+' || key === '=') {
+            setZoom(zoom * 1.15);
+        } else if (key === '-' || key === '_') {
+            setZoom(zoom / 1.15);
+        } else if (e.shiftKey && e.code === 'Digit1') {
+            viewTouched = false; fitView();
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') { spaceDown = false; if (tool !== 'pan') viewport.classList.remove('pan-ready'); }
+    });
+
+    window.addEventListener('blur', () => { spaceDown = false; if (tool !== 'pan') viewport.classList.remove('pan-ready'); });
+
+    nodesLayer.addEventListener('keydown', (e) => {
+        const nodeEl = e.target.closest('.node');
+        if (nodeEl && (e.key === 'Enter')) {
+            selected = new Set([nodeEl.dataset.id]);
+            selectedWire = null;
+            paintWireStates(); refreshTools(); updateSelectionUi();
+        }
+    });
+
+    /* ---------------- Toolbar & Tombol Inspektur ---------------- */
+    function setTool(next) {
+        tool = next;
+        $('tb-tool-select').classList.toggle('active', next === 'select');
+        $('tb-tool-pan').classList.toggle('active', next === 'pan');
+        viewport.classList.toggle('pan-ready', next === 'pan');
+    }
+
+    function applyGrid() {
+        viewport.classList.toggle('grid-lines', gridMode === 1);
+        viewport.classList.toggle('grid-none', gridMode === 2);
+    }
+
+    $('tb-undo').addEventListener('click', undo);
+    $('tb-redo').addEventListener('click', redo);
+    $('tb-zoom-in').addEventListener('click', () => setZoom(zoom * 1.2));
+    $('tb-zoom-out').addEventListener('click', () => setZoom(zoom / 1.2));
+    $('tb-fit').addEventListener('click', () => { viewTouched = false; fitView(); });
+    $('tb-tool-select').addEventListener('click', () => setTool('select'));
+    $('tb-tool-pan').addEventListener('click', () => setTool('pan'));
+    $('tb-tidy').addEventListener('click', () => {
+        beginChange();
+        pos = { ...pos, ...clone(DEFAULT_POS) };
+        applyAllPositions();
+        edges.forEach(updateWire);
+        refreshTools();
+        save();
+        viewTouched = false;
+        fitView();
+    });
+    $('tb-reset-wires').addEventListener('click', () => {
+        beginChange();
+        edges = clone(DEFAULT_EDGES);
+        selectedWire = null;
+        rebuildWires();
+        save();
+    });
+    $('wire-style-select').addEventListener('change', (e) => {
+        wireStyle = e.target.value;
+        edges.forEach(updateWire);
+        refreshTools();
+        save();
+    });
+    $('tb-grid').addEventListener('click', () => { gridMode = (gridMode + 1) % 3; applyGrid(); save(); });
+    $('wire-delete').addEventListener('click', deleteSelectedWire);
+
+    $('tab-out-btn').addEventListener('click', () => setTab('output'));
+    $('tab-in-btn').addEventListener('click', () => setTab('input'));
+    $('insp-back-btn').addEventListener('click', () => {
+        selected = new Set();
+        selectedWire = null;
+        paintWireStates();
+        refreshTools();
+        updateSelectionUi();
+    });
+    $('insp-focus-btn').addEventListener('click', focusSelectedNode);
+    $('insp-copy').addEventListener('click', () => {
+        if (!currentJsonText) return;
+        navigator.clipboard.writeText(currentJsonText).then(() => toast('JSON tersalin'), () => toast('Gagal menyalin'));
+    });
+
+    /* ---------------- Koneksi server ---------------- */
+    function setConn(state) {
+        const text = { on: 'Terhubung', retry: 'Menyambung ulang', off: 'Terputus' }[state];
+        ['conn', 'conn-embed'].forEach((id) => { $(id).dataset.state = state; });
+        $('sse-status-text').textContent = text;
+        $('sse-status-text-embed').textContent = text;
+    }
+
+    function initSSE() {
+        let es;
+        try { es = new EventSource('/api/pipeline/events'); } catch (e) { setConn('off'); return; }
+        es.onopen = () => setConn('on');
+        es.onerror = () => setConn('retry');
+        es.onmessage = (ev) => {
+            try {
+                const d = JSON.parse(ev.data);
+                if (d && d.nodes) { clearSim(); applyTrace(d); }
+            } catch (err) { console.error('Pipeline SSE error:', err); }
+        };
+    }
+
+    async function fetchLatestTrace() {
+        try {
+            const res = await fetch('/api/pipeline/latest');
+            if (res.ok) applyTrace(await res.json());
+        } catch (err) { console.error('Gagal memuat trace terakhir:', err); }
+    }
+
+    window.addEventListener('message', (e) => {
+        if (e.origin !== window.location.origin) return;
+        const m = e.data;
+        if (m && m.type === 'shiro:trace' && m.trace) applyTrace(m.trace);
+    });
+
+    /* ---------------- Simulasi & uji coba ---------------- */
+    let simTimers = [];
+    function clearSim() { simTimers.forEach(clearTimeout); simTimers = []; }
+
+    function startSim(text) {
+        clearSim();
+        const nodes = NODE_ORDER.map((id) => ({ id, ...NODE_META[id], status: 'idle', duration_ms: 0, summary: 'Menunggu', data_in: {}, data_out: {} }));
+        nodes[0].status = 'running';
+        nodes[0].summary = 'Input diterima';
+        nodes[0].data_in = { message: text };
+        applyTrace({ total_duration_ms: 0, nodes });
+
+        const steps = [
+            { at: 120, i: 0, ms: 12, done: (text || '').length + ' karakter', next: 'Menganalisis emosi' },
+            { at: 260, i: 1, ms: 10, done: 'Tone terklasifikasi', next: 'Mengambil memori' },
+            { at: 440, i: 2, ms: 24, done: 'Memori dimuat', next: 'Menyusun prompt' },
+            { at: 640, i: 3, ms: 16, done: 'Prompt siap', next: 'Inferensi model' }
+        ];
+        steps.forEach((s) => simTimers.push(setTimeout(() => {
+            nodes[s.i].status = 'success'; nodes[s.i].duration_ms = s.ms; nodes[s.i].summary = s.done;
+            nodes[s.i + 1].status = 'running'; nodes[s.i + 1].summary = s.next;
+            applyTrace({ total_duration_ms: 0, nodes });
+        }, s.at)));
+    }
+
+    $('test-run-form').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const input = $('test-input'), btn = $('test-submit-btn');
+        const query = input.value.trim();
+        if (!query) return;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Berjalan';
+        startSim(query);
+        try {
+            const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: query }) });
+            const data = await res.json();
+            clearSim();
+            if (data.pipeline_trace) applyTrace(data.pipeline_trace);
+        } catch (err) {
+            clearSim();
+            console.error('Uji coba gagal:', err);
+            toast('Uji coba gagal dijalankan');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="ph ph-play"></i> Jalankan';
+            input.value = '';
+        }
+    });
+
+    window.addEventListener('storage', (e) => {
+        if (window.ShiroTheme && e.key === window.ShiroTheme.key) window.ShiroTheme.apply(window.ShiroTheme.get());
+    });
+
+    /* ---------------- Inisialisasi ---------------- */
+    function init() {
+        $('wire-style-select').value = wireStyle;
+        applyGrid();
+        updateHistoryUi();
+        NODE_ORDER.forEach((id) => paintNode(id, {}));
+        rebuildWires();
+        fitView();
+        applyView();
+        updateInspector(true);
+        fetchLatestTrace();
+        initSSE();
+        if (window.ResizeObserver) {
+            new ResizeObserver(() => { if (!viewTouched) fitView(); }).observe(viewport);
+        }
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+})();
+</script>
+</body>
+</html>

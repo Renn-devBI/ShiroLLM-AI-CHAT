@@ -89,27 +89,44 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
-// Models API (Hanya 1 Model: ShiroAI-v2-Agent)
+// Models API (Model: ShiroCore-Haru-2.0.gguf)
 app.get('/api/models', (req, res) => {
     res.json({
+        current_model: 'model/ShiroCore-Haru-2.0.gguf',
+        available_models: [
+            'model/ShiroCore-Haru-2.0.gguf'
+        ],
+        model_info: {
+            'model/ShiroCore-Haru-2.0.gguf': {
+                name: 'ShiroCore-Haru-2.0',
+                size: '7.8B',
+                quantization: 'Q5_K_M',
+                description: 'Model Utama Penalaran Kognitif & Karakter Shiro (GGUF)',
+                family: 'Shiro Cognitive Engine'
+            }
+        },
         models: [
             {
-                id: 'ShiroAI-v2-Agent',
-                name: 'ShiroAI-v2-Agent',
-                display_name: 'ShiroAI-v2-Agent',
-                family: 'Shiro Cognitive',
+                id: 'model/ShiroCore-Haru-2.0.gguf',
+                name: 'ShiroCore-Haru-2.0',
+                display_name: 'ShiroCore-Haru-2.0',
+                family: 'Shiro Cognitive Engine',
                 active: true,
-                description: 'Model Utama Penalaran Kognitif & Agentic (v2)'
+                description: 'Model Utama Penalaran Kognitif & Karakter Shiro (GGUF)',
+                size: '7.8B',
+                quantization: 'Q5_K_M'
             }
         ],
-        active_model: 'ShiroAI-v2-Agent'
+        active_model: 'model/ShiroCore-Haru-2.0.gguf'
     });
 });
 
-app.post(['/api/models/switch', '/v1/models/switch', '/v2/models/switch'], (req, res) => {
+app.post(['/api/models/switch', '/v1/models/switch', '/v2/models/switch', '/v3/models/switch'], (req, res) => {
     res.json({
         success: true,
-        active_model: 'ShiroAI-v2-Agent'
+        active_model: 'model/ShiroCore-Haru-2.0.gguf',
+        model: 'model/ShiroCore-Haru-2.0.gguf',
+        has_vision: true
     });
 });
 
@@ -118,9 +135,10 @@ app.all(['/api/moe', '/v1/moe'], (req, res) => {
     res.json({
         mode: 'auto',
         vision_expert_loaded: true,
-        vision_expert_path: 'Qwen2.5-VL-7B'
+        vision_expert_path: 'model/ShiroCore-Haru-2.0.gguf'
     });
 });
+
 
 // History API (Mengembalikan pesan sesi aktif saat ini)
 app.get('/api/history', (req, res) => {
@@ -285,24 +303,24 @@ app.post('/api/chat', (req, res) => {
     sess.messages.push({
         id: userMsgId,
         role: 'user',
-        content: userMessage || 'Kirim permintaan ke ShiroAI-v2-Agent',
+        content: userMessage || 'Kirim permintaan ke ShiroCore-Haru-2.0',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     });
 
     const replyContent = 
 `*tersenyum hangat dan mengangguk ceria*
 
-Halo Kakak! Sebagai **ShiroAI-v2-Agent**, Shiro sudah menyelesaikan permintaan: "${userMessage || 'tugas pemrograman'}".
+Halo Kakak! Sebagai **ShiroCore-Haru-2.0**, Shiro sudah menyelesaikan permintaan: "${userMessage || 'tugas pemrograman'}".
 
 Berikut kode program solusi yang sudah Shiro siapkan:
 
 \`\`\`javascript
-// Solusi Otomatis ShiroAI-v2-Agent
+// Solusi Otomatis ShiroCore-Haru-2.0
 function jalankanSolusiShiro(taskName) {
     console.log("[Shiro AI] Menjalankan tugas:", taskName);
     return {
         status: "sukses",
-        model: "ShiroAI-v2-Agent",
+        model: "ShiroCore-Haru-2.0",
         timestamp: new Date().toISOString(),
         pesan: "Kode siap dijalankan dan diunduh langsung!"
     };
@@ -377,12 +395,21 @@ Kakak bisa langsung menekan tombol **Unduh** di pojok kanan atas blok kode untuk
 // HTML Page Serving (100% Identik dengan app.py)
 // -------------------------------------------------------------
 const indexHtmlPath = resolveFilePath('templates/index.html');
+const pipelineHtmlPath = resolveFilePath('templates/pipeline.html');
 
 app.get(['/', '/chat/:sessionId', '/share/:sessionId'], (req, res) => {
     if (fs.existsSync(indexHtmlPath)) {
         res.sendFile(indexHtmlPath);
     } else {
         res.status(404).send('templates/index.html tidak ditemukan.');
+    }
+});
+
+app.get('/pipeline', (req, res) => {
+    if (fs.existsSync(pipelineHtmlPath)) {
+        res.sendFile(pipelineHtmlPath);
+    } else {
+        res.status(404).send('templates/pipeline.html tidak ditemukan.');
     }
 });
 

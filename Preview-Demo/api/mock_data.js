@@ -116,7 +116,7 @@ const samplePipelineTrace = {
       "color": "#06b6d4",
       "status": "success",
       "duration_ms": 8.5,
-      "summary": "ShiroAI-v2-Agent Persona"
+      "summary": "ShiroCore-Haru-2.0 Persona"
     },
     {
       "id": "node_llm",
@@ -126,7 +126,7 @@ const samplePipelineTrace = {
       "color": "#f59e0b",
       "status": "success",
       "duration_ms": 195.1,
-      "summary": "ShiroAI-v2-Agent • 100% Selesai"
+      "summary": "ShiroCore-Haru-2.0 • 100% Selesai"
     },
     {
       "id": "node_filter",

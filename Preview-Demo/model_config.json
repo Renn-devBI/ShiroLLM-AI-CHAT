@@ -1,0 +1,15 @@
+{
+  "current_model": "model/ShiroCore-Haru-2.0.gguf",
+  "available_models": [
+    "model/ShiroCore-Haru-2.0.gguf"
+  ],
+  "model_info": {
+    "model/ShiroCore-Haru-2.0.gguf": {
+      "name": "ShiroCore-Haru-2.0",
+      "size": "7.8B",
+      "quantization": "Q5_K_M",
+      "description": "Model Utama Penalaran Kognitif & Karakter Shiro (GGUF)",
+      "family": "Shiro Cognitive Engine"
+    }
+  }
+}
