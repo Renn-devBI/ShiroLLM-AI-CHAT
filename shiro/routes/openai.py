@@ -250,7 +250,8 @@ def openai_models():
             model_ids.append(m_name)
 
     for v in trained_versions:
-        t_name = f"ShiroAI-LLM-V{v}"
+        v_str = f"{float(v):.1f}" if isinstance(v, (int, float)) else str(v)
+        t_name = f"ShiroHaru-{v_str}-Agent"
         if t_name not in model_ids:
             model_ids.append(t_name)
 

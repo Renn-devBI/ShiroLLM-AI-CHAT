@@ -1,5 +1,5 @@
 {
-  "current_model": "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
+  "current_model": "model/Qwen3-4B-Q4_K_M.gguf",
   "local_default_model": "model/Qwen3-4B-Q4_K_M.gguf",
   "available_models": [
     "model/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf",

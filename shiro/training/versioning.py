@@ -9,7 +9,8 @@ import os
 import re
 import glob
 
-DEFAULT_MODEL_PREFIX = "ShiroAI-LLM-V"
+DEFAULT_MODEL_PREFIX = "ShiroHaru-"
+DEFAULT_MODEL_SUFFIX = "-Agent"
 
 def get_search_directories():
     """Daftar direktori untuk mencari model yang sudah ada"""
@@ -22,24 +23,30 @@ def get_search_directories():
         dirs.append(os.path.join(drive_dir, "lora"))
     return [d for d in dirs if os.path.exists(d)]
 
-def get_existing_trained_versions(search_dirs=None, prefix=DEFAULT_MODEL_PREFIX):
+def get_existing_trained_versions(search_dirs=None, prefix=DEFAULT_MODEL_PREFIX, suffix=DEFAULT_MODEL_SUFFIX):
     """
     Memindai seluruh folder model & lora untuk mencari versi model yang sudah dilatih.
-    Mengembalikan daftar nomor versi terurut, misal [1, 2].
+    Mendukung format ShiroHaru-{version}-Agent dan kompatibilitas format legacy ShiroAI-LLM-V{version}.
+    Mengembalikan daftar nomor versi terurut (float), misal [1.0, 2.0].
     """
     if search_dirs is None:
         search_dirs = get_search_directories()
 
     versions = set()
-    pattern = re.compile(rf"{re.escape(prefix)}(\d+)", re.IGNORECASE)
+    # Cocokkan ShiroHaru-(\d+(\.\d+)?)-Agent atau ShiroHaru-(\d+(\.\d+)?)
+    pattern_new = re.compile(rf"{re.escape(prefix)}(\d+(?:\.\d+)?)(?:{re.escape(suffix)})?", re.IGNORECASE)
+    # Kompatibilitas model lama ShiroAI-LLM-V(\d+)
+    pattern_legacy = re.compile(r"ShiroAI-LLM-V(\d+(?:\.\d+)?)", re.IGNORECASE)
 
     for d in search_dirs:
         try:
             for item in os.listdir(d):
-                m = pattern.search(item)
+                m = pattern_new.search(item)
+                if not m:
+                    m = pattern_legacy.search(item)
                 if m:
                     try:
-                        v = int(m.group(1))
+                        v = float(m.group(1))
                         versions.add(v)
                     except ValueError:
                         pass
@@ -48,21 +55,23 @@ def get_existing_trained_versions(search_dirs=None, prefix=DEFAULT_MODEL_PREFIX)
 
     return sorted(list(versions))
 
-def get_next_training_version(search_dirs=None, prefix=DEFAULT_MODEL_PREFIX):
+def get_next_training_version(search_dirs=None, prefix=DEFAULT_MODEL_PREFIX, suffix=DEFAULT_MODEL_SUFFIX):
     """
-    Mengembalikan nomor versi integer berikutnya.
-    Jika belum ada -> 1
-    Jika sudah ada V1 -> 2
-    Jika sudah ada V1, V2 -> 3
+    Mengembalikan nomor versi string berikutnya (contoh: '1.0', '2.0', '3.0').
+    Jika belum ada -> '1.0'
+    Jika sudah ada 1.0 -> '2.0'
+    Jika sudah ada 2.0 -> '3.0'
     """
-    existing = get_existing_trained_versions(search_dirs=search_dirs, prefix=prefix)
+    existing = get_existing_trained_versions(search_dirs=search_dirs, prefix=prefix, suffix=suffix)
     if not existing:
-        return 1
-    return max(existing) + 1
+        return "1.0"
+    max_ver = max(existing)
+    next_ver = int(max_ver) + 1
+    return f"{next_ver}.0"
 
-def get_next_model_name(search_dirs=None, prefix=DEFAULT_MODEL_PREFIX):
+def get_next_model_name(search_dirs=None, prefix=DEFAULT_MODEL_PREFIX, suffix=DEFAULT_MODEL_SUFFIX):
     """
-    Mengembalikan string nama model berikutnya, contoh: 'ShiroAI-LLM-V1', 'ShiroAI-LLM-V2'
+    Mengembalikan string nama model berikutnya, contoh: 'ShiroHaru-1.0-Agent', 'ShiroHaru-2.0-Agent'
     """
-    ver = get_next_training_version(search_dirs=search_dirs, prefix=prefix)
-    return f"{prefix}{ver}"
+    ver = get_next_training_version(search_dirs=search_dirs, prefix=prefix, suffix=suffix)
+    return f"{prefix}{ver}{suffix}"

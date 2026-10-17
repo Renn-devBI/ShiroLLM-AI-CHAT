@@ -282,7 +282,7 @@ def load_model_config() -> Dict[str, Any]:
             basename = os.path.basename(m).replace(".gguf", "")
             size_gb = os.path.getsize(m) / (1024 * 1024 * 1024) if os.path.exists(m) else 0
             size_str = f"~{size_gb:.1f} GB" if size_gb > 0 else "GGUF"
-            is_trained = "shiroai-llm-v" in basename.lower()
+            is_trained = "shiroharu-" in basename.lower() or "shiroai-llm-v" in basename.lower()
             quant = "Fine-Tuned (LoRA)" if is_trained else "Manual/Auto"
             desc = f"Model Pelatihan Mandiri: {basename} ({size_str})" if is_trained else f"Model Lokal: {basename} ({size_str})"
             filtered_info[m] = {

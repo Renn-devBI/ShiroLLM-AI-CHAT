@@ -3,7 +3,7 @@
 Shiro Fine-Tuning CLI (LoRA / QLoRA with Unsloth)
 Melatih model AI menggunakan dataset percakapan yang diekspor dari ingatan Shiro.
 Hasil pelatihan otomatis terbentuk sebagai Model AI baru dengan penomoran versi bertingkat:
-ShiroAI-LLM-V1, ShiroAI-LLM-V2, ShiroAI-LLM-V3, dst.
+ShiroHaru-1.0-Agent, ShiroHaru-2.0-Agent, dst.
 """
 
 import os
@@ -29,7 +29,7 @@ def run_training(
     batch_size=2,
     gradient_accumulation_steps=4
 ):
-    # 1. Tentukan Versi dan Nama Model Otomatis (ShiroAI-LLM-V1, V2, dst.)
+    # 1. Tentukan Versi dan Nama Model Otomatis (ShiroHaru-1.0-Agent, ShiroHaru-2.0-Agent, dst.)
     if not model_name:
         model_name = get_next_model_name()
     
@@ -158,7 +158,7 @@ def run_training(
     model.save_pretrained(model_lora_dir)
     tokenizer.save_pretrained(model_lora_dir)
 
-    # 9. Bentuk File Model AI GGUF Standalone (model/ShiroAI-LLM-V{ver}.gguf)
+    # 9. Bentuk File Model AI GGUF Standalone (model/ShiroHaru-{version}-Agent.gguf)
     os.makedirs("model", exist_ok=True)
     target_gguf_file = os.path.join("model", f"{model_name}.gguf")
     export_folder = os.path.join("model", model_name)
@@ -248,7 +248,7 @@ def run_training(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Shiro LoRA Training Script with Auto-Versioning")
-    parser.add_argument("--name", type=str, default=None, help="Nama model (contoh: ShiroAI-LLM-V1). Jika kosong, otomatis bertingkat V1, V2, dst.")
+    parser.add_argument("--name", type=str, default=None, help="Nama model (contoh: ShiroHaru-2.0-Agent). Jika kosong, otomatis bertingkat ShiroHaru-1.0-Agent, ShiroHaru-2.0-Agent, dst.")
     parser.add_argument("--model", type=str, default="unsloth/Qwen2.5-7B-Instruct-bnb-4bit", help="Base model HuggingFace")
     parser.add_argument("--dataset", type=str, default="training_data/chat/shiro_chatml_train.jsonl", help="Dataset path")
     parser.add_argument("--output", type=str, default="lora", help="Output directory LoRA")
