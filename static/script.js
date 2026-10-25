@@ -1139,6 +1139,12 @@ const CODE_EXTENSIONS_SET = new Set([
 
 // Add message ke chat
 function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null, agentActionData = null, msgId = null, isPinned = false) {
+    const hasText = content !== null && content !== undefined && String(content).trim().length > 0;
+    if (!hasText && !imageUrl && !docName && !docText && !agentActionData) {
+        // Jangan pernah merender pesan hantu atau bubble kosong tanpa konten
+        return null;
+    }
+
     const resolvedId = msgId || `msg-local-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const pinnedState = Boolean(isPinned);
 
@@ -1317,9 +1323,7 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     if (attachmentHTML) {
         innerBubbleHTML += `<div class="msg-attachment-wrap">${attachmentHTML}</div>`;
     }
-    if (formattedContent) {
-        innerBubbleHTML += `<div class="msg-text">${formattedContent}</div>`;
-    }
+    innerBubbleHTML += `<div class="msg-text">${formattedContent || ''}</div>`;
 
     messageDiv.innerHTML = `
         ${role === 'assistant' ? avatarHTML : ''}
@@ -1776,6 +1780,15 @@ async function sendMessage() {
                     assistantBubble = assistantMsgEl ? assistantMsgEl.querySelector('.bubble') : null;
                     assistantTextEl = assistantMsgEl ? assistantMsgEl.querySelector('.msg-text') : null;
                 }
+                if (!assistantTextEl && assistantBubble) {
+                    let existingTextEl = assistantBubble.querySelector('.msg-text');
+                    if (!existingTextEl) {
+                        existingTextEl = document.createElement('div');
+                        existingTextEl.className = 'msg-text';
+                        assistantBubble.appendChild(existingTextEl);
+                    }
+                    assistantTextEl = existingTextEl;
+                }
                 if (assistantTextEl) {
                     let displayContent = text;
                     const codeBlockCount = (displayContent.match(/```/g) || []).length;
@@ -2200,8 +2213,12 @@ async function resetMemory() {
 function renderMessagesList(messages) {
     if (!chatMessages) return;
     chatMessages.innerHTML = '';
-    if (messages && messages.length > 0) {
-        messages.forEach(msg => {
+    const validMessages = (messages || []).filter(msg => {
+        const hasContent = msg.content !== null && msg.content !== undefined && String(msg.content).trim().length > 0;
+        return Boolean(hasContent || msg.image || msg.document_name || msg.document_text);
+    });
+    if (validMessages.length > 0) {
+        validMessages.forEach(msg => {
             addMessage(
                 msg.role, 
                 msg.content, 

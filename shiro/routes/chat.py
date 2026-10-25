@@ -38,8 +38,12 @@ def get_history():
     memory = state.init_memory()
     with memory.lock:
         memory._ensure_message_ids(memory.short_term_history)
+        valid_history = [
+            _format_message_for_api(m) for m in memory.short_term_history
+            if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+        ]
         return jsonify({
-            "history": [_format_message_for_api(m) for m in memory.short_term_history],
+            "history": valid_history,
             "count": len(memory.short_term_history),
             "metadata": memory.system_metadata,
             "user_profile": memory.user_profile,
@@ -333,6 +337,12 @@ def chat():
                         if agent_action and agent_action.get("image_url"):
                             assistant_img_url = agent_action.get("image_url")
                         yield f"data: {py_json.dumps({'type': 'agent_action', 'agent_action': agent_action})}\n\n"
+                    elif ev_type == "error":
+                        err_text = event.get("error", "Terjadi kesalahan internal.")
+                        err_reply = event.get("reply", f"*menatap cemas* Maaf Kakak, ada kendala teknis: {str(err_text)[:60]}")
+                        if not full_reply:
+                            full_reply = err_reply
+                        yield f"data: {py_json.dumps({'type': 'error', 'error': err_text, 'reply': err_reply})}\n\n"
                     elif ev_type == "done":
                         full_reply = event.get("reply", full_reply)
                         trace = event.get("trace")
@@ -348,7 +358,7 @@ def chat():
             finally:
                 # Simpan jawaban ke memori bahkan jika koneksi terputus di tengah jalan
                 try:
-                    if full_reply:
+                    if full_reply and full_reply.strip():
                         with memory.lock:
                             assistant_msg_id = memory.add_message("assistant", full_reply, image_path=assistant_img_url)
                             memory.update_emotional_state_from_response(full_reply)

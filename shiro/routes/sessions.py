@@ -24,10 +24,14 @@ def list_sessions():
                 if sess_msgs and len(sess_msgs) > len(memory.short_term_history):
                     memory.short_term_history = list(sess_msgs)
             memory._ensure_message_ids(memory.short_term_history)
+            valid_msgs = [
+                _format_message_for_api(m) for m in memory.short_term_history
+                if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+            ]
             return jsonify({
                 "sessions": memory.get_sessions_list(),
                 "active_session_id": active_id,
-                "messages": [_format_message_for_api(m) for m in memory.short_term_history]
+                "messages": valid_msgs
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -67,10 +71,14 @@ def switch_session():
             if not ok:
                 return jsonify({"error": "Sesi tidak ditemukan"}), 404
             memory._ensure_message_ids(memory.short_term_history)
+            valid_msgs = [
+                _format_message_for_api(m) for m in memory.short_term_history
+                if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+            ]
             return jsonify({
                 "success": True,
                 "active_session_id": session_id,
-                "messages": [_format_message_for_api(m) for m in memory.short_term_history],
+                "messages": valid_msgs,
                 "sessions": memory.get_sessions_list()
             })
     except Exception as e:
@@ -97,7 +105,10 @@ def get_session(session_id):
                     "created_at": sess.get("created_at"),
                     "last_active": sess.get("last_active")
                 },
-                "messages": [_format_message_for_api(m) for m in msgs]
+                "messages": [
+                    _format_message_for_api(m) for m in msgs
+                    if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+                ]
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500

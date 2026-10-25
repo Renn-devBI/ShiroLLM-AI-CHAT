@@ -589,6 +589,9 @@ class AdvancedMemoryManager:
     ) -> str:
         """Add message to short-term history and self-learn from conversation & response"""
         with self.lock:
+            # Cegah penyimpanan pesan kosong/ghost asisten ke memori
+            if role == "assistant" and not (content or "").strip() and not image_path:
+                return ""
             now_iso = datetime.now().isoformat()
             raw_id = f"{now_iso}:{role}:{(content or '')[:40]}:{len(self.short_term_history)}"
             msg_id = f"msg-{hashlib.md5(raw_id.encode('utf-8', errors='ignore')).hexdigest()[:10]}"

@@ -1052,6 +1052,9 @@ def stream_shiro_reply(
         raw_reply = ""
         last_ping_time = time.perf_counter()
 
+        # Kirim heartbeat ping sebelum llama.cpp memulai evaluasi prompt agar tunnel tidak timeout
+        yield {"type": "ping"}
+
         # Coba streaming native llama-cpp
         stream_success = False
         try:
