@@ -9,11 +9,22 @@ os.makedirs("model", exist_ok=True)
 COLAB_MODELS = {
     "27b": {
         "repo": "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
-        "file": "Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-Q4_K_P.gguf",
-        "alt_files": ["Qwen3.8-27B-Uncensored-Q4_K_M.gguf"],
+        "file": "Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf",
         "extra_file": "mmproj-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
         "extra_alias": "mmproj-BF16.gguf",
-        "desc": "Qwen3.8-27B-Uncensored Multimodal (Model Utama: Roleplay, Gambar/Vision & Deep Reasoning / A100 GPU, ~16.8 GB + mmproj-BF16)"
+        "desc": "Qwen3.8-27B-Uncensored Multimodal (Model Utama: Roleplay, Gambar/Vision & Deep Reasoning / A100 GPU, ~16.8 GB + mmproj)",
+        "fallbacks": [
+            {
+                "repo": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",
+                "file": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+                "extra_file": "mmproj-Qwen3.8-27B-Uncensored-F16.gguf"
+            },
+            {
+                "repo": "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
+                "file": "Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf",
+                "extra_file": "mmproj-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
+            }
+        ]
     },
     "vl": {
         "repo": "unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
@@ -85,39 +96,73 @@ def set_active_models_in_config(downloaded_filenames, primary_filename=None):
     except Exception as e:
         print(f"[WARN] Gagal memperbarui model_config.json: {e}")
 
+def _download_projector(repo, extra, alias):
+    if not extra:
+        return
+    import shutil
+    extra_path = os.path.join("model", extra)
+    alias_path = os.path.join("model", alias) if alias else None
+
+    if os.path.exists(extra_path) or (alias_path and os.path.exists(alias_path)):
+        print(f"[OK] Vision Projector {extra} sudah ada di folder model/. Skip download.")
+        if alias_path and os.path.exists(extra_path) and not os.path.exists(alias_path):
+            try: shutil.copy2(extra_path, alias_path)
+            except Exception: pass
+        return
+
+    print(f"[DOWNLOAD] Mengunduh Vision Projector ({extra}) dari {repo}...")
+    try:
+        hf_hub_download(
+            repo_id=repo,
+            filename=extra,
+            local_dir="model",
+            local_dir_use_symlinks=False
+        )
+        print(f"[OK] Projector {extra} berhasil diunduh.")
+        if alias_path and os.path.exists(extra_path) and not os.path.exists(alias_path):
+            try: shutil.copy2(extra_path, alias_path)
+            except Exception: pass
+    except Exception as e:
+        print(f"[WARN] Gagal download projector {extra}: {e}")
+
 def download_single_model(m_key, info):
-    repo = info["repo"]
-    fname = info["file"]
-    extra = info.get("extra_file")
     desc = info["desc"]
-    target_path = os.path.join("model", fname)
+    extra = info.get("extra_file")
+    extra_alias = info.get("extra_alias")
+
+    # Susun daftar opsi model (utama + fallbacks)
+    options = [{
+        "repo": info["repo"],
+        "file": info["file"],
+        "extra_file": extra,
+        "extra_repo": info.get("extra_repo", info["repo"])
+    }]
+    for fb in info.get("fallbacks", []):
+        options.append({
+            "repo": fb["repo"],
+            "file": fb["file"],
+            "extra_file": fb.get("extra_file", extra),
+            "extra_repo": fb.get("extra_repo", fb["repo"])
+        })
 
     print("\n" + "=" * 65)
     print(f"[TARGET] {desc}")
-    print(f"Repo : {repo}")
-    print(f"File : {fname}")
     print("=" * 65)
 
-    success = False
-    alt_files = info.get("alt_files", [])
-    found_alt = None
-    for af in alt_files:
-        af_path = os.path.join("model", af)
-        if os.path.exists(af_path):
-            found_alt = af_path
-            break
+    # 1. Cek apakah salah satu opsi model sudah ada di folder model/
+    for opt in options:
+        tp = os.path.join("model", opt["file"])
+        if os.path.exists(tp):
+            size_gb = os.path.getsize(tp) / (1024 * 1024 * 1024)
+            print(f"[OK] Model {opt['file']} sudah ada di folder model/ ({size_gb:.1f} GB). Skip download.")
+            _download_projector(opt["extra_repo"], opt["extra_file"], extra_alias)
+            return True, opt["file"]
 
-    if os.path.exists(target_path):
-        size_gb = os.path.getsize(target_path) / (1024 * 1024 * 1024)
-        print(f"[OK] Model {fname} sudah ada di folder model/ ({size_gb:.1f} GB). Skip download.")
-        success = True
-    elif found_alt:
-        size_gb = os.path.getsize(found_alt) / (1024 * 1024 * 1024)
-        print(f"[OK] Model varian {os.path.basename(found_alt)} sudah ada di folder model/ ({size_gb:.1f} GB). Skip download.")
-        fname = os.path.basename(found_alt)
-        success = True
-    else:
-        print(f"[DOWNLOAD] Mengunduh model {fname}...")
+    # 2. Coba unduh dari urutan opsi sampai berhasil
+    for idx, opt in enumerate(options, 1):
+        repo = opt["repo"]
+        fname = opt["file"]
+        print(f"[DOWNLOAD] Mencoba mengunduh ({idx}/{len(options)}): {fname} dari {repo}...")
         try:
             hf_hub_download(
                 repo_id=repo,
@@ -126,38 +171,14 @@ def download_single_model(m_key, info):
                 local_dir_use_symlinks=False
             )
             print(f"[OK] Model {fname} berhasil diunduh ke folder model/.")
-            success = True
+            _download_projector(opt["extra_repo"], opt["extra_file"], extra_alias)
+            return True, fname
         except Exception as e:
-            print(f"[ERROR] Gagal mengunduh {fname}: {e}")
-            success = False
+            print(f"[ERROR] Gagal mengunduh {fname} dari {repo}: {e}")
+            if idx < len(options):
+                print(f"[RETRY] Berpindah ke mirror/varian cadangan...")
 
-    if extra:
-        extra_path = os.path.join("model", extra)
-        extra_alias = info.get("extra_alias")
-        alias_path = os.path.join("model", extra_alias) if extra_alias else None
-
-        if os.path.exists(extra_path) or (alias_path and os.path.exists(alias_path)):
-            print(f"[OK] Vision Projector {extra} sudah ada di folder model/. Skip download.")
-        else:
-            print(f"[DOWNLOAD] Mengunduh Vision Projector ({extra})...")
-            try:
-                hf_hub_download(
-                    repo_id=info.get("extra_repo", repo),
-                    filename=extra,
-                    local_dir="model",
-                    local_dir_use_symlinks=False
-                )
-                print(f"[OK] Projector {extra} berhasil diunduh.")
-                if alias_path and os.path.exists(extra_path) and not os.path.exists(alias_path):
-                    import shutil
-                    try:
-                        shutil.copy2(extra_path, alias_path)
-                    except Exception:
-                        pass
-            except Exception as e:
-                print(f"[WARN] Gagal download projector {extra}: {e}")
-    
-    return success
+    return False, None
 
 def main():
     in_colab = os.path.exists("/content") or "COLAB_GPU" in os.environ
@@ -262,14 +283,18 @@ def main():
         return
 
     downloaded_filenames = []
+    primary_detected = None
+
     for k in unique_keys:
         if k in COLAB_MODELS:
-            ok = download_single_model(k, COLAB_MODELS[k])
-            if ok:
-                downloaded_filenames.append(COLAB_MODELS[k]["file"])
+            ok, downloaded_name = download_single_model(k, COLAB_MODELS[k])
+            if ok and downloaded_name:
+                downloaded_filenames.append(downloaded_name)
+                if k == "27b" and not primary_detected:
+                    primary_detected = downloaded_name
 
     if downloaded_filenames:
-        primary = COLAB_MODELS["27b"]["file"] if "27b" in unique_keys else downloaded_filenames[0]
+        primary = primary_detected or downloaded_filenames[0]
         set_active_models_in_config(downloaded_filenames, primary_filename=primary)
 
     print("\n" + "=" * 65)

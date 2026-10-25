@@ -36,9 +36,9 @@ def safe_print(msg: str):
 
 # Arsitektur model yang didukung oleh runtime llama-cpp
 KNOWN_SUPPORTED_ARCHITECTURES = {
-    "llama", "mistral", "qwen2", "qwen2moe", "phi2", "phi3", "gemma", "gemma2",
-    "starcoder", "starcoder2", "falcon", "baichuan", "internlm2", "minicpm",
-    "deepseek2", "bloom"
+    "llama", "mistral", "qwen", "qwen2", "qwen2.5", "qwen3", "qwen3.8", "qwen2moe",
+    "phi2", "phi3", "gemma", "gemma2", "starcoder", "starcoder2", "falcon",
+    "baichuan", "internlm2", "minicpm", "deepseek2", "bloom"
 }
 
 
@@ -236,12 +236,22 @@ def sort_models_by_priority(models: List[str]) -> List[str]:
         arch = (meta.get("general.architecture") or "").lower()
 
         is_tuned = "shiroharu-" in basename or "shiroai-" in basename
+        is_supported_arch = arch in KNOWN_SUPPORTED_ARCHITECTURES if arch else True
 
-        is_supported_arch = False
-        if arch:
-            is_supported_arch = arch in KNOWN_SUPPORTED_ARCHITECTURES
-        else:
-            is_supported_arch = not any(k in basename for k in ["qwen3"])
+        # Di Google Colab GPU (A100/T4), model 27B / 32B diutamakan sebagai model utama
+        in_colab = is_running_in_colab()
+        if in_colab:
+            if "27b" in basename or "qwen3.8" in basename:
+                tier = 0
+            elif is_tuned:
+                tier = 1
+            elif "32b" in basename:
+                tier = 2
+            elif is_supported_arch:
+                tier = 3
+            else:
+                tier = 4
+            return (tier, -size_bytes)
 
         if is_tuned and is_supported_arch:
             tier = 0
