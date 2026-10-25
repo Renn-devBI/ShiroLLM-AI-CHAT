@@ -7,7 +7,7 @@ enforces Indonesian language purity, and preserves linebreaks/paragraphs.
 
 import re
 import random
-from typing import Set
+from typing import Set, Optional
 
 FORBIDDEN_TOKENS = [
     '<|im_end|>', '<|im_start|>',
@@ -106,7 +106,7 @@ def validate_response(response: str, user_input: str = "") -> bool:
     
     return True
 
-def clean_response(response: str) -> str:
+def clean_response(response: str, assistant_name: Optional[str] = None) -> str:
     """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru & indentasi kode"""
     if not response:
         return ""
@@ -142,12 +142,13 @@ def clean_response(response: str) -> str:
     response = response.replace('<|im_end|', '').replace('|>', '')
     response = response.replace('|im_end|', '').replace('im_end', '')
 
-    # 3. Potong English reasoning preamble jika ada delimiter transisi ke dialog Shiro
+    # 3. Potong English reasoning preamble jika ada delimiter transisi ke dialog Shiro / karakter aktif
+    name_pat = f"{re.escape(assistant_name)}|" if assistant_name and assistant_name.lower() != 'shiro' else ""
     response_markers = [
         r'(?i)let\'s\s+craft\s+a\s+response\s*:\s*',
         r'(?i)drafting\s+(?:the\s+)?response\s*:\s*',
         r'(?i)here\s+(?:is|would\s+be)\s+the\s+response\s*:\s*',
-        r'(?i)shiro\'s\s+response\s*:\s*',
+        rf'(?i)(?:{name_pat}shiro)\'s\s+response\s*:\s*',
         r'(?i)final\s+response\s*:\s*',
         r'(?i)possible\s+response\s*:\s*',
     ]
@@ -176,8 +177,8 @@ def clean_response(response: str) -> str:
             response = parts[1]
     
     # 6. Hapus role labels di awal baris/teks tanpa merusak isi kode atau teks
-    response = re.sub(r'(?mi)^\s*(?:Shiro|Assistant|Kakak|User)\s*:\s*', '', response)
-    response = re.sub(r'^\s*(?:Shiro|User|Kakak|Assistant)[\s:]+', '', response, flags=re.IGNORECASE)
+    response = re.sub(rf'(?mi)^\s*(?:{name_pat}Shiro|Assistant|Kakak|User)\s*:\s*', '', response)
+    response = re.sub(rf'^\s*(?:{name_pat}Shiro|User|Kakak|Assistant)[\s:]+', '', response, flags=re.IGNORECASE)
     
     # 7. Hapus meta-commentary sections
     response = re.sub(r'\*\*Note\*\*:.*?(?=\n|$)', '', response, flags=re.IGNORECASE | re.DOTALL)
@@ -187,8 +188,8 @@ def clean_response(response: str) -> str:
     # 8. Hapus parenthetical explanations di akhir
     response = re.sub(r'\s*\(.*?(explanation|context|note|remember).*?\)\s*$', '', response, flags=re.IGNORECASE)
     
-    # 9. Normalisasi narasi Shiro di awal kalimat menjadi tindakan langsung *...*
-    response = re.sub(r'^\*Shiro\s+', '*', response, flags=re.IGNORECASE)
+    # 9. Normalisasi narasi Shiro / asisten aktif di awal kalimat menjadi tindakan langsung *...*
+    response = re.sub(rf'^\*(?:{name_pat}Shiro)\s+', '*', response, flags=re.IGNORECASE)
     response = re.sub(r'^\*?Kau\s+(masih|melirik|menatap|tersenyum)[^*]*\*?\s*', '', response, flags=re.IGNORECASE)
     
     # 10. Bersihkan halusinasi 'kami semua' & tokoh lain

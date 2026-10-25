@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=2.1.0">
+    <link rel="stylesheet" href="/static/style.css?v=2.2.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
     <script>
@@ -2018,6 +2018,7 @@
                         <div class="form-field">
                             <label for="ai-desc" data-i18n="ai_desc_label">Karakter dan instruksi gaya bicara</label>
                             <textarea id="ai-desc" placeholder="Tentukan karakter, nada bicara, dan batasan perilaku asisten" data-i18n-placeholder="ai_desc_placeholder"></textarea>
+                            <span class="field-help" data-i18n="ai_desc_help">Kosongkan untuk kembali ke karakter bawaan Shiro (adik manja). Jika diisi (misal Megumin pemalu), peran bawaan digantikan sesuai karakter yang Anda tentukan secara dinamis.</span>
                         </div>
                         <button type="button" onclick="saveProfile('ai')" class="btn-primary">
                             <i class="ph ph-floppy-disk"></i> <span data-i18n="save_ai_profile">Simpan profil asisten</span>
@@ -2336,6 +2337,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
-    <script src="/static/script.js?v=2.1.0"></script>
+    <script src="/static/script.js?v=2.2.0"></script>
 </body>
 </html>

@@ -166,21 +166,54 @@ def upload_profile():
         image_data = None
         if 'image' in request.files:
             file = request.files['image']
-            if file:
+            if file and getattr(file, 'filename', ''):
                 image_bytes = file.read()
-                image_data = base64.b64encode(image_bytes).decode('utf-8')
+                if image_bytes:
+                    image_data = base64.b64encode(image_bytes).decode('utf-8')
+        
+        os.makedirs(PROFILE_DIR, exist_ok=True)
+        profile_file = os.path.join(PROFILE_DIR, f'{profile_type}.json')
+        
+        # Pertahankan gambar lama jika user tidak mengunggah file gambar baru
+        image_mime = request.form.get('image_mime', 'image/png')
+        if image_data is None and os.path.exists(profile_file):
+            try:
+                with open(profile_file, 'r', encoding='utf-8') as f_old:
+                    old_p = json.load(f_old)
+                    image_data = old_p.get("image")
+                    image_mime = old_p.get("image_mime", image_mime)
+            except Exception:
+                pass
         
         profile = {
             "name": name,
             "description": description,
             "image": image_data,
-            "image_mime": request.form.get('image_mime', 'image/png')
+            "image_mime": image_mime
         }
         
-        os.makedirs(PROFILE_DIR, exist_ok=True)
-        profile_file = os.path.join(PROFILE_DIR, f'{profile_type}.json')
         with open(profile_file, 'w', encoding='utf-8') as f:
             json.dump(profile, f, ensure_ascii=False, indent=2)
+
+        # Sinkronisasi nama dan persona kustom ke memory server
+        try:
+            from shiro.server_state import state
+            mem = state.init_memory()
+            with mem.lock:
+                if profile_type == 'user':
+                    mem.user_profile["name"] = name
+                    mem.system_metadata["user_name"] = name
+                    if description:
+                        mem.user_profile["preferences"]["context_notes"] = description
+                elif profile_type == 'ai':
+                    mem.agent_persona["name"] = name
+                    if description:
+                        mem.agent_persona["custom_roleplay"] = description
+                    else:
+                        mem.agent_persona.pop("custom_roleplay", None)
+                mem.save_memory()
+        except Exception as e_mem:
+            print(f"[Admin] Warning syncing profile to memory: {e_mem}")
         
         drive_dir = os.environ.get("SHIRO_DRIVE_DIR")
         if not drive_dir and os.path.exists("/content/drive/MyDrive/Shiro_Memory"):

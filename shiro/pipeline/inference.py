@@ -19,7 +19,8 @@ from shiro.models import get_active_model_ctx, get_optimal_model_tokens
 from shiro.persona import (
     build_system_prompt,
     build_vtuber_system_prompt,
-    build_custom_system_prompt
+    build_custom_system_prompt,
+    load_active_profiles
 )
 from shiro.nlp.emotion import detect_emotion_category
 from shiro.nlp.typo import normalize_typos, get_typo_understanding_prompt
@@ -393,29 +394,41 @@ def _prepare_inference_payload(
             "Uraikan proses penalaran logis Anda di dalam blok <think>...</think> sebelum memberikan jawaban akhir.\n"
         )
 
+    ai_name, custom_persona, user_name, user_context = load_active_profiles()
+    if custom_system_prompt and custom_system_prompt.strip():
+        custom_persona = custom_system_prompt.strip()
+
     visual_guidance_addon = ""
     if has_image:
         visual_guidance_addon = (
-            "\n\n### PANDUAN PENGAMATAN GAMBAR BARU:\n"
-            "- Kakak sedang melampirkan berkas gambar BARU pada giliran pesan ini.\n"
-            "- Amati dan baca informasi, teks, diagram, serta objek pada gambar baru ini secara teliti dan langsung.\n"
-            "- DILARANG KERAS mengaitkan atau berasumsi bahwa gambar baru ini adalah situs web, link, atau halaman dari percakapan masa lalu jika tidak disebutkan secara eksplisit oleh Kakak.\n"
+            f"\n\n### PANDUAN PENGAMATAN GAMBAR BARU:\n"
+            f"- {user_name} sedang melampirkan berkas gambar BARU pada giliran pesan ini.\n"
+            f"- Amati dan baca informasi, teks, diagram, serta objek pada gambar baru ini secara teliti dan langsung.\n"
+            f"- DILARANG KERAS mengaitkan atau berasumsi bahwa gambar baru ini adalah situs web, link, atau halaman dari percakapan masa lalu jika tidak disebutkan secara eksplisit oleh {user_name}.\n"
         )
 
     if api_version == "v2":
-        system_prompt = build_vtuber_system_prompt() + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
+        system_prompt = build_vtuber_system_prompt(
+            owner_name=user_name,
+            custom_instruction=custom_persona
+        ) + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
     elif api_version == "v3":
-        base_p = custom_system_prompt or ""
+        base_p = custom_system_prompt or custom_persona or ""
         system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
     else:
         system_prompt = build_system_prompt(
+            home_location=getattr(state, "home_location", "Pondok Kayu"),
             conversation_summary=conversation_summary,
             facts_summary=facts_summary,
             exemplar_prompt=exemplar_prompt,
             web_prompt_addon=web_prompt_addon,
             typo_prompt_addon=typo_prompt_addon,
             document_prompt_addon=doc_prompt_addon,
-            cross_session_addon=cross_session_addon
+            cross_session_addon=cross_session_addon,
+            assistant_name=ai_name,
+            custom_persona=custom_persona,
+            user_name=user_name,
+            user_context=user_context
         ) + tools_addon + reasoning_addon + visual_guidance_addon
 
     visual_evidence_text = ""
@@ -584,7 +597,10 @@ def _prepare_inference_payload(
         "tools": tools,
         "tool_choice": tool_choice,
         "is_reasoning_enabled": is_reasoning_enabled,
-        "doc_name": doc_name
+        "doc_name": doc_name,
+        "ai_name": ai_name,
+        "user_name": user_name,
+        "custom_persona": custom_persona
     }
 
 def _finalize_inference_output(
@@ -679,7 +695,7 @@ def _finalize_inference_output(
     if api_version == "v2":
         cleaned_reply = clean_vtuber_response(raw_reply, raw_user_typed)
     else:
-        cleaned_reply = clean_response(raw_reply)
+        cleaned_reply = clean_response(raw_reply, assistant_name=prep.get("ai_name", "Shiro"))
 
     if not cleaned_reply and raw_reply:
         cleaned_reply = raw_reply.strip()
@@ -1016,11 +1032,21 @@ def stream_shiro_reply(
                 elif intent == "time":
                     yield {"type": "status", "status": "Sedang mengecek jam dan kalender dunia..."}
                 else:
-                    yield {"type": "status", "status": "Shiro sedang berpikir..."}
+                    try:
+                        from shiro.persona import load_active_profiles
+                        _ai_name, _, _, _ = load_active_profiles()
+                    except Exception:
+                        _ai_name = "Shiro"
+                    yield {"type": "status", "status": f"{_ai_name} sedang berpikir..."}
             except Exception:
-                yield {"type": "status", "status": "Shiro sedang berpikir..."}
+                yield {"type": "status", "status": "Sedang berpikir..."}
         else:
-            yield {"type": "status", "status": "Shiro sedang memproses berkas/gambar..."}
+            try:
+                from shiro.persona import load_active_profiles
+                _ai_name, _, _, _ = load_active_profiles()
+            except Exception:
+                _ai_name = "Shiro"
+            yield {"type": "status", "status": f"{_ai_name} sedang memproses berkas/gambar..."}
 
         prep = _prepare_inference_payload(
             user_input=user_input,

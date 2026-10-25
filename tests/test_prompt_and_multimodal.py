@@ -21,6 +21,31 @@ class TestPromptAndMultimodal(unittest.TestCase):
         self.assertNotIn("KEMAMPUAN REKAYASA PERANGKAT LUNAK, CODING & DEBUGGING: Shiro adalah programmer jenius", prompt)
         self.assertNotIn("AGENTIC PLANNING & PENGGUNAAN TOOLS", prompt)
 
+    def test_custom_persona_overrides_default_roleplay(self):
+        # When user sets custom persona (e.g. Megumin), it overrides the default Shiro brocon roleplay
+        prompt = build_system_prompt(
+            assistant_name="Megumin",
+            custom_persona="Gadis penyihir berumur 14 tahun yang pemalu tapi sangat terobsesi dengan sihir ledakan (Explosion).",
+            user_name="Kazuma"
+        )
+        self.assertIn("Kamu adalah Megumin", prompt)
+        self.assertIn("Kazuma", prompt)
+        self.assertIn("Gadis penyihir berumur 14 tahun yang pemalu", prompt)
+        # Default brocon sister persona is replaced
+        self.assertNotIn("adik perempuan berumur 14 tahun yang sangat menyayangi", prompt)
+        self.assertNotIn("Brocon", prompt)
+
+    def test_revert_to_default_when_custom_persona_empty(self):
+        # When user clears/empties custom persona, it automatically falls back to default Shiro
+        prompt = build_system_prompt(
+            assistant_name="Shiro",
+            custom_persona="",
+            user_name="Kakak"
+        )
+        self.assertIn("Kamu adalah Shiro", prompt)
+        self.assertIn("Brocon", prompt)
+        self.assertIn("Kakak", prompt)
+
     def test_cleaner_preserves_shiro_actions(self):
         # Previously *Shiro tersenyum* was wiped completely; now it should normalize to *tersenyum*
         text = "*Shiro tersenyum manis* Halo Kakak! Shiro senang melihat Kakak."
