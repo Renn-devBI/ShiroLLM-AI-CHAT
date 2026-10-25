@@ -2748,7 +2748,7 @@ async function shareCurrentChat() {
 // Export Conversation (.md file download)
 function exportCurrentChat() {
     toggleChatActionsMenu(false);
-    const msgEls = document.querySelectorAll('#chat-messages .message');
+    const msgEls = document.querySelectorAll('#chat-messages .message:not(.typing-indicator)');
     if (!msgEls || msgEls.length === 0) {
         showToast(t('no_sessions'));
         return;
@@ -2766,9 +2766,9 @@ function exportCurrentChat() {
         const isUser = el.classList.contains('user');
         const role = isUser ? 'User' : 'Assistant (Shiro)';
         const bubble = el.querySelector('.bubble');
-        if (bubble) {
+        if (bubble && !bubble.classList.contains('typing-bubble') && !el.classList.contains('typing-indicator')) {
             const text = bubble.innerText.trim();
-            if (text) {
+            if (text && text !== '...' && !text.startsWith('Sedang memproses')) {
                 lines.push(`**${role}:**\n${text}\n`);
             }
         }

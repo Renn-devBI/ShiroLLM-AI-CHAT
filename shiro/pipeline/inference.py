@@ -324,8 +324,8 @@ def _prepare_inference_payload(
 
     # Sanitisasi riwayat pesan (Context Anti-Poisoning):
     # Jika pengguna saat ini tidak menggunakan bahasa Inggris, pastikan riwayat asisten yang meleset ke bahasa Inggris dinetralkan
-    from shiro.llm.cleaner import is_predominantly_english, translate_to_indonesian_fast
-    is_user_english_query = bool(raw_user_typed and is_predominantly_english(raw_user_typed))
+    from shiro.llm.cleaner import is_user_input_foreign_or_english, is_predominantly_english, translate_to_indonesian_fast
+    is_user_english_query = bool(raw_user_typed and is_user_input_foreign_or_english(raw_user_typed))
     if not is_user_english_query:
         for idx_c, ctx_msg in enumerate(clean_context):
             if ctx_msg.get("role") == "assistant":
@@ -453,10 +453,9 @@ def _prepare_inference_payload(
         is_english_query = False
         is_japanese_query = False
         if raw_user_typed:
-            from shiro.llm.cleaner import is_predominantly_english, is_japanese_text
+            from shiro.llm.cleaner import is_user_input_foreign_or_english, is_japanese_text
             is_japanese_query = is_japanese_text(raw_user_typed)
-            u_lower = raw_user_typed.lower()
-            if any(w in u_lower for w in ["in english", "bahasa inggris", "english please", "speak english"]) or is_predominantly_english(raw_user_typed):
+            if not is_japanese_query and is_user_input_foreign_or_english(raw_user_typed):
                 is_english_query = True
         
         if is_english_query:
@@ -536,9 +535,9 @@ def _prepare_inference_payload(
         else:
             parts_user.append(" ")
 
-        # Anti-drift anchor: ingatkan model agar tetap menjawab dalam bahasa Indonesia jika riwayat percakapan panjang
-        if not is_user_english_query and raw_user_typed and len(clean_context) >= 2:
-            parts_user.append(f"\n[Pedoman Bahasa]: Jawab 100% dalam Bahasa Indonesia santai khas {ai_name}.")
+        # Anti-drift anchor: kunci bahasa Indonesia dan larang code-switching di tengah percakapan
+        if not is_user_english_query and raw_user_typed:
+            parts_user.append(f"\n[Pedoman Bahasa]: Jawab 100% dalam Bahasa Indonesia santai khas {ai_name}. DILARANG mencampur atau menggunakan Bahasa Inggris pada narasi tindakan/ekspresi.")
 
         user_text = "\n".join(parts_user)
         user_turn_msg = {"role": "user", "content": user_text}

@@ -113,6 +113,20 @@ def validate_response(response: str, user_input: str = "") -> bool:
     return True
 
 
+def is_english_text_segment(text: str) -> bool:
+    """Mendeteksi apakah sebuah kalimat atau segmen teks didominasi bahasa Inggris"""
+    if not text or len(text.strip()) < 10:
+        return False
+    text_no_code = re.sub(r'```[\s\S]*?```|`[^`\n]+`', '', text).strip()
+    if not text_no_code:
+        return False
+    words = re.findall(r'\b[a-zA-Z]{2,}\b', text_no_code.lower())
+    if len(words) < 4:
+        return False
+    en_hits = sum(1 for w in words if w in EN_STOPWORDS)
+    id_hits = sum(1 for w in words if w in ID_STOPWORDS)
+    return (en_hits >= 2 and id_hits == 0) or (en_hits >= 3 and en_hits > id_hits)
+
 def is_predominantly_english(text: str) -> bool:
     """Mendeteksi apakah teks percakapan didominasi bahasa Inggris di luar blok kode"""
     if not text or len(text.strip()) < 15:
@@ -128,12 +142,30 @@ def is_predominantly_english(text: str) -> bool:
     id_hits = sum(1 for w in words if w in ID_STOPWORDS)
     return en_hits >= 5 and en_hits > (id_hits * 1.5)
 
+def contains_english_segments(text: str) -> bool:
+    """Mendeteksi apakah teks percakapan mengandung kalimat atau paragraf bahasa Inggris"""
+    if not text or len(text.strip()) < 15:
+        return False
+    if is_predominantly_english(text):
+        return True
+    paragraphs = text.split('\n\n')
+    for p in paragraphs:
+        p_strip = p.strip()
+        if not p_strip or p_strip.startswith('```'):
+            continue
+        if is_predominantly_english(p_strip):
+            return True
+        sentences = re.split(r'(?<=[.!?~])\s+', p_strip)
+        if any(is_english_text_segment(s) for s in sentences):
+            return True
+    return False
+
 def translate_to_indonesian_fast(text: str) -> str:
     """
-    Menerjemahkan teks bahasa Inggris ke Bahasa Indonesia secara cepat via endpoint MyMemory
-    dengan preservasi blok kode, markdown, dan format ekspresi *...*.
+    Menerjemahkan teks bahasa Inggris atau bagian kalimat/paragraf yang menyasar ke bahasa Inggris
+    ke Bahasa Indonesia secara cepat via endpoint MyMemory dengan preservasi blok kode, markdown, dan format ekspresi.
     """
-    if not text or not is_predominantly_english(text):
+    if not text or not contains_english_segments(text):
         return text
 
     import urllib.request
@@ -154,16 +186,41 @@ def translate_to_indonesian_fast(text: str) -> str:
             if not p_strip or p_strip.startswith('__CODE_SNIP_'):
                 translated.append(p)
                 continue
-            try:
-                q = urllib.parse.quote(p_strip[:500])
-                url = f"https://api.mymemory.translated.net/get?q={q}&langpair=en|id"
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=3.5) as resp:
-                    res_data = json.loads(resp.read().decode('utf-8'))
-                    trans = res_data.get('responseData', {}).get('translatedText')
-                    translated.append(trans if (trans and len(trans) > 2) else p)
-            except Exception:
-                translated.append(p)
+
+            # Jika seluruh paragraf ini didominasi bahasa Inggris
+            if is_predominantly_english(p_strip):
+                try:
+                    q = urllib.parse.quote(p_strip[:500])
+                    url = f"https://api.mymemory.translated.net/get?q={q}&langpair=en|id"
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=3.5) as resp:
+                        res_data = json.loads(resp.read().decode('utf-8'))
+                        trans = res_data.get('responseData', {}).get('translatedText')
+                        translated.append(trans if (trans and len(trans) > 2) else p)
+                except Exception:
+                    translated.append(p)
+            else:
+                # Periksa apakah ada kalimat bahasa Inggris di dalam paragraf campuran
+                sentences = re.split(r'(?<=[.!?~])\s+', p_strip)
+                if len(sentences) > 1 and any(is_english_text_segment(s) for s in sentences):
+                    trans_sentences = []
+                    for s in sentences:
+                        if is_english_text_segment(s):
+                            try:
+                                q = urllib.parse.quote(s[:500])
+                                url = f"https://api.mymemory.translated.net/get?q={q}&langpair=en|id"
+                                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                                    res_data = json.loads(resp.read().decode('utf-8'))
+                                    trans = res_data.get('responseData', {}).get('translatedText')
+                                    trans_sentences.append(trans if (trans and len(trans) > 2) else s)
+                            except Exception:
+                                trans_sentences.append(s)
+                        else:
+                            trans_sentences.append(s)
+                    translated.append(' '.join(trans_sentences))
+                else:
+                    translated.append(p)
 
         res = '\n\n'.join(translated)
         for i, b in enumerate(code_blocks):
@@ -172,6 +229,31 @@ def translate_to_indonesian_fast(text: str) -> str:
     except Exception as e_tr:
         print(f"[Translator Fallback Error]: {e_tr}")
         return text
+
+FOREIGN_PATTERNS = [
+    r'\b(?:in english|bahasa inggris|english please|translate to english|speak english)\b',
+    r'\b(?:can you|could you|what is|how to|who is|tell me|explain)\b',
+    r'\b(?:hello|please|thank you|thanks)\b',
+    r'\b(?:konnichiwa|ohayou|arigatou|sayonara)\b'
+]
+
+def is_user_input_foreign_or_english(user_input: str) -> bool:
+    """Mendeteksi apakah input pengguna berbahasa Inggris, Jepang, atau meminta bahasa asing"""
+    if not user_input or not user_input.strip():
+        return False
+    if is_japanese_text(user_input):
+        return True
+    u_lower = user_input.lower()
+    if any(re.search(pat, u_lower) for pat in FOREIGN_PATTERNS):
+        return True
+    if is_predominantly_english(user_input):
+        return True
+    words = re.findall(r'\b[a-zA-Z]{2,}\b', u_lower)
+    en_hits = sum(1 for w in words if w in EN_STOPWORDS)
+    id_hits = sum(1 for w in words if w in ID_STOPWORDS)
+    if en_hits >= 2 and id_hits == 0:
+        return True
+    return False
 
 def should_translate_english_fallback(response_text: str, user_input: Optional[str] = None) -> bool:
     """
@@ -185,20 +267,13 @@ def should_translate_english_fallback(response_text: str, user_input: Optional[s
     if not user_input or not user_input.strip():
         return False
 
-    # 1. Jika pengguna bertanya dalam bahasa Inggris atau meminta bahasa Inggris, biarkan dalam bahasa Inggris
-    if is_predominantly_english(user_input):
-        return False
-    u_lower = user_input.lower()
-    if any(k in u_lower for k in ['in english', 'bahasa inggris', 'english please', 'translate to english', 'speak english']):
+    # 1. Jika pengguna bertanya dalam bahasa Inggris / Jepang / asing, biarkan apa adanya
+    if is_user_input_foreign_or_english(user_input):
         return False
 
-    # 2. Jika pengguna menggunakan bahasa Jepang, biarkan dalam bahasa Jepang/asing
-    if is_japanese_text(user_input):
-        return False
-
-    # 3. Terjemahkan ke Bahasa Indonesia HANYA JIKA input user berbahasa Indonesia (atau umum)
-    #    tetapi respons model AI secara keliru keluar dalam Bahasa Inggris penuh.
-    return is_predominantly_english(response_text)
+    # 2. Terjemahkan ke Bahasa Indonesia HANYA JIKA input user berbahasa Indonesia (atau umum)
+    #    dan respons model AI mengandung bagian/segmen bahasa Inggris (baik sebagian maupun penuh).
+    return contains_english_segments(response_text)
 
 def clean_response(response: str, assistant_name: Optional[str] = None, user_input: Optional[str] = None) -> str:
     """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru & indentasi kode"""
