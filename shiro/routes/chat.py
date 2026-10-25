@@ -326,6 +326,8 @@ def chat():
                         token = event.get("token", "")
                         full_reply += token
                         yield f"data: {py_json.dumps({'type': 'token', 'token': token})}\n\n"
+                    elif ev_type == "status":
+                        yield f"data: {py_json.dumps({'type': 'status', 'status': event.get('status', '')})}\n\n"
                     elif ev_type == "agent_action":
                         agent_action = event.get("agent_action")
                         if agent_action and agent_action.get("image_url"):

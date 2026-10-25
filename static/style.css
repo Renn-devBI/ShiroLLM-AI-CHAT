@@ -785,34 +785,84 @@ body.sidebar-resizing iframe {
     color: var(--text-primary);
 }
 
-/* Indikator Mengetik */
+/* Indikator Mengetik / Memproses Modern */
 #typing-indicator {
-    align-items: center;
+    align-items: flex-start;
+    margin-bottom: 12px;
 }
 
 #typing-indicator .bubble.typing {
     flex: none;
     display: flex;
     align-items: center;
+    padding: 0;
+    background: transparent;
+    border: none;
+}
+
+.typing-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg, 18px);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+    min-height: 38px;
+    transition: all 0.2s ease;
+}
+
+.typing-dots {
+    display: inline-flex;
+    align-items: center;
     gap: 5px;
-    height: 26px;
-    padding: 0 4px;
 }
 
-.dot {
-    width: 5px;
-    height: 5px;
-    background: var(--text-muted);
+.typing-dots .dot,
+.bubble.typing .dot {
+    width: 7px;
+    height: 7px;
+    background: var(--accent-primary, #6366f1);
     border-radius: var(--radius-full);
-    animation: dotPulse 1.2s infinite ease-in-out both;
+    animation: dotBouncePulse 1.3s infinite ease-in-out both;
+    display: inline-block;
 }
 
-.dot:nth-child(1) { animation-delay: -0.32s; }
-.dot:nth-child(2) { animation-delay: -0.16s; }
+.typing-dots .dot:nth-child(1),
+.bubble.typing .dot:nth-child(1) {
+    animation-delay: -0.32s;
+}
 
-@keyframes dotPulse {
-    0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
-    40% { opacity: 0.9; transform: scale(1); }
+.typing-dots .dot:nth-child(2),
+.bubble.typing .dot:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.typing-dots .dot:nth-child(3),
+.bubble.typing .dot:nth-child(3) {
+    animation-delay: 0s;
+}
+
+@keyframes dotBouncePulse {
+    0%, 80%, 100% {
+        opacity: 0.35;
+        transform: scale(0.8) translateY(0);
+    }
+    40% {
+        opacity: 1;
+        transform: scale(1.18) translateY(-2px);
+        background: var(--accent-hover, #818cf8);
+        box-shadow: 0 0 10px var(--accent-primary, #6366f1);
+    }
+}
+
+.typing-status-text {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    user-select: none;
+    letter-spacing: 0.15px;
 }
 
 /* Kartu Status Eksekusi Tool */
@@ -1341,11 +1391,19 @@ body.sidebar-resizing iframe {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    transition: border-color 0.12s;
+    transition: border-color 0.12s, opacity 0.15s, background 0.15s;
 }
 
 .input-card:focus-within {
     border-color: var(--border-hover);
+}
+
+/* Status terkunci saat respons AI sedang diproses */
+.input-card.is-loading,
+.input-section.is-generating .input-card {
+    border-color: var(--border-subtle);
+    background: rgba(255, 255, 255, 0.02);
+    box-shadow: none;
 }
 
 .chat-input {
@@ -1362,6 +1420,19 @@ body.sidebar-resizing iframe {
     max-height: 160px;
     line-height: 1.55;
     overflow-y: auto;
+}
+
+.chat-input:disabled,
+.chat-input[readonly] {
+    cursor: not-allowed;
+    color: var(--text-muted);
+}
+
+.chat-input:disabled::placeholder,
+.chat-input[readonly]::placeholder {
+    color: var(--accent-primary, #6366f1);
+    opacity: 0.85;
+    font-style: italic;
 }
 
 .chat-input:focus {
@@ -1408,9 +1479,17 @@ body.sidebar-resizing iframe {
     transition: background 0.12s, color 0.12s;
 }
 
-.btn-media:hover {
+.btn-media:hover:not(:disabled) {
     background: var(--bg-elevated);
     color: var(--text-primary);
+}
+
+.btn-media:disabled,
+.input-card.is-loading .btn-media,
+.input-section.is-generating .btn-media {
+    opacity: 0.35 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
 }
 
 .input-actions {
@@ -1437,9 +1516,11 @@ body.sidebar-resizing iframe {
     opacity: 0.86;
 }
 
-.btn-send:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
+.btn-send:disabled,
+.input-card.is-loading .btn-send:not(.btn-stop) {
+    opacity: 0.3 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
 }
 
 .btn-stop {

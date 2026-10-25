@@ -112,7 +112,7 @@ def _prepare_inference_payload(
                 take_web_screenshot,
                 execute_powershell_command
             )
-            agent_intent_res = detect_agent_intent(raw_user_typed)
+            agent_intent_res = detect_agent_intent(raw_user_typed, conversation_history=getattr(memory, 'short_term_history', None))
             agent_intent = agent_intent_res.get("intent", "none")
             agent_params = agent_intent_res.get("params", {})
 
@@ -982,6 +982,7 @@ def stream_shiro_reply(
     """
     Eksekusi streaming token neural real-time (Server-Sent Events generator).
     Yields events:
+    - {'type': 'status', 'status': '...'}
     - {'type': 'agent_action', 'agent_action': ...}
     - {'type': 'token', 'token': '...'}
     - {'type': 'ping'}
@@ -989,6 +990,38 @@ def stream_shiro_reply(
     """
     t_start_total = time.perf_counter()
     try:
+        # Pre-detect intent untuk memancarkan status langsung ke antarmuka pengguna
+        raw_user_typed = (user_input or "").strip()
+        if raw_user_typed:
+            try:
+                from shiro.agent.tools import detect_agent_intent
+                mem_inst = state.init_memory()
+                intent_info = detect_agent_intent(raw_user_typed, conversation_history=getattr(mem_inst, 'short_term_history', None))
+                intent = intent_info.get("intent", "none")
+                if intent == "screenshot":
+                    target_u = intent_info.get("params", {}).get("url", "")
+                    yield {"type": "status", "status": f"Sedang mengambil tangkapan layar website ({target_u or 'web'})..."}
+                elif intent == "search":
+                    q = intent_info.get("params", {}).get("query", raw_user_typed)
+                    yield {"type": "status", "status": f"Sedang mencari di Google/Web: '{q[:32]}'..."}
+                elif intent == "browse":
+                    target_u = intent_info.get("params", {}).get("url", "")
+                    yield {"type": "status", "status": f"Sedang membaca isi halaman web: {target_u[:32]}..."}
+                elif intent == "weather":
+                    yield {"type": "status", "status": "Sedang memeriksa data satelit cuaca..."}
+                elif intent == "powershell":
+                    yield {"type": "status", "status": "Sedang menjalankan perintah terminal PC..."}
+                elif intent == "math":
+                    yield {"type": "status", "status": "Sedang menghitung kalkulasi matematika..."}
+                elif intent == "time":
+                    yield {"type": "status", "status": "Sedang mengecek jam dan kalender dunia..."}
+                else:
+                    yield {"type": "status", "status": "Shiro sedang berpikir..."}
+            except Exception:
+                yield {"type": "status", "status": "Shiro sedang berpikir..."}
+        else:
+            yield {"type": "status", "status": "Shiro sedang memproses berkas/gambar..."}
+
         prep = _prepare_inference_payload(
             user_input=user_input,
             image_base64=image_base64,

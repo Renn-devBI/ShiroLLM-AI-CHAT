@@ -634,7 +634,7 @@ def execute_powershell_command(command: str) -> Dict[str, Any]:
             "summary": f"Gagal mengeksekusi perintah `{clean_cmd}`: {str(e)}"
         }
 
-def detect_agent_intent(text: str) -> Dict[str, Any]:
+def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Menganalisis pesan pengguna dan mendeteksi apakah membutuhkan eksekusi tool AI Agent:
     - screenshot: Mengambil tangkapan layar website via browser headless
@@ -679,6 +679,16 @@ def detect_agent_intent(text: str) -> Dict[str, Any]:
                     "intent": "screenshot",
                     "params": {"url": clean_word}
                 }
+        # Cek konteks percakapan riwayat sebelumnya jika merujuk ke URL lalu ("itu", "tadi", "tersebut", "barusan")
+        if conversation_history:
+            for past_msg in reversed(conversation_history):
+                past_content = past_msg.get("content", "") or ""
+                past_urls = re.findall(url_pattern, past_content)
+                if past_urls:
+                    return {
+                        "intent": "screenshot",
+                        "params": {"url": past_urls[-1].rstrip(".,;:!?)'\"")}
+                    }
 
     # 2. Deteksi Pengendalian PC / PowerShell Terminal
     ps_triggers = [
@@ -715,6 +725,16 @@ def detect_agent_intent(text: str) -> Dict[str, Any]:
             "intent": "browse",
             "params": {"url": target_url}
         }
+    browse_triggers = ["baca web", "buka web", "cek web", "lihat web", "baca situs", "buka situs"]
+    if any(bt in text_lower for bt in browse_triggers) and conversation_history:
+        for past_msg in reversed(conversation_history):
+            past_content = past_msg.get("content", "") or ""
+            past_urls = re.findall(url_pattern, past_content)
+            if past_urls:
+                return {
+                    "intent": "browse",
+                    "params": {"url": past_urls[-1].rstrip(".,;:!?)'\"")}
+                }
 
     # 2. Deteksi Cuaca & Hujan
     weather_triggers = [

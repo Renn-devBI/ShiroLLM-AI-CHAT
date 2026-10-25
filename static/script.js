@@ -118,6 +118,9 @@ const SHIRO_I18N = {
         status_ready: 'Siap',
         status_thinking: 'Shiro sedang berpikir...',
         status_typing: 'Shiro sedang mengetik...',
+        status_processing: 'Shiro sedang memproses...',
+        status_input_locked: 'Shiro sedang memproses... Mohon tunggu sebentar...',
+        status_tool_running: 'Sedang mengeksekusi instruksi...',
         status_stopped: 'Dihentikan',
         status_extracting: 'Mengekstrak berkas...',
         status_doc_ready: 'Berkas siap',
@@ -294,6 +297,9 @@ const SHIRO_I18N = {
         status_ready: 'Ready',
         status_thinking: 'Shiro is thinking...',
         status_typing: 'Shiro is typing...',
+        status_processing: 'Shiro is processing...',
+        status_input_locked: 'Shiro is processing... Please wait...',
+        status_tool_running: 'Executing instruction...',
         status_stopped: 'Stopped',
         status_extracting: 'Extracting file...',
         status_doc_ready: 'File ready',
@@ -1533,10 +1539,19 @@ function updateTypingIndicatorAvatar() {
     avatarEl.innerHTML = renderAvatarContent(aiProfile, 'S');
 }
 
-function showTyping(show) {
+function updateTypingStatus(statusText) {
+    if (!typingIndicator || !statusText) return;
+    const textEl = typingIndicator.querySelector('#typing-status-text') || typingIndicator.querySelector('.typing-status-text');
+    if (textEl) {
+        textEl.textContent = statusText;
+    }
+}
+
+function showTyping(show, statusText = null) {
     if (!typingIndicator) return;
     if (show) {
         updateTypingIndicatorAvatar();
+        updateTypingStatus(statusText || t('status_thinking') || 'Shiro sedang berpikir...');
         typingIndicator.classList.remove('hidden');
         if (chatMessages) {
             chatMessages.appendChild(typingIndicator);
@@ -1544,6 +1559,61 @@ function showTyping(show) {
         scrollToBottom();
     } else {
         typingIndicator.classList.add('hidden');
+    }
+}
+
+// Global input lockout manager
+function setInputLock(locked) {
+    if (userInput) {
+        userInput.disabled = locked;
+        if (locked) {
+            userInput.setAttribute('readonly', 'true');
+            if (!userInput.dataset.prevPlaceholder) {
+                userInput.dataset.prevPlaceholder = userInput.placeholder;
+            }
+            userInput.placeholder = t('status_input_locked') || 'Shiro sedang memproses... Mohon tunggu sebentar...';
+        } else {
+            userInput.removeAttribute('readonly');
+            userInput.placeholder = userInput.dataset.prevPlaceholder || t('input_placeholder') || 'Tulis pesan...';
+        }
+    }
+    if (uploadDocBtn) uploadDocBtn.disabled = locked;
+    if (uploadImageBtn) uploadImageBtn.disabled = locked;
+    if (openCameraBtn) openCameraBtn.disabled = locked;
+    if (docFileInput) docFileInput.disabled = locked;
+    if (imageFileInput) imageFileInput.disabled = locked;
+
+    if (sendBtn) {
+        sendBtn.disabled = locked;
+        if (locked) {
+            sendBtn.classList.add('hidden');
+        } else {
+            sendBtn.classList.remove('hidden');
+        }
+    }
+    if (stopBtn) {
+        if (locked) {
+            stopBtn.classList.remove('hidden');
+        } else {
+            stopBtn.classList.add('hidden');
+        }
+    }
+
+    const inputCard = document.querySelector('.input-card');
+    if (inputCard) {
+        if (locked) {
+            inputCard.classList.add('is-loading');
+        } else {
+            inputCard.classList.remove('is-loading');
+        }
+    }
+    const inputSection = document.querySelector('.input-section');
+    if (inputSection) {
+        if (locked) {
+            inputSection.classList.add('is-generating');
+        } else {
+            inputSection.classList.remove('is-generating');
+        }
     }
 }
 
@@ -1580,10 +1650,7 @@ async function sendMessage() {
         scrollBottomBtn.classList.add('hidden');
         scrollBottomBtn.classList.remove('is-streaming');
     }
-    userInput.disabled = true;
-    sendBtn.disabled = true;
-    sendBtn.classList.add('hidden');
-    stopBtn.classList.remove('hidden');
+    setInputLock(true);
     
     const sendingImage = attachedImage;
     const currentImgUrl = sendingImage ? sendingImage.dataUrl : null;
@@ -1616,9 +1683,26 @@ async function sendMessage() {
     );
     
     status.textContent = t('status_thinking');
-    showTyping(true);
+    showTyping(true, t('status_thinking'));
     if (pipelineNavDot) pipelineNavDot.classList.remove('hidden');
     startPipelineAnimation(displayMsg);
+
+    let typingProgressInterval = null;
+    let elapsedSec = 0;
+    typingProgressInterval = setInterval(() => {
+        elapsedSec++;
+        if (!isGenerating) {
+            clearInterval(typingProgressInterval);
+            return;
+        }
+        if (elapsedSec === 4) {
+            updateTypingStatus(t('status_processing') || 'Shiro sedang menganalisis pesan...');
+        } else if (elapsedSec === 8) {
+            updateTypingStatus('Shiro sedang menyusun jawaban...');
+        } else if (elapsedSec === 15) {
+            updateTypingStatus('Sedang memproses instruksi mendalam...');
+        }
+    }, 1000);
 
     abortController = new AbortController();
 
@@ -1670,6 +1754,8 @@ async function sendMessage() {
             let assistantBubble = null;
             let assistantTextEl = null;
             let finalData = null;
+            let activeAgentAction = null;
+            let activeAssistantImgUrl = null;
             let lastRenderTime = 0;
 
             const updateAssistantUI = (text, isDone = false) => {
@@ -1678,13 +1764,13 @@ async function sendMessage() {
                     assistantMsgEl = addMessage(
                         'assistant',
                         text || '...',
+                        activeAssistantImgUrl,
                         null,
                         null,
                         null,
                         null,
-                        null,
-                        null,
-                        null,
+                        activeAgentAction,
+                        finalData ? finalData.assistant_message_id : null,
                         false
                     );
                     assistantBubble = assistantMsgEl ? assistantMsgEl.querySelector('.bubble') : null;
@@ -1705,6 +1791,16 @@ async function sendMessage() {
                     assistantTextEl.innerHTML = parseMessageContent(displayContent);
                     if (assistantBubble) {
                         assistantBubble.setAttribute('data-original-text', text);
+                        
+                        // Sisipkan gambar lampiran jika tersedia dan belum tersemat
+                        if (activeAssistantImgUrl && !assistantBubble.querySelector('.chat-img-wrapper')) {
+                            const jsImgUrl = activeAssistantImgUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                            const imgWrap = document.createElement('div');
+                            imgWrap.className = 'chat-img-wrapper';
+                            imgWrap.onclick = () => openImageLightbox(jsImgUrl, 'Foto Lampiran Chat');
+                            imgWrap.innerHTML = `<img src="${activeAssistantImgUrl}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">`;
+                            assistantBubble.prepend(imgWrap);
+                        }
                     }
 
                     if (isUserScrolledUp) {
@@ -1754,6 +1850,18 @@ async function sendMessage() {
                                         }
                                     } catch (_) {}
                                 }
+                            } else if (evData.type === 'status') {
+                                if (evData.status) {
+                                    updateTypingStatus(evData.status);
+                                    status.textContent = evData.status;
+                                }
+                            } else if (evData.type === 'agent_action') {
+                                activeAgentAction = evData.agent_action;
+                                if (activeAgentAction && activeAgentAction.image_url) {
+                                    activeAssistantImgUrl = activeAgentAction.image_url;
+                                }
+                                const toolTitle = activeAgentAction ? (activeAgentAction.tool || 'eksekusi') : 'eksekusi';
+                                updateTypingStatus(`Selesai menjalankan ${toolTitle} · Menyusun jawaban...`);
                             } else if (evData.type === 'token') {
                                 if (!streamText) {
                                     status.textContent = t('status_typing');
@@ -1764,14 +1872,25 @@ async function sendMessage() {
                                     lastRenderTime = now;
                                     updateAssistantUI(streamText, false);
                                 }
-                            } else if (evData.type === 'agent_action') {
-                                // Eksekusi tool/agent action
                             } else if (evData.type === 'error') {
                                 console.warn('[Stream Error Event]:', evData.error);
+                                const errMsg = evData.error || 'Terjadi gangguan koneksi pada server.';
+                                if (!streamText) {
+                                    streamText = `*menatap cemas* Maaf Kakak, ada kendala: ${errMsg}`;
+                                } else {
+                                    streamText += `\n\n*menatap cemas* (Koneksi terganggu: ${errMsg})`;
+                                }
+                                updateAssistantUI(streamText, false);
                             } else if (evData.type === 'done') {
                                 finalData = evData;
-                                if (evData.reply) {
+                                if (evData.reply && !streamText) {
                                     streamText = evData.reply;
+                                }
+                                if (evData.assistant_image_url) {
+                                    activeAssistantImgUrl = evData.assistant_image_url;
+                                }
+                                if (evData.agent_action) {
+                                    activeAgentAction = evData.agent_action;
                                 }
                             }
                         } catch (errParse) {
@@ -1782,9 +1901,16 @@ async function sendMessage() {
             }
 
             // Render final setelah pembacaan stream tuntas
+            if (typingProgressInterval) clearInterval(typingProgressInterval);
             showTyping(false);
-            if (streamText || finalData) {
-                updateAssistantUI(streamText, true);
+            if (!streamText && finalData && finalData.reply) {
+                streamText = finalData.reply;
+            }
+            if (!streamText) {
+                // Safeguard: AI tidak boleh menghilang atau kosong
+                streamText = '*menatap cemas* Maaf Kakak, Shiro tidak dapat menyelesaikan respons ini (koneksi terputus atau server tidak memberikan jawaban).';
+            }
+            updateAssistantUI(streamText, true);
                 if (assistantMsgEl) {
                     if (finalData && finalData.assistant_message_id) {
                         assistantMsgEl.dataset.msgId = finalData.assistant_message_id;
@@ -1822,7 +1948,6 @@ async function sendMessage() {
                         });
                     }
                 }
-            }
 
             clearPipelineSimulation();
 
@@ -1851,7 +1976,7 @@ async function sendMessage() {
             const assistantImg = data.assistant_image_url || null;
             addMessage(
                 'assistant',
-                data.reply,
+                data.reply || '*menatap cemas* Maaf Kakak, server tidak memberikan jawaban teks.',
                 assistantImg,
                 null,
                 null,
@@ -1879,12 +2004,18 @@ async function sendMessage() {
         }
 
     } catch (error) {
+        if (typeof typingProgressInterval !== 'undefined' && typingProgressInterval) {
+            clearInterval(typingProgressInterval);
+        }
         clearPipelineSimulation();
         if (error.name === 'AbortError') {
             console.log('Request stopped by user');
             showTyping(false);
             status.textContent = t('status_stopped');
             const lastAssistantMsg = chatMessages ? chatMessages.querySelector('.message.assistant:last-child') : null;
+            if (!lastAssistantMsg || lastAssistantMsg.classList.contains('user')) {
+                addMessage('assistant', '*Respons dihentikan oleh pengguna.*');
+            }
             if (lastAssistantMsg && typeof hljs !== 'undefined') {
                 lastAssistantMsg.querySelectorAll('pre code[class*="language-"]').forEach(block => {
                     try { hljs.highlightElement(block); } catch (_) {}
@@ -1901,6 +2032,9 @@ async function sendMessage() {
             status.textContent = t('status_ready');
         }
     } finally {
+        if (typeof typingProgressInterval !== 'undefined' && typingProgressInterval) {
+            clearInterval(typingProgressInterval);
+        }
         clearPipelineSimulation();
         if (pipelineNavDot) pipelineNavDot.classList.add('hidden');
         isGenerating = false;
@@ -1908,11 +2042,8 @@ async function sendMessage() {
             scrollBottomBtn.classList.remove('is-streaming');
             updateScrollBottomBtnVisibility();
         }
-        userInput.disabled = false;
-        sendBtn.disabled = false;
-        sendBtn.classList.remove('hidden');
-        stopBtn.classList.add('hidden');
-        userInput.focus();
+        setInputLock(false);
+        if (userInput) userInput.focus();
     }
 }
 
@@ -3175,15 +3306,17 @@ function adjustInputHeight() {
 }
 
 userInput.addEventListener('keydown', (e) => {
+    if (isGenerating) {
+        e.preventDefault();
+        return;
+    }
     if (e.key === 'Enter') {
         if (e.shiftKey) {
             setTimeout(adjustInputHeight, 0);
             return;
         }
-        if (!isGenerating) {
-            e.preventDefault();
-            sendMessage();
-        }
+        e.preventDefault();
+        sendMessage();
     }
 });
 
@@ -3549,6 +3682,7 @@ async function uploadDocumentFile(file) {
 
 if (uploadDocBtn && docFileInput) {
     uploadDocBtn.addEventListener('click', () => {
+        if (isGenerating) return;
         docFileInput.click();
     });
 
@@ -3643,6 +3777,10 @@ function handleLongPaste(text) {
 
 if (userInput) {
     userInput.addEventListener('paste', (e) => {
+        if (isGenerating) {
+            e.preventDefault();
+            return;
+        }
         const items = (e.clipboardData || window.clipboardData)?.items;
         if (items) {
             for (let i = 0; i < items.length; i++) {
@@ -3675,6 +3813,7 @@ if (userInput) {
 
 if (uploadImageBtn && imageFileInput) {
     uploadImageBtn.addEventListener('click', () => {
+        if (isGenerating) return;
         imageFileInput.click();
     });
 
@@ -3737,7 +3876,10 @@ function closeCamera() {
     if (cameraModal) cameraModal.classList.add('hidden');
 }
 
-if (openCameraBtn) openCameraBtn.addEventListener('click', startCamera);
+if (openCameraBtn) openCameraBtn.addEventListener('click', () => {
+    if (isGenerating) return;
+    startCamera();
+});
 if (closeCameraModalBtn) closeCameraModalBtn.addEventListener('click', closeCamera);
 
 if (switchCameraBtn) {

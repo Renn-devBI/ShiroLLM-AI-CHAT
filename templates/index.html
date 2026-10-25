@@ -1658,10 +1658,15 @@
 
                     <div id="typing-indicator" class="message assistant hidden">
                         <div class="avatar shiro-avatar">S</div>
-                        <div class="bubble typing" aria-label="Shiro sedang mengetik">
-                            <div class="dot"></div>
-                            <div class="dot"></div>
-                            <div class="dot"></div>
+                        <div class="bubble typing" aria-label="Shiro sedang memproses">
+                            <div class="typing-pill">
+                                <div class="typing-dots">
+                                    <span class="dot"></span>
+                                    <span class="dot"></span>
+                                    <span class="dot"></span>
+                                </div>
+                                <span class="typing-status-text" id="typing-status-text" data-i18n="status_thinking">Shiro sedang berpikir...</span>
+                            </div>
                         </div>
                     </div>
                 </div>
