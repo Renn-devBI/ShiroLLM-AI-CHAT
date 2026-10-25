@@ -1,29 +1,29 @@
 {
-  "current_model": "model/Qwen3-4B-Q4_K_M.gguf",
-  "local_default_model": "model/Qwen3-4B-Q4_K_M.gguf",
+  "current_model": "model/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf",
+  "auto_detect": true,
   "available_models": [
     "model/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf",
-    "model/Qwen3-4B-Q4_K_M.gguf",
-    "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf"
+    "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf",
+    "model/Qwen3-4B-Q4_K_M.gguf"
   ],
   "model_info": {
     "model/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf": {
       "name": "Llama-3.2-3B-Uncensored",
       "size": "3B Uncensored",
       "quantization": "Q6_K",
-      "description": "Model #5: Super ringan fallback GPU T4 (~2.9 GB)"
-    },
-    "model/Qwen3-4B-Q4_K_M.gguf": {
-      "name": "Qwen3-4B",
-      "size": "4B",
-      "quantization": "Q4_K_M",
-      "description": "Model #6: Super ringan untuk CPU / fallback GPU (~2.5 GB)"
+      "description": "Model Super Ringan Fallback CPU/GPU T4 (~2.9 GB)"
     },
     "model/Lumimaid-v0.2-8B-Q5_K_M-imat.gguf": {
       "name": "Lumimaid-v0.2-8B",
       "size": "8B",
       "quantization": "Q5_K_M",
       "description": "Roleplay Model (~5.7 GB)"
+    },
+    "model/Qwen3-4B-Q4_K_M.gguf": {
+      "name": "Qwen3-4B",
+      "size": "4B",
+      "quantization": "Q4_K_M",
+      "description": "Model Eksperimental (~2.5 GB)"
     }
   },
   "moe": {

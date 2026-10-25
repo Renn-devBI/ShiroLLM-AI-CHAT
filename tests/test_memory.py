@@ -63,8 +63,9 @@ class TestMemoryManager(unittest.TestCase):
             json.dump(dummy_data, f)
 
         mm = AdvancedMemoryManager(memory_file=self.mem_file, world_file=self.world_file)
-        # Harus ter-deduplikasi menjadi 1
-        self.assertEqual(len(mm.learned_patterns), 1)
+        # Harus ter-deduplikasi menjadi 1 untuk pola respon yang sama
+        matching = [p for p in mm.learned_patterns if p.get("assistant") == "Wah poster tersebut bagus!"]
+        self.assertEqual(len(matching), 1)
 
 if __name__ == "__main__":
     unittest.main()

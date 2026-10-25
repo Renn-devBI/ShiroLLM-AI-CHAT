@@ -8,10 +8,12 @@ os.makedirs("model", exist_ok=True)
 # Definisi Model Tersedia:
 COLAB_MODELS = {
     "27b": {
-        "repo": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",
-        "file": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
-        "extra_file": None,
-        "desc": "Qwen3.8-27B-Uncensored (Model Utama: Roleplay & Deep Reasoning Uncensored / A100 GPU, ~16.8 GB)"
+        "repo": "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
+        "file": "Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-Q4_K_P.gguf",
+        "alt_files": ["Qwen3.8-27B-Uncensored-Q4_K_M.gguf"],
+        "extra_file": "mmproj-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
+        "extra_alias": "mmproj-BF16.gguf",
+        "desc": "Qwen3.8-27B-Uncensored Multimodal (Model Utama: Roleplay, Gambar/Vision & Deep Reasoning / A100 GPU, ~16.8 GB + mmproj-BF16)"
     },
     "vl": {
         "repo": "unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
@@ -97,9 +99,22 @@ def download_single_model(m_key, info):
     print("=" * 65)
 
     success = False
+    alt_files = info.get("alt_files", [])
+    found_alt = None
+    for af in alt_files:
+        af_path = os.path.join("model", af)
+        if os.path.exists(af_path):
+            found_alt = af_path
+            break
+
     if os.path.exists(target_path):
         size_gb = os.path.getsize(target_path) / (1024 * 1024 * 1024)
         print(f"[OK] Model {fname} sudah ada di folder model/ ({size_gb:.1f} GB). Skip download.")
+        success = True
+    elif found_alt:
+        size_gb = os.path.getsize(found_alt) / (1024 * 1024 * 1024)
+        print(f"[OK] Model varian {os.path.basename(found_alt)} sudah ada di folder model/ ({size_gb:.1f} GB). Skip download.")
+        fname = os.path.basename(found_alt)
         success = True
     else:
         print(f"[DOWNLOAD] Mengunduh model {fname}...")
@@ -118,7 +133,10 @@ def download_single_model(m_key, info):
 
     if extra:
         extra_path = os.path.join("model", extra)
-        if os.path.exists(extra_path):
+        extra_alias = info.get("extra_alias")
+        alias_path = os.path.join("model", extra_alias) if extra_alias else None
+
+        if os.path.exists(extra_path) or (alias_path and os.path.exists(alias_path)):
             print(f"[OK] Vision Projector {extra} sudah ada di folder model/. Skip download.")
         else:
             print(f"[DOWNLOAD] Mengunduh Vision Projector ({extra})...")
@@ -130,6 +148,12 @@ def download_single_model(m_key, info):
                     local_dir_use_symlinks=False
                 )
                 print(f"[OK] Projector {extra} berhasil diunduh.")
+                if alias_path and os.path.exists(extra_path) and not os.path.exists(alias_path):
+                    import shutil
+                    try:
+                        shutil.copy2(extra_path, alias_path)
+                    except Exception:
+                        pass
             except Exception as e:
                 print(f"[WARN] Gagal download projector {extra}: {e}")
     

@@ -26,6 +26,7 @@ from shiro.models import (
     save_model_config,
     get_available_gguf_models,
     instantiate_llama_model,
+    instantiate_llama_model_with_autodetect,
     find_active_lora_path,
     get_gpu_layers
 )
@@ -124,20 +125,14 @@ if __name__ == '__main__':
 
     config = load_model_config()
     current_model_path = config.get("current_model")
-
-    if not current_model_path or not os.path.exists(current_model_path):
-        existing_models = get_available_gguf_models()
-        if existing_models:
-            current_model_path = existing_models[0]
-            print(f"⚠️ Model di config ({config.get('current_model')}) belum tersedia di disk, otomatis beralih ke: {current_model_path}")
-        else:
-            print(f"❌ Error: Model file '{current_model_path}' tidak ditemukan di folder {MODEL_DIR}!")
-            sys.exit(1)
+    if not current_model_path or current_model_path.lower() == "auto" or not os.path.exists(current_model_path):
+        current_model_path = None
 
     try:
-        active_llm, active_vision = instantiate_llama_model(current_model_path)
+        active_llm, active_vision, loaded_model_path = instantiate_llama_model_with_autodetect(current_model_path)
         state.set_llm(active_llm, active_vision)
         llm = active_llm
+        current_model_path = loaded_model_path
 
         model_name = os.path.basename(current_model_path)
         print(f"✓ Model loaded: {model_name}")

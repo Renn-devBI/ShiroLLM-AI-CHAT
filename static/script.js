@@ -3786,9 +3786,22 @@ async function loadModels() {
         
         if (select) {
             select.innerHTML = '';
+            
+            // Opsi Auto-Detect: Otomatis memilih model terbaik tanpa terikat default kaku
+            const autoOpt = document.createElement('option');
+            autoOpt.value = 'auto';
+            autoOpt.textContent = '⚡ Auto-Detect (Otomatis Deteksi)';
+            if (data.current_model === 'auto') {
+                autoOpt.selected = true;
+                if (modelDescText) {
+                    modelDescText.textContent = 'Mode Auto-Detect: Shiro akan secara otomatis mendeteksi dan memilih model terbaik di folder model/.';
+                }
+            }
+            select.appendChild(autoOpt);
+
             if (!data.available_models || data.available_models.length === 0) {
                 const option = document.createElement('option');
-                option.textContent = 'Tidak ada model ditemukan';
+                option.textContent = 'Tidak ada model ditemukan di folder model/';
                 option.disabled = true;
                 select.appendChild(option);
             } else {
@@ -3812,6 +3825,12 @@ async function loadModels() {
             
             select.onchange = () => {
                 const sel = select.value;
+                if (sel === 'auto') {
+                    if (modelDescText) {
+                        modelDescText.textContent = 'Mode Auto-Detect: Otomatis mendeteksi dan memilih model terbaik di folder model/.';
+                    }
+                    return;
+                }
                 const info = data.model_info?.[sel] || {};
                 if (modelDescText) {
                     modelDescText.textContent = info.description || `Model terpilih: ${getModelName(sel)}`;

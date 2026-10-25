@@ -19,7 +19,8 @@ from shiro.models import (
     load_model_config,
     save_model_config,
     is_running_in_colab,
-    instantiate_llama_model
+    instantiate_llama_model,
+    instantiate_llama_model_with_autodetect
 )
 
 admin_bp = Blueprint("admin_bp", __name__)
@@ -206,6 +207,7 @@ def get_models():
     config = load_model_config()
     return jsonify({
         "current_model": config.get("current_model"),
+        "auto_detect": config.get("auto_detect", True),
         "available_models": config.get("available_models", []),
         "model_info": config.get("model_info", {}),
         "is_colab": is_running_in_colab()
@@ -224,6 +226,40 @@ def switch_model():
 
         config = load_model_config()
         available = config.get("available_models", [])
+
+        # Opsi Auto-Detect: Pilih dan aktifkan model terbaik secara otomatis
+        if model_path.lower() in ("auto", "autodetect", "auto-detect"):
+            old_llm = state.llm
+            try:
+                if state.llm is not None:
+                    try:
+                        if hasattr(state.llm, 'close'):
+                            state.llm.close()
+                    except Exception as e_close:
+                        print(f"Warning closing previous LLM: {e_close}")
+                    state.llm = None
+                    gc.collect()
+
+                new_llm, vision_handler, active_path = instantiate_llama_model_with_autodetect(None)
+                state.set_llm(new_llm, vision_handler)
+
+                config["current_model"] = active_path
+                config["auto_detect"] = True
+                save_model_config(config)
+
+                model_name = os.path.basename(active_path)
+                print(f"[Admin] Autodetect berhasil beralih ke: {model_name}")
+                return jsonify({
+                    "success": True,
+                    "message": f"Model switched to {model_name} (Auto-detected)",
+                    "current_model": active_path,
+                    "has_vision": bool(vision_handler is not None)
+                })
+            except Exception as load_error:
+                print(f"[Admin] Error in autodetect switch: {load_error}")
+                if state.llm is None and old_llm is not None:
+                    state.llm = old_llm
+                return jsonify({"error": f"Gagal autodetect model: {str(load_error)[:120]}"}), 500
 
         target_path = None
         target_lora_ver = None
