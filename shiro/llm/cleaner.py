@@ -295,7 +295,7 @@ def clean_response(response: str, assistant_name: Optional[str] = None, user_inp
     # 10b. Hapus badge robot, AI Agent Web Tool, dan technical prefix eksekusi tool
     response = re.sub(r'^\s*>?\s*[\U0001f310\U0001f30d\U0001f30e\U0001f30f][^\n]*(?:\n|$)', '', response, flags=re.MULTILINE)
     response = re.sub(r'^\s*>?\s*\*?\*?\[(?:AI Agent|Agent|Web Tool|Tool Execution)[^\]]*\]\*?\*?[^\n]*(?:\n|$)', '', response, flags=re.MULTILINE | re.IGNORECASE)
-    response = re.sub(r'\[(?:AI Agent|Agent|Web Tool)[^\]]*\]', '', response, flags=re.IGNORECASE)
+    response = re.sub(r'\[(?:AI Agent|Agent|Web Tool|Pedoman Bahasa|Instruksi Bahasa|ATURAN|RULE)[^\]]*\]', '', response, flags=re.IGNORECASE)
     response = re.sub(r'^\s*>?\s*Membuka (?:dan membaca|koneksi|browser)[^\n]*(?:\n|$)', '', response, flags=re.MULTILINE | re.IGNORECASE)
     response = re.sub(r'\(Cloudflare 1\.1\.1\.1[^\)]*\)', '', response, flags=re.IGNORECASE)
     response = re.sub(r'\(Mozilla Engine[^\)]*\)', '', response, flags=re.IGNORECASE)

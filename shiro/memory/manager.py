@@ -1469,6 +1469,11 @@ class AdvancedMemoryManager:
                 return
             if any(k in a_clean.lower() for k in ["let me break this down", "the user is", "possible responses", "let's craft", "character traits"]):
                 return
+
+            from shiro.llm.cleaner import is_predominantly_english
+            # Jangan pernah merekam pola jika user berbahasa Indonesia tetapi asisten menjawab bahasa Inggris
+            if not is_predominantly_english(u_clean) and is_predominantly_english(a_clean):
+                return
             
             keywords = list(set(re.findall(r'\b\w{3,}\b', u_clean.lower())))
             
@@ -1538,6 +1543,11 @@ class AdvancedMemoryManager:
             relevant = [item[1] for item in scored if item[0] > 0][:max_count]
             # If no keyword overlap found, provide 1 high-quality general exemplar
             if not relevant and self.learned_patterns:
-                relevant = self.learned_patterns[-1:]
+                from shiro.llm.cleaner import is_predominantly_english
+                if not is_predominantly_english(query):
+                    id_candidates = [p for p in self.learned_patterns if not is_predominantly_english(p.get("assistant", ""))]
+                    relevant = id_candidates[-1:] if id_candidates else []
+                else:
+                    relevant = self.learned_patterns[-1:]
             return relevant
 

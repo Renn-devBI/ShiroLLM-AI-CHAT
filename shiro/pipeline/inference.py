@@ -322,6 +322,19 @@ def _prepare_inference_payload(
     while len(clean_context) > 1 and calculate_messages_tokens(clean_context, llm) > max_history_tokens:
         clean_context.pop(0)
 
+    # Sanitisasi riwayat pesan (Context Anti-Poisoning):
+    # Jika pengguna saat ini tidak menggunakan bahasa Inggris, pastikan riwayat asisten yang meleset ke bahasa Inggris dinetralkan
+    from shiro.llm.cleaner import is_predominantly_english, translate_to_indonesian_fast
+    is_user_english_query = bool(raw_user_typed and is_predominantly_english(raw_user_typed))
+    if not is_user_english_query:
+        for idx_c, ctx_msg in enumerate(clean_context):
+            if ctx_msg.get("role") == "assistant":
+                c_str = ctx_msg.get("content", "")
+                if is_predominantly_english(c_str):
+                    t_str = translate_to_indonesian_fast(c_str)
+                    if t_str and len(t_str.strip()) > 5:
+                        clean_context[idx_c]["content"] = t_str.strip()
+
     t_mem_dur = (time.perf_counter() - t0) * 1000
     nodes.append({
         "id": "node_memory",
@@ -522,6 +535,10 @@ def _prepare_inference_payload(
             parts_user.append(f"Shiro, tolong pelajari dokumen '{doc_name}' yang Kakak lampirkan ya!")
         else:
             parts_user.append(" ")
+
+        # Anti-drift anchor: ingatkan model agar tetap menjawab dalam bahasa Indonesia jika riwayat percakapan panjang
+        if not is_user_english_query and raw_user_typed and len(clean_context) >= 2:
+            parts_user.append(f"\n[Pedoman Bahasa]: Jawab 100% dalam Bahasa Indonesia santai khas {ai_name}.")
 
         user_text = "\n".join(parts_user)
         user_turn_msg = {"role": "user", "content": user_text}

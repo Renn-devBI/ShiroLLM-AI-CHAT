@@ -1928,7 +1928,10 @@ async function sendMessage() {
             // Render final setelah pembacaan stream tuntas
             if (typingProgressInterval) clearInterval(typingProgressInterval);
             showTyping(false);
-            if (!streamText && finalData && finalData.reply) {
+            // Selalu gunakan respons final yang sudah difilter / dibersihkan / diterjemahkan oleh server jika ada
+            if (finalData && finalData.reply && finalData.reply.trim()) {
+                streamText = finalData.reply.trim();
+            } else if (!streamText && finalData && finalData.reply) {
                 streamText = finalData.reply;
             }
             if (!streamText) {
