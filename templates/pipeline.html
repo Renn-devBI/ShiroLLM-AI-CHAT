@@ -522,6 +522,9 @@
             color: var(--text-primary);
         }
         .tool-sep { width: 1px; height: 18px; background: var(--border-subtle); margin: 0 4px; flex-shrink: 0; }
+        .toolbar {
+            pointer-events: auto;
+        }
         .zoom-text {
             min-width: 44px;
             text-align: center;
@@ -530,6 +533,13 @@
             color: var(--text-secondary);
             flex-shrink: 0;
             font-variant-numeric: tabular-nums;
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.12s;
+        }
+        .zoom-text:hover {
+            color: var(--text-primary);
+            text-decoration: underline;
         }
         .tool-select {
             height: 30px;
@@ -824,16 +834,18 @@
             <div class="toolbar" role="toolbar" aria-label="Kontrol kanvas">
                 <button type="button" class="tool-btn" id="tb-undo" title="Urungkan (Ctrl+Z)" aria-label="Urungkan"><i class="ph ph-arrow-counter-clockwise"></i></button>
                 <button type="button" class="tool-btn" id="tb-redo" title="Ulangi (Ctrl+Shift+Z)" aria-label="Ulangi"><i class="ph ph-arrow-clockwise"></i></button>
+                <button type="button" class="tool-btn" id="tb-refresh" title="Muat ulang status alur (Fetch)" aria-label="Muat ulang"><i class="ph ph-arrows-clockwise"></i></button>
                 <span class="tool-sep"></span>
                 <button type="button" class="tool-btn" id="tb-zoom-out" title="Perkecil (-)" aria-label="Perkecil"><i class="ph ph-minus"></i></button>
-                <span class="zoom-text" id="zoom-level-text">100%</span>
+                <span class="zoom-text" id="zoom-level-text" title="Klik untuk reset zoom 100%">100%</span>
                 <button type="button" class="tool-btn" id="tb-zoom-in" title="Perbesar (+)" aria-label="Perbesar"><i class="ph ph-plus"></i></button>
-                <button type="button" class="tool-btn" id="tb-fit" title="Sesuaikan ke layar (Shift+1)" aria-label="Sesuaikan ke layar"><i class="ph ph-corners-out"></i></button>
+                <button type="button" class="tool-btn" id="tb-fit" title="Sesuaikan ke layar (Shift+1)" aria-label="Sesuaikan ke layar"><i class="ph ph-frame-corners"></i></button>
+                <button type="button" class="tool-btn" id="tb-fullscreen" title="Layar penuh (Fullscreen)" aria-label="Layar penuh"><i class="ph ph-corners-out"></i></button>
                 <span class="tool-sep"></span>
-                <button type="button" class="tool-btn active" id="tb-tool-select" title="Pilih dan seret node" aria-label="Mode pilih"><i class="ph ph-cursor"></i></button>
-                <button type="button" class="tool-btn" id="tb-tool-pan" title="Geser kanvas (atau tahan Spasi)" aria-label="Mode geser"><i class="ph ph-hand"></i></button>
+                <button type="button" class="tool-btn active" id="tb-tool-select" title="Mode Pilih & Pindah Node (V)" aria-label="Mode pilih"><i class="ph ph-cursor"></i></button>
+                <button type="button" class="tool-btn" id="tb-tool-pan" title="Mode Geser Kanvas / Hand Tool (H)" aria-label="Mode geser"><i class="ph ph-hand"></i></button>
                 <span class="tool-sep"></span>
-                <button type="button" class="tool-btn" id="tb-tidy" title="Kembalikan posisi node bawaan" aria-label="Kembalikan posisi node bawaan"><i class="ph ph-squares-four"></i></button>
+                <button type="button" class="tool-btn" id="tb-tidy" title="Rapikan tata letak node bawaan (Auto Layout)" aria-label="Rapikan tata letak node bawaan"><i class="ph ph-squares-four"></i></button>
                 <button type="button" class="tool-btn" id="tb-reset-wires" title="Kembalikan sambungan garis bawaan" aria-label="Kembalikan sambungan garis bawaan"><i class="ph ph-flow-arrow"></i></button>
                 <select id="wire-style-select" class="tool-select" title="Gaya garis penghubung" aria-label="Gaya garis penghubung">
                     <option value="curved">Melengkung</option>
@@ -1470,7 +1482,7 @@
 
     /* ---------------- Gestur pointer ---------------- */
     viewport.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('#wire-tools button')) return;
+        if (e.target.closest('.toolbar, .hint-chip, .canvas-status, #wire-tools')) return;
         if (e.button !== 0 && e.button !== 1) return;
         if (e.button === 1) e.preventDefault();
         viewport.focus({ preventScroll: true });
@@ -1642,6 +1654,7 @@
     }
 
     viewport.addEventListener('wheel', (e) => {
+        if (e.target.closest('.toolbar, .hint-chip, .canvas-status')) return;
         e.preventDefault();
         // Zoom langsung menggunakan scroll mouse (baik biasa, Ctrl+Scroll, maupun trackpad pinch)
         const delta = e.deltaY !== undefined ? e.deltaY : 0;
@@ -1714,6 +1727,10 @@
             setZoom(zoom / 1.15);
         } else if (e.shiftKey && e.code === 'Digit1') {
             viewTouched = false; fitView();
+        } else if (key === 'h') {
+            setTool('pan');
+        } else if (key === 'v') {
+            setTool('select');
         }
     });
 
@@ -1745,11 +1762,39 @@
         viewport.classList.toggle('grid-none', gridMode === 2);
     }
 
+    // Cegah pointerdown / mousedown pada toolbar agar tidak tertangkap oleh gestur kanvas
+    const tbEl = document.querySelector('.toolbar');
+    if (tbEl) {
+        tbEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+        tbEl.addEventListener('mousedown', (e) => e.stopPropagation());
+        tbEl.addEventListener('wheel', (e) => e.stopPropagation());
+    }
+
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+            document.exitFullscreen().catch(() => {});
+        }
+    }
+
     $('tb-undo').addEventListener('click', undo);
     $('tb-redo').addEventListener('click', redo);
-    $('tb-zoom-in').addEventListener('click', () => setZoom(zoom * 1.2));
-    $('tb-zoom-out').addEventListener('click', () => setZoom(zoom / 1.2));
+    $('tb-refresh').addEventListener('click', async () => {
+        await fetchLatestTrace();
+        updateHistoryUi();
+    });
+    $('tb-zoom-in').addEventListener('click', () => setZoom(zoom * 1.25));
+    $('tb-zoom-out').addEventListener('click', () => setZoom(zoom / 1.25));
+    $('zoom-level-text').addEventListener('click', () => setZoom(1));
     $('tb-fit').addEventListener('click', () => { viewTouched = false; fitView(); });
+    $('tb-fullscreen').addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', () => {
+        const isFull = !!document.fullscreenElement;
+        $('tb-fullscreen').classList.toggle('active', isFull);
+        const icon = $('tb-fullscreen').querySelector('i');
+        if (icon) icon.className = isFull ? 'ph ph-corners-in' : 'ph ph-corners-out';
+    });
     $('tb-tool-select').addEventListener('click', () => setTool('select'));
     $('tb-tool-pan').addEventListener('click', () => setTool('pan'));
     $('tb-tidy').addEventListener('click', () => {
