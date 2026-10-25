@@ -437,6 +437,22 @@ def _prepare_inference_payload(
         (llm and getattr(llm, "chat_handler", None))
     )
     if has_image:
+        is_english_query = False
+        is_japanese_query = False
+        if raw_user_typed:
+            from shiro.llm.cleaner import is_predominantly_english, is_japanese_text
+            is_japanese_query = is_japanese_text(raw_user_typed)
+            u_lower = raw_user_typed.lower()
+            if any(w in u_lower for w in ["in english", "bahasa inggris", "english please", "speak english"]) or is_predominantly_english(raw_user_typed):
+                is_english_query = True
+        
+        if is_english_query:
+            lang_fact_rule = f"\n[LANGUAGE & FACTS]: Answer in English as requested by {user_name}. Observe the photo factually without fabricating fictional ages or relations."
+        elif is_japanese_query:
+            lang_fact_rule = f"\n[言語と事実のルール]: {user_name}に合わせて日本語で自然に答えてください。写真にない架空の年齢や関係を捏造しないでください。"
+        else:
+            lang_fact_rule = f"\n[PANDUAN BAHASA & FAKTA]: Jawab dalam BAHASA INDONESIA santai khas {ai_name}. Amati foto apa adanya secara faktual tanpa mengarang umur atau relasi fiktif."
+
         if has_vision_handler:
             content_parts = []
             for img_b64 in all_images:
@@ -453,7 +469,7 @@ def _prepare_inference_payload(
                 prompt_parts.append(raw_user_typed)
             else:
                 prompt_parts.append(f"{ai_name}, coba perhatikan dan jelaskan gambar visual yang {user_name} lampirkan ini ya!")
-            prompt_parts.append(f"\n[ATURAN MUTLAK]: Jawab 100% dalam BAHASA INDONESIA santai khas {ai_name}. DILARANG KERAS menjawab dalam Bahasa Inggris! Amati foto apa adanya tanpa mengarang umur atau relasi fiktif.")
+            prompt_parts.append(lang_fact_rule)
             
             content_parts.append({
                 "type": "text",
@@ -488,8 +504,8 @@ def _prepare_inference_payload(
             user_lines = [
                 f"[OBSERVASI VISUAL GAMBAR YANG DILAMPIRKAN {user_name.upper()} — sumber: {source_label}]:",
                 visual_evidence_text,
-                f"\n[ATURAN]: Jawab 100% dalam BAHASA INDONESIA santai khas {ai_name}. DILARANG KERAS menggunakan bahasa Inggris. Jangan mengarang umur atau relasi fiktif.",
-                f"\n{raw_user_typed}" if raw_user_typed else f"{ai_name}, coba jelaskan apa yang terlihat pada gambar di atas dalam Bahasa Indonesia."
+                lang_fact_rule,
+                f"\n{raw_user_typed}" if raw_user_typed else f"{ai_name}, coba jelaskan apa yang terlihat pada gambar di atas."
             ]
             if has_doc:
                 user_lines.insert(0, f"[Melampirkan Dokumen: {doc_name}]")
@@ -696,7 +712,7 @@ def _finalize_inference_output(
     if api_version == "v2":
         cleaned_reply = clean_vtuber_response(raw_reply, raw_user_typed)
     else:
-        cleaned_reply = clean_response(raw_reply, assistant_name=prep.get("ai_name", "Shiro"))
+        cleaned_reply = clean_response(raw_reply, assistant_name=prep.get("ai_name", "Shiro"), user_input=raw_user_typed)
 
     if not cleaned_reply and raw_reply:
         cleaned_reply = raw_reply.strip()

@@ -85,14 +85,20 @@ def validate_response(response: str, user_input: str = "") -> bool:
     if any(re.search(pattern, check_meta_text, re.IGNORECASE) for pattern in META_PATTERNS):
         return False
 
-    # Deteksi bahasa asing (English) hanya pada teks percakapan (bukan di dalam sintaks kode)
+    # Deteksi bahasa asing (English) hanya jika user_input jelas berbahasa Indonesia dan tidak menghendaki bahasa asing
     if text_no_code:
-        words = re.findall(r'\b[a-zA-Z]{2,}\b', text_no_code.lower())
-        if len(words) >= 5:
-            en_count = sum(1 for w in words if w in EN_STOPWORDS)
-            id_count = sum(1 for w in words if w in ID_STOPWORDS)
-            if en_count >= 4 and en_count > (id_count * 1.5):
-                return False
+        u_lower = (user_input or '').lower()
+        user_allows_foreign = (
+            is_predominantly_english(user_input) or 
+            any(k in u_lower for k in ['english', 'inggris', 'translate', 'terjemah', 'japan', 'jepang'])
+        )
+        if not user_allows_foreign:
+            words = re.findall(r'\b[a-zA-Z]{2,}\b', text_no_code.lower())
+            if len(words) >= 5:
+                en_count = sum(1 for w in words if w in EN_STOPWORDS)
+                id_count = sum(1 for w in words if w in ID_STOPWORDS)
+                if en_count >= 4 and en_count > (id_count * 1.5):
+                    return False
     
     # Batas panjang diperluas (64.000 karakter) agar dapat memuat kode website utuh, ringkasan dokumen, dan cerita panjang
     if len(response) > 64000:
@@ -167,7 +173,34 @@ def translate_to_indonesian_fast(text: str) -> str:
         print(f"[Translator Fallback Error]: {e_tr}")
         return text
 
-def clean_response(response: str, assistant_name: Optional[str] = None) -> str:
+def should_translate_english_fallback(response_text: str, user_input: Optional[str] = None) -> bool:
+    """
+    Menentukan apakah respons bahasa Inggris merupakan kelalaian model (misalnya ketika user bertanya
+    dalam Bahasa Indonesia atau hanya mengirim foto tanpa teks instruksi bahasa asing) sehingga perlu diterjemahkan.
+    JANGAN menerjemahkan jika:
+    - user_input tidak diberikan (misalnya pada pengujian unit umum atau pemanggilan internal)
+    - user_input berbahasa Inggris atau pengguna secara eksplisit meminta bahasa Inggris
+    - user_input berbahasa Jepang atau bahasa asing lainnya
+    """
+    if not user_input or not user_input.strip():
+        return False
+
+    # 1. Jika pengguna bertanya dalam bahasa Inggris atau meminta bahasa Inggris, biarkan dalam bahasa Inggris
+    if is_predominantly_english(user_input):
+        return False
+    u_lower = user_input.lower()
+    if any(k in u_lower for k in ['in english', 'bahasa inggris', 'english please', 'translate to english', 'speak english']):
+        return False
+
+    # 2. Jika pengguna menggunakan bahasa Jepang, biarkan dalam bahasa Jepang/asing
+    if is_japanese_text(user_input):
+        return False
+
+    # 3. Terjemahkan ke Bahasa Indonesia HANYA JIKA input user berbahasa Indonesia (atau umum)
+    #    tetapi respons model AI secara keliru keluar dalam Bahasa Inggris penuh.
+    return is_predominantly_english(response_text)
+
+def clean_response(response: str, assistant_name: Optional[str] = None, user_input: Optional[str] = None) -> str:
     """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru & indentasi kode"""
     if not response:
         return ""
@@ -290,7 +323,7 @@ def clean_response(response: str, assistant_name: Optional[str] = None) -> str:
     response = response.replace('<3>', '❤️')
     
     cleaned_text = response.strip()
-    if is_predominantly_english(cleaned_text):
+    if user_input and should_translate_english_fallback(cleaned_text, user_input):
         try:
             trans = translate_to_indonesian_fast(cleaned_text)
             if trans and len(trans.strip()) > 5:

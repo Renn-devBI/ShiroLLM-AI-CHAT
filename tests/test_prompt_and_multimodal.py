@@ -212,9 +212,45 @@ class TestPromptAndMultimodal(unittest.TestCase):
             user_msg = msgs[-1]["content"]
             user_text_parts = [p["text"] for p in user_msg if p["type"] == "text"]
             combined_text = "\n".join(user_text_parts)
-            self.assertIn("ATURAN MUTLAK", combined_text)
+            self.assertIn("PANDUAN BAHASA & FAKTA", combined_text)
             self.assertIn("BAHASA INDONESIA", combined_text)
             self.assertIn("tanpa mengarang umur atau relasi fiktif", combined_text)
+
+    def test_multimodal_adapts_to_english_prompt(self):
+        mock_llm = MagicMock()
+        mock_llm.model_path = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        mock_llm.chat_handler = MagicMock()
+        mock_llm.create_chat_completion.return_value = {
+            "choices": [{"message": {"content": "*looks at picture* This is a beautiful scene!"}, "finish_reason": "stop"}]
+        }
+        with patch.object(state, 'llm', mock_llm), patch.object(state, 'vision_chat_handler', mock_llm.chat_handler):
+            reply, trace = get_shiro_reply(
+                "Who is this person in English?",
+                image_base64="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                return_trace=True
+            )
+            call_args = mock_llm.create_chat_completion.call_args[1]
+            msgs = call_args["messages"]
+            user_msg = msgs[-1]["content"]
+            user_text_parts = [p["text"] for p in user_msg if p["type"] == "text"]
+            combined_text = "\n".join(user_text_parts)
+            self.assertIn("Answer in English as requested", combined_text)
+            self.assertNotIn("Jawab dalam BAHASA INDONESIA", combined_text)
+
+    def test_clean_response_preserves_english_when_user_prompts_in_english(self):
+        english_reply = "Hello! I am happy to help you with that coding project today."
+        # When user prompts in English, the cleaner must NOT translate to Indonesian!
+        cleaned = clean_response(english_reply, user_input="Can you help me with Python?")
+        self.assertEqual(cleaned, english_reply)
+
+    def test_clean_response_translates_english_when_user_prompts_in_indonesian(self):
+        english_reply = "I cannot fulfill this request because she is fourteen and you are twenty."
+        with patch('urllib.request.urlopen') as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b'{"responseData": {"translatedText": "Shiro tidak bisa mengonfirmasi foto tersebut."}}'
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+            cleaned = clean_response(english_reply, user_input="shiro tau dia siapa?")
+            self.assertEqual(cleaned, "Shiro tidak bisa mengonfirmasi foto tersebut.")
 
 if __name__ == "__main__":
     unittest.main()
