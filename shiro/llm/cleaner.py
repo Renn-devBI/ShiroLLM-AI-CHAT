@@ -106,6 +106,67 @@ def validate_response(response: str, user_input: str = "") -> bool:
     
     return True
 
+
+def is_predominantly_english(text: str) -> bool:
+    """Mendeteksi apakah teks percakapan didominasi bahasa Inggris di luar blok kode"""
+    if not text or len(text.strip()) < 15:
+        return False
+    text_no_code = re.sub(r'```[\s\S]*?```', '', text)
+    text_no_code = re.sub(r'`[^`\n]+`', '', text_no_code).strip()
+    if not text_no_code:
+        return False
+    words = re.findall(r'\b[a-zA-Z]{2,}\b', text_no_code.lower())
+    if len(words) < 6:
+        return False
+    en_hits = sum(1 for w in words if w in EN_STOPWORDS)
+    id_hits = sum(1 for w in words if w in ID_STOPWORDS)
+    return en_hits >= 5 and en_hits > (id_hits * 1.5)
+
+def translate_to_indonesian_fast(text: str) -> str:
+    """
+    Menerjemahkan teks bahasa Inggris ke Bahasa Indonesia secara cepat via endpoint MyMemory
+    dengan preservasi blok kode, markdown, dan format ekspresi *...*.
+    """
+    if not text or not is_predominantly_english(text):
+        return text
+
+    import urllib.request
+    import urllib.parse
+    import json
+
+    try:
+        code_blocks = []
+        def _mask(m):
+            code_blocks.append(m.group(0))
+            return f"__CODE_SNIP_{len(code_blocks)-1}__"
+        masked = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _mask, text)
+
+        paragraphs = masked.split('\n\n')
+        translated = []
+        for p in paragraphs:
+            p_strip = p.strip()
+            if not p_strip or p_strip.startswith('__CODE_SNIP_'):
+                translated.append(p)
+                continue
+            try:
+                q = urllib.parse.quote(p_strip[:500])
+                url = f"https://api.mymemory.translated.net/get?q={q}&langpair=en|id"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                    res_data = json.loads(resp.read().decode('utf-8'))
+                    trans = res_data.get('responseData', {}).get('translatedText')
+                    translated.append(trans if (trans and len(trans) > 2) else p)
+            except Exception:
+                translated.append(p)
+
+        res = '\n\n'.join(translated)
+        for i, b in enumerate(code_blocks):
+            res = res.replace(f"__CODE_SNIP_{i}__", b)
+        return res
+    except Exception as e_tr:
+        print(f"[Translator Fallback Error]: {e_tr}")
+        return text
+
 def clean_response(response: str, assistant_name: Optional[str] = None) -> str:
     """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru & indentasi kode"""
     if not response:
@@ -228,7 +289,15 @@ def clean_response(response: str, assistant_name: Optional[str] = None) -> str:
     # 16. Clean up <3 emoji
     response = response.replace('<3>', '❤️')
     
-    return response.strip()
+    cleaned_text = response.strip()
+    if is_predominantly_english(cleaned_text):
+        try:
+            trans = translate_to_indonesian_fast(cleaned_text)
+            if trans and len(trans.strip()) > 5:
+                cleaned_text = trans.strip()
+        except Exception:
+            pass
+    return cleaned_text
 
 # --- VTUBER JAPANESE CLEANER & FALLBACKS ---
 VTUBER_JAPANESE_FALLBACKS = {

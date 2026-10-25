@@ -452,7 +452,8 @@ def _prepare_inference_payload(
             if raw_user_typed:
                 prompt_parts.append(raw_user_typed)
             else:
-                prompt_parts.append("Shiro, coba perhatikan dan jelaskan gambar visual yang Kakak lampirkan ini ya!")
+                prompt_parts.append(f"{ai_name}, coba perhatikan dan jelaskan gambar visual yang {user_name} lampirkan ini ya!")
+            prompt_parts.append(f"\n[ATURAN MUTLAK]: Jawab 100% dalam BAHASA INDONESIA santai khas {ai_name}. DILARANG KERAS menjawab dalam Bahasa Inggris! Amati foto apa adanya tanpa mengarang umur atau relasi fiktif.")
             
             content_parts.append({
                 "type": "text",
@@ -485,10 +486,10 @@ def _prepare_inference_payload(
                 "data_out": {"source": evidence.get("source"), "evidence": visual_evidence_text[:2000]}
             })
             user_lines = [
-                f"[OBSERVASI VISUAL GAMBAR YANG DILAMPIRKAN KAKAK — sumber: {source_label}]:",
+                f"[OBSERVASI VISUAL GAMBAR YANG DILAMPIRKAN {user_name.upper()} — sumber: {source_label}]:",
                 visual_evidence_text,
-                "\n[ATURAN]: Jawab berdasarkan observasi di atas saja. Jika sesuatu tidak tercatat di observasi, katakan tidak terlihat jelas. JANGAN mengaitkan gambar ini dengan situs web atau topik dari ingatan lama.",
-                f"\n{raw_user_typed}" if raw_user_typed else "Shiro, coba jelaskan apa yang terlihat pada gambar di atas."
+                f"\n[ATURAN]: Jawab 100% dalam BAHASA INDONESIA santai khas {ai_name}. DILARANG KERAS menggunakan bahasa Inggris. Jangan mengarang umur atau relasi fiktif.",
+                f"\n{raw_user_typed}" if raw_user_typed else f"{ai_name}, coba jelaskan apa yang terlihat pada gambar di atas dalam Bahasa Indonesia."
             ]
             if has_doc:
                 user_lines.insert(0, f"[Melampirkan Dokumen: {doc_name}]")

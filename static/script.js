@@ -1559,10 +1559,13 @@ function showTyping(show, statusText = null) {
         updateTypingIndicatorAvatar();
         updateTypingStatus(statusText || t('status_thinking') || 'Shiro sedang berpikir...');
         typingIndicator.classList.remove('hidden');
-        if (chatMessages) {
+        if (chatMessages && typingIndicator.parentElement !== chatMessages) {
+            chatMessages.appendChild(typingIndicator);
+        } else if (chatMessages) {
+            // Pastikan selalu berada di elemen paling bawah
             chatMessages.appendChild(typingIndicator);
         }
-        scrollToBottom();
+        scrollToBottom(true, true);
     } else {
         typingIndicator.classList.add('hidden');
     }
@@ -1765,11 +1768,15 @@ async function sendMessage() {
             let lastRenderTime = 0;
 
             const updateAssistantUI = (text, isDone = false) => {
+                const trimmedText = (text || '').trim();
                 if (!assistantMsgEl) {
-                    showTyping(false);
+                    if (!trimmedText && !isDone) {
+                        // Jangan sembunyikan animasi loading jika token yang datang masih spasi/kosong
+                        return;
+                    }
                     assistantMsgEl = addMessage(
                         'assistant',
-                        text || '...',
+                        trimmedText || text || '...',
                         activeAssistantImgUrl,
                         null,
                         null,
@@ -1779,8 +1786,11 @@ async function sendMessage() {
                         finalData ? finalData.assistant_message_id : null,
                         false
                     );
-                    assistantBubble = assistantMsgEl ? assistantMsgEl.querySelector('.bubble') : null;
-                    assistantTextEl = assistantMsgEl ? assistantMsgEl.querySelector('.msg-text') : null;
+                    if (assistantMsgEl) {
+                        showTyping(false);
+                        assistantBubble = assistantMsgEl.querySelector('.bubble');
+                        assistantTextEl = assistantMsgEl.querySelector('.msg-text');
+                    }
                 }
                 if (!assistantTextEl && assistantBubble) {
                     let existingTextEl = assistantBubble.querySelector('.msg-text');

@@ -178,5 +178,43 @@ class TestPromptAndMultimodal(unittest.TestCase):
             self.assertNotIn("Iya Kak? Shiro siap mendengarkan", reply)
             self.assertIn("def rewrite_program():", reply)
 
+    def test_is_predominantly_english_and_translation_fallback(self):
+        from shiro.llm.cleaner import is_predominantly_english, translate_to_indonesian_fast
+        english_reply = "I cannot fulfill this request because she is fourteen and you are twenty."
+        self.assertTrue(is_predominantly_english(english_reply))
+        
+        indonesian_reply = "*tersenyum* Shiro siap membantu Kakak membuat program Python ini ya!"
+        self.assertFalse(is_predominantly_english(indonesian_reply))
+
+        # Test translation fallback preserves code blocks
+        with patch('urllib.request.urlopen') as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = b'{"responseData": {"translatedText": "Shiro sangat menyukai foto ini!"}}'
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+            res = translate_to_indonesian_fast("This is a photo of a cute cat.\n\n```python\nprint(123)\n```")
+            self.assertIn("```python\nprint(123)\n```", res)
+
+    def test_multimodal_contains_indonesian_and_anti_hallucination_rules(self):
+        mock_llm = MagicMock()
+        mock_llm.model_path = "model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        mock_llm.chat_handler = MagicMock()
+        mock_llm.create_chat_completion.return_value = {
+            "choices": [{"message": {"content": "*melihat foto* Ini foto yang menarik!"}, "finish_reason": "stop"}]
+        }
+        with patch.object(state, 'llm', mock_llm), patch.object(state, 'vision_chat_handler', mock_llm.chat_handler):
+            reply, trace = get_shiro_reply(
+                "siapa ini?",
+                image_base64="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                return_trace=True
+            )
+            call_args = mock_llm.create_chat_completion.call_args[1]
+            msgs = call_args["messages"]
+            user_msg = msgs[-1]["content"]
+            user_text_parts = [p["text"] for p in user_msg if p["type"] == "text"]
+            combined_text = "\n".join(user_text_parts)
+            self.assertIn("ATURAN MUTLAK", combined_text)
+            self.assertIn("BAHASA INDONESIA", combined_text)
+            self.assertIn("tanpa mengarang umur atau relasi fiktif", combined_text)
+
 if __name__ == "__main__":
     unittest.main()

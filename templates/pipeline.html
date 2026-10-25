@@ -857,7 +857,7 @@
                     <div class="shortcuts-title">Pintasan kanvas</div>
                     <dl>
                         <div class="shortcut"><dt>Geser kanvas</dt><dd>Scroll / Spasi + seret</dd></div>
-                        <div class="shortcut"><dt>Perbesar / perkecil</dt><dd>Ctrl + Scroll</dd></div>
+                        <div class="shortcut"><dt>Perbesar / perkecil</dt><dd>Scroll / + / -</dd></div>
                         <div class="shortcut"><dt>Multi-pilihan</dt><dd>Shift + Klik</dd></div>
                         <div class="shortcut"><dt>Sambungkan node</dt><dd>Tarik titik kanan</dd></div>
                         <div class="shortcut"><dt>Hapus garis</dt><dd>Delete</dd></div>
@@ -916,7 +916,7 @@
 
     const NS = 'http://www.w3.org/2000/svg';
     const NODE_W = 240, NODE_H = 60, GRID = 16;
-    const MIN_ZOOM = 0.3, MAX_ZOOM = 2;
+    const MIN_ZOOM = 0.15, MAX_ZOOM = 3.5;
     const STORE_KEY = 'shiro_flow_v4';
 
     const $ = (id) => document.getElementById(id);
@@ -1643,14 +1643,11 @@
 
     viewport.addEventListener('wheel', (e) => {
         e.preventDefault();
-        if (e.ctrlKey || e.metaKey) {
-            setZoom(zoom * clamp(Math.exp(-e.deltaY * 0.01), 0.8, 1.25), e.clientX, e.clientY);
-        } else {
-            const horizontal = e.shiftKey && !e.deltaX;
-            pan.x -= horizontal ? e.deltaY : e.deltaX;
-            pan.y -= horizontal ? 0 : e.deltaY;
-            viewTouched = true;
-            applyView();
+        // Zoom langsung menggunakan scroll mouse (baik biasa, Ctrl+Scroll, maupun trackpad pinch)
+        const delta = e.deltaY !== undefined ? e.deltaY : 0;
+        if (delta !== 0) {
+            const factor = Math.exp(-delta * 0.002);
+            setZoom(zoom * clamp(factor, 0.72, 1.38), e.clientX, e.clientY);
         }
     }, { passive: false });
 
@@ -1662,6 +1659,20 @@
         if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
         const mod = e.ctrlKey || e.metaKey;
         const key = e.key.toLowerCase();
+
+        if (key === '+' || key === '=' || (mod && (key === '+' || key === '='))) {
+            e.preventDefault();
+            setZoom(zoom * 1.25);
+            return;
+        } else if (key === '-' || key === '_' || (mod && (key === '-' || key === '_'))) {
+            e.preventDefault();
+            setZoom(zoom / 1.25);
+            return;
+        } else if (mod && key === '0') {
+            e.preventDefault();
+            fitView();
+            return;
+        }
 
         if (mod && key === 'a') {
             e.preventDefault();
