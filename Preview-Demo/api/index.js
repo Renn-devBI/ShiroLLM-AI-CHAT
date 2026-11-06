@@ -657,21 +657,47 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
                 }
             });
 
-            aiRes.on('end', () => {
+            aiRes.on('end', async () => {
                 stopHeartbeat();
                 if (aiRes.statusCode !== 200) {
+                    console.log(`[Preview-Demo /v1 failed with ${aiRes.statusCode}, attempting fallback to /api/ai/chat]`);
+                    let fallbackSuccess = false;
                     try {
-                        const errJson = JSON.parse(buffer);
-                        const errMsg = errJson.error?.message || errJson.message || buffer;
-                        if (errMsg.includes('ECONNREFUSED 127.0.0.1:8080')) {
-                            fullReply = 'Server terhubung (medium.lynzz.id:2223), namun engine AI lokal (llama-server:8080) di dalam server sedang offline atau memuat ulang model.';
-                        } else {
-                            fullReply = `Terhubung ke server AI, status ${aiRes.statusCode}: ${errMsg}`;
+                        const fallbackResp = await fetchBackend('/api/ai/chat', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                message: userMessage,
+                                userId: `preview_guest_${guestId}`,
+                                persona: null,
+                                source: 'web_preview'
+                            }),
+                            timeout: 45000
+                        });
+                        if (fallbackResp.ok && fallbackResp.data && fallbackResp.data.reply) {
+                            fullReply = fallbackResp.data.reply;
+                            fallbackSuccess = true;
+                            // Stream token ke antarmuka pengguna
+                            const chunkSize = 4;
+                            for (let i = 0; i < fullReply.length; i += chunkSize) {
+                                const tokenChunk = fullReply.slice(i, i + chunkSize);
+                                res.write(`data: ${JSON.stringify({ type: 'token', token: tokenChunk })}\n\n`);
+                            }
                         }
-                    } catch (_) {
-                        fullReply = `Terhubung ke server (HTTP ${aiRes.statusCode}), silakan periksa status engine AI.`;
+                    } catch (fbErr) {
+                        console.error('[Fallback /api/ai/chat error]:', fbErr.message);
                     }
-                    res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
+
+                    if (!fallbackSuccess) {
+                        try {
+                            const errJson = JSON.parse(buffer);
+                            const errMsg = errJson.error?.message || errJson.message || buffer;
+                            fullReply = `Server AI sedang memuat ulang model (${errMsg}). Mohon tunggu sebentar ya Kak!`;
+                        } catch (_) {
+                            fullReply = `Server AI sedang memuat ulang model. Mohon coba beberapa saat lagi!`;
+                        }
+                        res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
+                    }
                 } else if (!fullReply && buffer) {
                     try {
                         const nonStreamJson = JSON.parse(buffer);
@@ -713,9 +739,51 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             });
         });
 
-        aiReq.on('error', (err) => {
+        aiReq.on('error', async (err) => {
             stopHeartbeat();
-            console.error('[Preview-Demo AI Error]:', err.message);
+            console.warn('[AI Request Error, attempting /api/ai/chat fallback]:', err.message);
+            try {
+                const fb = await fetchBackend('/api/ai/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: userMessage,
+                        userId: `preview_guest_${guestId}`,
+                        persona: null,
+                        source: 'web_preview'
+                    }),
+                    timeout: 45000
+                });
+                if (fb.ok && fb.data && fb.data.reply) {
+                    fullReply = fb.data.reply;
+                    const chunkSize = 4;
+                    for (let i = 0; i < fullReply.length; i += chunkSize) {
+                        res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply.slice(i, i + chunkSize) })}\n\n`);
+                    }
+                    sess.messages.push({
+                        id: assistantMsgId,
+                        role: 'assistant',
+                        content: fullReply,
+                        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    });
+                    sess.last_active = new Date().toISOString();
+                    if (sess.title === 'Chat baru' || sess.title === 'Percakapan Baru') {
+                        sess.title = userMessage.slice(0, 28) + (userMessage.length > 28 ? '...' : '');
+                    }
+                    res.write(`data: ${JSON.stringify({
+                        type: 'done',
+                        reply: fullReply,
+                        assistant_message_id: assistantMsgId,
+                        session_title: sess.title,
+                        pipeline_trace: samplePipelineTrace
+                    })}\n\n`);
+                    res.end();
+                    return;
+                }
+            } catch (fbErr) {
+                console.error('[Fallback on error failed]:', fbErr.message);
+            }
+
             fullReply = `Gagal menghubungi server AI (${err.message}). Pastikan server di medium.lynzz.id:2223 sedang online.`;
             res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
             res.write(`data: ${JSON.stringify({
@@ -761,7 +829,11 @@ function proxyOpenAiCompletions(req, res, apiVersion = 'v1') {
     const isHttps = targetUrl.protocol === 'https:';
     const client = isHttps ? https : http;
 
-    const payloadStr = JSON.stringify(req.body || {});
+    const payload = req.body || {};
+    const stream = payload.stream === true;
+    const messages = payload.messages || [];
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content || 'Halo';
+    const payloadStr = JSON.stringify(payload);
 
     const { Transform } = require('stream');
     const maskModelTransform = new Transform({
@@ -791,15 +863,143 @@ function proxyOpenAiCompletions(req, res, apiVersion = 'v1') {
         },
         timeout: 120000
     }, (proxyRes) => {
-        res.status(proxyRes.statusCode);
-        for (const [key, val] of Object.entries(proxyRes.headers)) {
-            if (key.toLowerCase() === 'content-length') continue;
-            res.setHeader(key, val);
+        if (proxyRes.statusCode === 200) {
+            res.status(200);
+            for (const [key, val] of Object.entries(proxyRes.headers)) {
+                if (key.toLowerCase() === 'content-length') continue;
+                res.setHeader(key, val);
+            }
+            proxyRes.pipe(maskModelTransform).pipe(res);
+        } else {
+            let errBuf = '';
+            proxyRes.on('data', chunk => { errBuf += chunk.toString(); });
+            proxyRes.on('end', async () => {
+                console.log(`[OpenAI Proxy ${apiVersion} status ${proxyRes.statusCode}, fallback to /api/ai/chat]`);
+                try {
+                    const fallbackResp = await fetchBackend('/api/ai/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message: typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg),
+                            userId: `api_user_${Date.now()}`,
+                            source: 'openai_proxy'
+                        }),
+                        timeout: 45000
+                    });
+
+                    if (fallbackResp.ok && fallbackResp.data && fallbackResp.data.reply) {
+                        const reply = fallbackResp.data.reply;
+                        if (stream) {
+                            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+                            res.setHeader('Cache-Control', 'no-cache');
+                            res.setHeader('Connection', 'keep-alive');
+                            res.write(`data: ${JSON.stringify({
+                                id: `chatcmpl-${Date.now()}`,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model: MASKED_MODEL_NAME,
+                                choices: [{ index: 0, delta: { role: 'assistant', content: reply }, finish_reason: null }]
+                            })}\n\n`);
+                            res.write(`data: ${JSON.stringify({
+                                id: `chatcmpl-${Date.now()}`,
+                                object: 'chat.completion.chunk',
+                                created: Math.floor(Date.now() / 1000),
+                                model: MASKED_MODEL_NAME,
+                                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+                            })}\n\n`);
+                            res.write('data: [DONE]\n\n');
+                            res.end();
+                            return;
+                        } else {
+                            res.setHeader('Content-Type', 'application/json');
+                            res.json({
+                                id: `chatcmpl-${Date.now()}`,
+                                object: 'chat.completion',
+                                created: Math.floor(Date.now() / 1000),
+                                model: MASKED_MODEL_NAME,
+                                choices: [{
+                                    index: 0,
+                                    message: { role: 'assistant', content: reply },
+                                    finish_reason: 'stop'
+                                }],
+                                usage: {
+                                    prompt_tokens: 10,
+                                    completion_tokens: 50,
+                                    total_tokens: 60
+                                }
+                            });
+                            return;
+                        }
+                    }
+                } catch (fbErr) {
+                    console.error('[OpenAI Proxy fallback failed]:', fbErr.message);
+                }
+
+                res.status(proxyRes.statusCode).send(errBuf);
+            });
         }
-        proxyRes.pipe(maskModelTransform).pipe(res);
     });
 
-    proxyReq.on('error', (err) => {
+    proxyReq.on('error', async (err) => {
+        console.warn(`[OpenAI Proxy ${apiVersion} connection error, trying fallback]:`, err.message);
+        try {
+            const fallbackResp = await fetchBackend('/api/ai/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg),
+                    userId: `api_user_${Date.now()}`,
+                    source: 'openai_proxy'
+                }),
+                timeout: 45000
+            });
+
+            if (fallbackResp.ok && fallbackResp.data && fallbackResp.data.reply) {
+                const reply = fallbackResp.data.reply;
+                if (stream) {
+                    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    res.write(`data: ${JSON.stringify({
+                        id: `chatcmpl-${Date.now()}`,
+                        object: 'chat.completion.chunk',
+                        created: Math.floor(Date.now() / 1000),
+                        model: MASKED_MODEL_NAME,
+                        choices: [{ index: 0, delta: { role: 'assistant', content: reply }, finish_reason: null }]
+                    })}\n\n`);
+                    res.write(`data: ${JSON.stringify({
+                        id: `chatcmpl-${Date.now()}`,
+                        object: 'chat.completion.chunk',
+                        created: Math.floor(Date.now() / 1000),
+                        model: MASKED_MODEL_NAME,
+                        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+                    })}\n\n`);
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                    return;
+                } else {
+                    res.setHeader('Content-Type', 'application/json');
+                    res.json({
+                        id: `chatcmpl-${Date.now()}`,
+                        object: 'chat.completion',
+                        created: Math.floor(Date.now() / 1000),
+                        model: MASKED_MODEL_NAME,
+                        choices: [{
+                            index: 0,
+                            message: { role: 'assistant', content: reply },
+                            finish_reason: 'stop'
+                        }],
+                        usage: {
+                            prompt_tokens: 10,
+                            completion_tokens: 50,
+                            total_tokens: 60
+                        }
+                    });
+                    return;
+                }
+            }
+        } catch (_) {}
+
         res.status(502).json({
             error: {
                 message: `Gagal meneruskan request ke server AI: ${err.message}`,
