@@ -7,6 +7,22 @@
       "destination": "/pipeline.html"
     },
     {
+      "source": "/v1/:match*",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/v2/:match*",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/v3/:match*",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/:match*",
+      "destination": "/api/index.js"
+    },
+    {
       "source": "/chat/(.*)",
       "destination": "/index.html"
     },

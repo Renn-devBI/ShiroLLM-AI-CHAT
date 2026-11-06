@@ -1,3 +1,40 @@
+// -------------------------------------------------------------
+// GUEST MODE & ISOLASI SESI BROWSER (Cookies & LocalStorage)
+// -------------------------------------------------------------
+function getOrCreateGuestId() {
+    let gid = '';
+    try {
+        gid = localStorage.getItem('shiro_guest_id');
+        if (!gid) {
+            gid = 'guest_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+            localStorage.setItem('shiro_guest_id', gid);
+        }
+        document.cookie = 'shiro_guest_id=' + gid + '; path=/; max-age=31536000; SameSite=Lax';
+    } catch (_) {
+        gid = 'guest_browser_' + Math.random().toString(36).substring(2, 8);
+    }
+    return gid;
+}
+
+const currentGuestId = getOrCreateGuestId();
+
+// Intersep seluruh pemanggilan fetch agar otomatis membawa header identitas guest
+if (typeof window !== 'undefined' && window.fetch) {
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options = {}) {
+        options = options || {};
+        options.headers = options.headers || {};
+        if (typeof options.headers.set === 'function') {
+            options.headers.set('X-Guest-ID', currentGuestId);
+        } else if (Array.isArray(options.headers)) {
+            options.headers.push(['X-Guest-ID', currentGuestId]);
+        } else {
+            options.headers['X-Guest-ID'] = currentGuestId;
+        }
+        return originalFetch.call(this, url, options);
+    };
+}
+
 // DOM Elements
 const chatViewport = document.getElementById('chat-viewport');
 const chatMessages = document.getElementById('chat-messages');
@@ -3775,11 +3812,9 @@ async function loadModels() {
         
         const badge = document.getElementById('current-model-badge');
         const navPill = document.querySelector('.model-pill');
-        if (data.current_model) {
-            const modelName = getModelName(data.current_model);
-            if (badge) badge.textContent = modelName;
-            if (navPill) navPill.textContent = modelName;
-        }
+        const activeDisplay = data.models?.[0]?.display_name || getModelName(data.active_model || data.current_model || 'ShiroHaru-0.1-Agent');
+        if (badge) badge.textContent = data.locked ? ('🔒 ' + activeDisplay) : activeDisplay;
+        if (navPill) navPill.textContent = data.locked ? ('🔒 ' + activeDisplay) : activeDisplay;
         
         const select = document.getElementById('model-select');
         const modelDescText = document.getElementById('model-desc-text');

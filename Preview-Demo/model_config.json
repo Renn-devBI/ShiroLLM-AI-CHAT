@@ -1,15 +1,16 @@
 {
-  "current_model": "model/ShiroCore-Haru-2.0.gguf",
+  "current_model": "ShiroHaru-0.1-Agent",
   "available_models": [
-    "model/ShiroCore-Haru-2.0.gguf"
+    "ShiroHaru-0.1-Agent"
   ],
   "model_info": {
-    "model/ShiroCore-Haru-2.0.gguf": {
-      "name": "ShiroCore-Haru-2.0",
-      "size": "7.8B",
-      "quantization": "Q5_K_M",
-      "description": "Model Utama Penalaran Kognitif & Karakter Shiro (GGUF)",
-      "family": "Shiro Cognitive Engine"
+    "ShiroHaru-0.1-Agent": {
+      "name": "ShiroHaru-0.1-Agent",
+      "size": "1.05 GB",
+      "quantization": "Q4_K_M",
+      "description": "ShiroHaru-0.1-Agent (Cognitive Reasoning & Companion Engine) - Dikunci oleh Developer",
+      "family": "ShiroHaru Cognitive Agent",
+      "locked": true
     }
   }
 }
