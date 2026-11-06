@@ -6,9 +6,8 @@
   "model_info": {
     "ShiroHaru-0.1-Agent": {
       "name": "ShiroHaru-0.1-Agent",
-      "size": "1.05 GB",
-      "quantization": "Q4_K_M",
-      "description": "ShiroHaru-0.1-Agent (Cognitive Reasoning & Companion Engine) - Dikunci oleh Developer",
+      "display_name": "ShiroHaru-0.1-Agent",
+      "description": "ShiroHaru-0.1-Agent (Cognitive Reasoning & Companion Engine)",
       "family": "ShiroHaru Cognitive Agent",
       "locked": true
     }

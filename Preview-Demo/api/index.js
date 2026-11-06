@@ -292,9 +292,7 @@ async function getLockedServerModel() {
         family: 'ShiroHaru Cognitive Agent',
         active: true,
         locked: true,
-        size: '1.05 GB',
-        quantization: 'Q4_K_M',
-        description: 'ShiroHaru-0.1-Agent (Cognitive Reasoning & Companion Engine) - Dikunci oleh Developer'
+        description: 'ShiroHaru-0.1-Agent (Cognitive Reasoning & Companion Engine)'
     };
 
     const finalModelData = {
@@ -306,7 +304,7 @@ async function getLockedServerModel() {
         model_info: {
             [MASKED_MODEL_NAME]: modelObj
         },
-        message: `Model AI dikunci oleh Master Server pada: ${MASKED_MODEL_NAME}`
+        message: `Model aktif: ${MASKED_MODEL_NAME}`
     };
 
     cachedServerModel = finalModelData;
@@ -333,7 +331,7 @@ app.get(['/api/models', '/v1/models', '/v2/models', '/v3/models'], async (req, r
             models: modelData.models || [],
             model_info: modelData.model_info || {},
             locked: true,
-            message: 'Model AI dikunci oleh Master Server (Pergantian model dari client dinonaktifkan).'
+            message: 'Model aktif terkelola oleh sistem server.'
         });
     } catch (e) {
         res.status(500).json({ error: e.message });

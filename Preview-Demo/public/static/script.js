@@ -3826,8 +3826,8 @@ async function loadModels() {
         const badge = document.getElementById('current-model-badge');
         const navPill = document.querySelector('.model-pill');
         const activeDisplay = data.models?.[0]?.display_name || getModelName(data.active_model || data.current_model || 'ShiroHaru-0.1-Agent');
-        if (badge) badge.textContent = data.locked ? ('🔒 ' + activeDisplay) : activeDisplay;
-        if (navPill) navPill.textContent = data.locked ? ('🔒 ' + activeDisplay) : activeDisplay;
+        if (badge) badge.textContent = activeDisplay;
+        if (navPill) navPill.textContent = activeDisplay;
         
         const select = document.getElementById('model-select');
         const modelDescText = document.getElementById('model-desc-text');
@@ -3845,8 +3845,7 @@ async function loadModels() {
                     option.value = model;
                     const info = data.model_info?.[model] || {};
                     const displayName = info.name || getModelName(model);
-                    const sizeStr = info.size ? ` (${info.size})` : '';
-                    option.textContent = `${displayName}${sizeStr}`;
+                    option.textContent = displayName;
                     
                     if (model === data.current_model) {
                         option.selected = true;
