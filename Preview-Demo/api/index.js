@@ -221,6 +221,52 @@ const { samplePipelineTrace } = require('./mock_data.js');
 // API Endpoints
 // -------------------------------------------------------------
 
+// Debug connectivity from Vercel to backend
+app.get(['/api/debug-ping', '/debug-ping'], async (req, res) => {
+    const results = {};
+    const net = require('net');
+
+    // 1. DNS test
+    try {
+        const dns = require('dns').promises;
+        const lookup = await dns.lookup('medium.lynzz.id');
+        results.dns = lookup;
+    } catch (e) {
+        results.dns_error = e.message;
+    }
+
+    // 2. TCP connect test
+    results.tcp = await new Promise((resolve) => {
+        const socket = net.createConnection({ host: 'medium.lynzz.id', port: 2223, timeout: 4000 }, () => {
+            resolve({ connected: true });
+            socket.destroy();
+        });
+        socket.on('error', (err) => resolve({ connected: false, error: err.message, code: err.code }));
+        socket.on('timeout', () => {
+            resolve({ connected: false, error: 'TCP Timeout 4s' });
+            socket.destroy();
+        });
+    });
+
+    // 3. HTTP status fetch
+    try {
+        const statusResp = await fetchBackend('/status', { timeout: 5000 });
+        results.http_status = statusResp;
+    } catch (e) {
+        results.http_status_error = e.message;
+    }
+
+    // 4. HTTP /v1/models fetch
+    try {
+        const modelsResp = await fetchBackend('/v1/models', { timeout: 5000 });
+        results.http_models = modelsResp;
+    } catch (e) {
+        results.http_models_error = e.message;
+    }
+
+    res.json(results);
+});
+
 // Profile API
 app.get(['/api/profile', '/profile'], (req, res) => {
     res.json(getProfileData());
