@@ -580,6 +580,13 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
     })}\n\n`);
 
     let fullReply = '';
+    let heartbeatTimer = null;
+    const stopHeartbeat = () => {
+        if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+        }
+    };
 
     // Panggil Engine AI dari Server VPS (Streaming SSE)
     try {
@@ -593,6 +600,13 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             max_tokens: 1024,
             temperature: 0.8
         });
+
+        // Kirim SSE heartbeat comment setiap 1.5 detik agar Vercel & browser tidak timeout
+        heartbeatTimer = setInterval(() => {
+            try {
+                res.write(': heartbeat\n\n');
+            } catch (_) {}
+        }, 1500);
 
         const aiReq = client.request({
             hostname: parsed.hostname,
@@ -635,6 +649,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             });
 
             aiRes.on('end', () => {
+                stopHeartbeat();
                 if (aiRes.statusCode !== 200) {
                     try {
                         const errJson = JSON.parse(buffer);
@@ -690,6 +705,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
         });
 
         aiReq.on('error', (err) => {
+            stopHeartbeat();
             console.error('[Preview-Demo AI Error]:', err.message);
             fullReply = `Gagal menghubungi server AI (${err.message}). Pastikan server di medium.lynzz.id:2223 sedang online.`;
             res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
@@ -704,6 +720,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
         });
 
         aiReq.on('timeout', () => {
+            stopHeartbeat();
             aiReq.destroy();
             res.write(`data: ${JSON.stringify({ type: 'token', token: 'Waktu tunggu respon server AI habis.' })}\n\n`);
             res.write(`data: ${JSON.stringify({ type: 'done', reply: 'Timeout' })}\n\n`);
@@ -714,6 +731,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
         aiReq.end();
 
         req.on('close', () => {
+            stopHeartbeat();
             try { aiReq.destroy(); } catch (_) {}
         });
 
