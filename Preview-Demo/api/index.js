@@ -267,6 +267,22 @@ app.get(['/api/debug-ping', '/debug-ping'], async (req, res) => {
         results.http_models_error = e.message;
     }
 
+    // 5. Test POST to /v1/chat/completions from Vercel
+    try {
+        const postResp = await fetchBackend('/v1/chat/completions', {
+            method: 'POST',
+            body: {
+                messages: [{ role: 'user', content: 'Tes' }],
+                stream: false,
+                max_tokens: 5
+            },
+            timeout: 25000
+        });
+        results.http_post_chat = postResp;
+    } catch (e) {
+        results.http_post_chat_error = e.message;
+    }
+
     res.json(results);
 });
 
