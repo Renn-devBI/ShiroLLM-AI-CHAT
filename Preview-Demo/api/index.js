@@ -100,18 +100,19 @@ function getProfileData() {
 }
 
 // -------------------------------------------------------------
-// KONFIGURASI BACKEND AI SERVER (VPS / Pterodactyl Port 2223)
+// KONFIGURASI BACKEND AI SERVER (VPS medium.lynzz.id Port 2223)
 // -------------------------------------------------------------
 const BACKEND_URL = (
     process.env.SHIRO_BACKEND_URL || 
     process.env.AI_BACKEND_URL || 
-    'https://cloud.lynzz.id/server'
+    'http://medium.lynzz.id:2223'
 ).replace(/\/+$/, '');
 
 const FALLBACK_BACKEND_URLS = [
     BACKEND_URL,
+    'http://medium.lynzz.id:2223',
+    'http://38.49.213.154:2223',
     'https://cloud.lynzz.id/server',
-    'http://cloud.lynzz.id:2223',
     'http://127.0.0.1:2223',
     'http://127.0.0.1:8080'
 ].filter((u, i, arr) => u && arr.indexOf(u) === i);
@@ -601,7 +602,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             headers: {
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(aiReqPayload),
-                'Accept': 'text/event-stream'
+                'Accept': 'text/event-stream, application/json'
             },
             timeout: 120000
         }, (aiRes) => {
@@ -609,31 +610,57 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
 
             aiRes.on('data', (chunk) => {
                 buffer += chunk.toString('utf8');
-                const lines = buffer.split('\n');
-                buffer = lines.pop(); // simpan sisa baris belum lengkap
+                if (aiRes.statusCode === 200) {
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // simpan sisa baris belum lengkap
 
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed || trimmed === 'data: [DONE]' || trimmed.startsWith(':')) continue;
-                    if (trimmed.startsWith('data: ')) {
-                        try {
-                            const json = JSON.parse(trimmed.slice(6));
-                            const delta = json.choices?.[0]?.delta?.content || '';
-                            if (delta) {
-                                fullReply += delta;
-                                res.write(`data: ${JSON.stringify({
-                                    type: 'token',
-                                    token: delta
-                                })}\n\n`);
-                            }
-                        } catch (_) {}
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed === 'data: [DONE]' || trimmed.startsWith(':')) continue;
+                        if (trimmed.startsWith('data: ')) {
+                            try {
+                                const json = JSON.parse(trimmed.slice(6));
+                                const delta = json.choices?.[0]?.delta?.content || json.choices?.[0]?.message?.content || '';
+                                if (delta) {
+                                    fullReply += delta;
+                                    res.write(`data: ${JSON.stringify({
+                                        type: 'token',
+                                        token: delta
+                                    })}\n\n`);
+                                }
+                            } catch (_) {}
+                        }
                     }
                 }
             });
 
             aiRes.on('end', () => {
+                if (aiRes.statusCode !== 200) {
+                    try {
+                        const errJson = JSON.parse(buffer);
+                        const errMsg = errJson.error?.message || errJson.message || buffer;
+                        if (errMsg.includes('ECONNREFUSED 127.0.0.1:8080')) {
+                            fullReply = 'Server terhubung (medium.lynzz.id:2223), namun engine AI lokal (llama-server:8080) di dalam server sedang offline atau memuat ulang model.';
+                        } else {
+                            fullReply = `Terhubung ke server AI, status ${aiRes.statusCode}: ${errMsg}`;
+                        }
+                    } catch (_) {
+                        fullReply = `Terhubung ke server (HTTP ${aiRes.statusCode}), silakan periksa status engine AI.`;
+                    }
+                    res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
+                } else if (!fullReply && buffer) {
+                    try {
+                        const nonStreamJson = JSON.parse(buffer);
+                        const text = nonStreamJson.choices?.[0]?.message?.content || '';
+                        if (text) {
+                            fullReply = text;
+                            res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
+                        }
+                    } catch (_) {}
+                }
+
                 if (!fullReply) {
-                    fullReply = '*tersenyum manis dan memeluk Kakak* "Halo Kakak! Shiro sudah aktif terhubung langsung ke server AI lokal Kakak~ Ada yang bisa Shiro bantu?"';
+                    fullReply = 'Halo Kakak! Shiro sudah aktif terhubung langsung ke server AI lokal Kakak. Ada yang bisa Shiro bantu?';
                     res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
                 }
 
@@ -664,8 +691,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
 
         aiReq.on('error', (err) => {
             console.error('[Preview-Demo AI Error]:', err.message);
-            // Fallback interaktif jika VPS offline atau sedang memuat model
-            fullReply = `*menatap cemas sambil memegang tangan Kakak*\n\n"Umm Kakak, server AI lokal sedang bersiap atau memuat model di latar belakang (\`${err.message}\`). Mohon tunggu sebentar ya Kak, nanti coba chat Shiro lagi!"`;
+            fullReply = `Gagal menghubungi server AI (${err.message}). Pastikan server di medium.lynzz.id:2223 sedang online.`;
             res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
             res.write(`data: ${JSON.stringify({
                 type: 'done',
