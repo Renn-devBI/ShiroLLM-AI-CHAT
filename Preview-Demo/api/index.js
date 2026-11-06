@@ -130,9 +130,12 @@ function fetchBackend(endpoint, options = {}) {
             port: parsed.port || (isHttps ? 443 : 80),
             path: parsed.pathname + parsed.search,
             method: options.method || 'GET',
+            agent: false,
             headers: {
+                'Host': `${parsed.hostname}:${parsed.port || (isHttps ? 443 : 80)}`,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
+                'Connection': 'close',
                 ...(options.headers || {})
             },
             timeout: options.timeout || 60000
@@ -606,11 +609,14 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     });
 
-    // Susun histori untuk AI
-    const historyPayload = sess.messages.slice(-10).map(m => ({
-        role: m.role,
-        content: m.content
-    }));
+    // Susun histori untuk AI (bersihkan pesan error koneksi sebelumnya)
+    const historyPayload = sess.messages
+        .filter(m => !m.content.includes('Gagal menghubungi server') && !m.content.includes('ECONNREFUSED'))
+        .slice(-10)
+        .map(m => ({
+            role: m.role,
+            content: m.content
+        }));
 
     // SSE Header
     res.setHeader('Content-Type', 'text/event-stream');
@@ -659,10 +665,13 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             port: parsed.port || (isHttps ? 443 : 80),
             path: parsed.pathname,
             method: 'POST',
+            agent: false,
             headers: {
+                'Host': `${parsed.hostname}:${parsed.port || (isHttps ? 443 : 80)}`,
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(aiReqPayload),
-                'Accept': 'text/event-stream, application/json'
+                'Accept': 'text/event-stream, application/json',
+                'Connection': 'close'
             },
             timeout: 120000
         }, (aiRes) => {
