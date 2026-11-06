@@ -7,20 +7,16 @@
       "destination": "/pipeline.html"
     },
     {
-      "source": "/v1/:match*",
-      "destination": "/api/index.js"
+      "source": "/v1/:path*",
+      "destination": "/api/v1/:path*"
     },
     {
-      "source": "/v2/:match*",
-      "destination": "/api/index.js"
+      "source": "/v2/:path*",
+      "destination": "/api/v2/:path*"
     },
     {
-      "source": "/v3/:match*",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/api/:match*",
-      "destination": "/api/index.js"
+      "source": "/v3/:path*",
+      "destination": "/api/v3/:path*"
     },
     {
       "source": "/chat/(.*)",
