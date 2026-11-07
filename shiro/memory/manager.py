@@ -1470,9 +1470,9 @@ class AdvancedMemoryManager:
             if any(k in a_clean.lower() for k in ["let me break this down", "the user is", "possible responses", "let's craft", "character traits"]):
                 return
 
-            from shiro.llm.cleaner import is_predominantly_english
-            # Jangan pernah merekam pola jika user berbahasa Indonesia tetapi asisten menjawab bahasa Inggris
-            if not is_predominantly_english(u_clean) and is_predominantly_english(a_clean):
+            from shiro.llm.cleaner import is_user_input_foreign_or_english, contains_english_segments
+            # Jangan pernah merekam pola jika user berbahasa Indonesia tetapi asisten mengandung segmen bahasa Inggris
+            if not is_user_input_foreign_or_english(u_clean) and contains_english_segments(a_clean):
                 return
             
             keywords = list(set(re.findall(r'\b\w{3,}\b', u_clean.lower())))
@@ -1508,12 +1508,15 @@ class AdvancedMemoryManager:
             if not getattr(self, "learned_patterns", None):
                 return []
             
-            # Pastikan hanya pattern yang bersih tanpa reasoning/CoT yang dijadikan contoh
+            from shiro.llm.cleaner import is_user_input_foreign_or_english, contains_english_segments
+            is_foreign_query = is_user_input_foreign_or_english(query)
+            # Pastikan hanya pattern yang bersih tanpa reasoning/CoT dan bebas dari code-switching Inggris yang dijadikan contoh
             clean_candidates = [
                 p for p in self.learned_patterns
                 if "<think>" not in p.get("assistant", "")
                 and "let me break this down" not in p.get("assistant", "").lower()
                 and not any(x in p.get("assistant", "").lower() for x in ["possible responses", "let's craft", "the user is"])
+                and (is_foreign_query or not contains_english_segments(p.get("assistant", "")))
             ]
             
             # Jika query berkaitan dengan visual/gambar/kamera, jangan gunakan exemplar gambar spesifik lama
@@ -1542,12 +1545,7 @@ class AdvancedMemoryManager:
             # Return top matches if score > 0
             relevant = [item[1] for item in scored if item[0] > 0][:max_count]
             # If no keyword overlap found, provide 1 high-quality general exemplar
-            if not relevant and self.learned_patterns:
-                from shiro.llm.cleaner import is_predominantly_english
-                if not is_predominantly_english(query):
-                    id_candidates = [p for p in self.learned_patterns if not is_predominantly_english(p.get("assistant", ""))]
-                    relevant = id_candidates[-1:] if id_candidates else []
-                else:
-                    relevant = self.learned_patterns[-1:]
+            if not relevant and clean_candidates:
+                relevant = clean_candidates[-1:]
             return relevant
 

@@ -55,18 +55,45 @@ EN_STOPWORDS: Set[str] = {
     'them', 'see', 'other', 'than', 'then', 'now', 'look', 'only', 'come',
     'its', 'over', 'think', 'also', 'back', 'after', 'use', 'two', 'how',
     'our', 'work', 'first', 'well', 'way', 'even', 'new', 'want', 'because',
-    'any', 'these', 'give', 'day', 'most', 'us', 'her', 'she', 'him', 'his',
+    'any', 'these', 'give', 'day', 'most', 'us', 'her', 'she', 'his', 'he',
+    'you', 'yours', 'yourself', 'me', 'my', 'mine', 'myself', 'himself', 'herself',
+    'we', 'ours', 'theirs', 'be', 'am', 'been', 'being', 'do', 'does', 'did',
+    'done', 'doing', 'don', 'doesn', 'didn', 'isn', 'aren', 'wasn', 'weren',
+    'won', 'wouldn', 'couldn', 'shouldn', 'gotta', 'gonna', 'wanna', 'not',
+    'no', 'on', 'at', 'by', 'for', 'of', 'or', 'but', 'if', 'so', 'up', 'down',
+    'out', 'off', 'onto', 'upon', 'against', 'through', 'under', 'underneath',
+    'between', 'without', 'within', 'while', 'until', 'before', 'again', 'still',
+    'too', 'very', 'much', 'more', 'little', 'bit', 'right', 'here', 'something',
+    'anything', 'nothing', 'everything', 'someone', 'anyone', 'nobody', 'every',
+    'always', 'never', 'really', 'actually', 'genuinely', 'technically', 'though',
+    'although', 'both', 'each', 'own', 'same', 'whispers', 'swallows', 'tucks',
+    'kisses', 'sits', 'pressing', 'holding', 'wrapping', 'tightens', 'knuckles',
+    'sleeve', 'shoulder', 'forehead', 'lightly', 'slightly', 'muffled',
     'responses', 'response', 'gesture', 'gestures', 'brother', 'expression'
 }
 
 ID_STOPWORDS: Set[str] = {
     'yang', 'dan', 'di', 'ke', 'dari', 'ini', 'itu', 'aku', 'kamu', 'kita',
-    'kakak', 'shiro', 'sangat', 'mau', 'kan', 'ya', 'dong', 'lagi', 'kalau',
-    'tapi', 'gak', 'nggak', 'banget', 'suka', 'kok', 'ada', 'apa', 'sudah',
-    'udah', 'bisa', 'sama', 'buat', 'aja', 'nih', 'tau', 'kangen', 'rindu',
-    'sayang', 'senang', 'peluk', 'manis', 'tersenyum', 'mengangguk', 'menatap',
-    'main', 'bareng', 'nanti', 'bikin', 'tolong', 'coba', 'program', 'coding'
+    'saya', 'anda', 'dia', 'mereka', 'kami', 'dengan', 'untuk', 'untuknya',
+    'karena', 'tidak', 'bukan', 'belum', 'jangan', 'hanya', 'juga', 'akan',
+    'sedang', 'pada', 'dalam', 'seperti', 'kayak', 'kenapa', 'mengapa',
+    'bagaimana', 'siapa', 'kapan', 'berapa', 'baru', 'saja', 'orang', 'hati',
+    'perasaan', 'nyata', 'sakit', 'selalu', 'sering', 'kali', 'mungkin',
+    'ternyata', 'sendiri', 'sangat', 'mau', 'kan', 'ya', 'dong', 'lagi',
+    'kalau', 'tapi', 'gak', 'nggak', 'banget', 'suka', 'kok', 'ada', 'apa',
+    'sudah', 'udah', 'bisa', 'sama', 'buat', 'aja', 'nih', 'tau', 'kangen',
+    'rindu', 'sayang', 'senang', 'peluk', 'manis', 'tersenyum', 'mengangguk',
+    'menatap', 'main', 'bareng', 'nanti', 'bikin', 'tolong', 'coba', 'program', 'coding'
 }
+
+EN_ROLEPLAY_PHRASES = re.compile(
+    r"\b(?:my head|his shoulder|his sleeve|his arm|his head|his chest|your hands|"
+    r"you don't|you're|isn't|wasn't|didn't|doesn't|can't|won't|gonna|gotta|wanna|"
+    r"shiro here|right now|little bit|each other|into his|against his|of his|"
+    r"swallows hard|tucks my|pressing my|my grip|sits up|kisses the|both arms|"
+    r"grab both|no take-backs|i love you)\b",
+    re.IGNORECASE
+)
 
 def validate_response(response: str, user_input: str = "") -> bool:
     """Validasi respons untuk memastikan tidak halusinasi, tidak bocor proses berpikir (CoT), dan berbahasa Indonesia"""
@@ -114,63 +141,120 @@ def validate_response(response: str, user_input: str = "") -> bool:
 
 
 def is_english_text_segment(text: str) -> bool:
-    """Mendeteksi apakah sebuah kalimat atau segmen teks didominasi bahasa Inggris"""
-    if not text or len(text.strip()) < 10:
+    """Mendeteksi apakah sebuah kalimat atau segmen teks mengandung atau didominasi bahasa Inggris"""
+    if not text or len(text.strip()) < 6:
         return False
     text_no_code = re.sub(r'```[\s\S]*?```|`[^`\n]+`', '', text).strip()
     if not text_no_code:
         return False
+    if EN_ROLEPLAY_PHRASES.search(text_no_code):
+        return True
     words = re.findall(r'\b[a-zA-Z]{2,}\b', text_no_code.lower())
-    if len(words) < 4:
+    if len(words) < 2:
         return False
     en_hits = sum(1 for w in words if w in EN_STOPWORDS)
     id_hits = sum(1 for w in words if w in ID_STOPWORDS)
-    return (en_hits >= 2 and id_hits == 0) or (en_hits >= 3 and en_hits > id_hits)
+    return (en_hits >= 2 and id_hits == 0) or (en_hits >= 3 and en_hits >= id_hits)
 
 def is_predominantly_english(text: str) -> bool:
     """Mendeteksi apakah teks percakapan didominasi bahasa Inggris di luar blok kode"""
-    if not text or len(text.strip()) < 15:
+    if not text or len(text.strip()) < 12:
         return False
     text_no_code = re.sub(r'```[\s\S]*?```', '', text)
     text_no_code = re.sub(r'`[^`\n]+`', '', text_no_code).strip()
     if not text_no_code:
         return False
     words = re.findall(r'\b[a-zA-Z]{2,}\b', text_no_code.lower())
-    if len(words) < 6:
+    if len(words) < 5:
         return False
     en_hits = sum(1 for w in words if w in EN_STOPWORDS)
     id_hits = sum(1 for w in words if w in ID_STOPWORDS)
-    return en_hits >= 5 and en_hits > (id_hits * 1.5)
+    return (en_hits >= 4 and id_hits == 0) or (en_hits >= 5 and en_hits > (id_hits * 1.2))
 
 def contains_english_segments(text: str) -> bool:
-    """Mendeteksi apakah teks percakapan mengandung kalimat atau paragraf bahasa Inggris"""
-    if not text or len(text.strip()) < 15:
+    """Mendeteksi apakah teks percakapan mengandung kalimat, klausa, atau paragraf bahasa Inggris"""
+    if not text or len(text.strip()) < 8:
         return False
-    if is_predominantly_english(text):
+    if is_predominantly_english(text) or is_english_text_segment(text):
         return True
     paragraphs = text.split('\n\n')
     for p in paragraphs:
         p_strip = p.strip()
         if not p_strip or p_strip.startswith('```'):
             continue
-        if is_predominantly_english(p_strip):
+        if is_predominantly_english(p_strip) or is_english_text_segment(p_strip):
             return True
-        sentences = re.split(r'(?<=[.!?~])\s+', p_strip)
+        sentences = re.split(r'(?<=[.!?~*—])\s+', p_strip)
         if any(is_english_text_segment(s) for s in sentences):
             return True
     return False
 
-def translate_to_indonesian_fast(text: str) -> str:
-    """
-    Menerjemahkan teks bahasa Inggris atau bagian kalimat/paragraf yang menyasar ke bahasa Inggris
-    ke Bahasa Indonesia secara cepat via endpoint MyMemory dengan preservasi blok kode, markdown, dan format ekspresi.
-    """
-    if not text or not contains_english_segments(text):
+def _normalize_persona_pronouns(text: str) -> str:
+    """Menyelaraskan kata ganti hasil terjemahan mesin ('Anda'/'saya') agar tetap akrab khas persona Shiro"""
+    if not text:
         return text
+    res = re.sub(r'\bANDA\b', 'KAKAK', text)
+    res = re.sub(r'\bAnda\b', 'Kakak', res)
+    res = re.sub(r'\banda\b', 'kamu', res)
+    res = re.sub(r'\bSaya\b', 'Aku', res)
+    res = re.sub(r'\bsaya\b', 'aku', res)
+    return res
+
+def _translate_chunk_en_to_id(chunk_text: str) -> str:
+    """
+    Menerjemahkan teks Inggris / campuran (code-switching) ke Bahasa Indonesia
+    menggunakan Google Translate GTX (sl=en&tl=id) dengan fallback ke MyMemory API.
+    Mendukung format list (GTX) maupun dict (MyMemory / unit test mock).
+    """
+    if not chunk_text or not chunk_text.strip():
+        return chunk_text
 
     import urllib.request
     import urllib.parse
     import json
+
+    # 1. Primary: Google Translate GTX (sl=en&tl=id menerjemahkan kalimat Inggris sekaligus mempertahankan kata Indonesia)
+    try:
+        q = urllib.parse.quote(chunk_text[:4500])
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=id&dt=t&q={q}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            raw_bytes = resp.read()
+            res_data = json.loads(raw_bytes.decode('utf-8'))
+            if isinstance(res_data, list) and res_data and isinstance(res_data[0], list):
+                trans = ''.join(part[0] for part in res_data[0] if part and part[0])
+                if trans and len(trans.strip()) > 1:
+                    return _normalize_persona_pronouns(trans)
+            elif isinstance(res_data, dict):
+                trans = res_data.get('responseData', {}).get('translatedText')
+                if trans and len(trans.strip()) > 1 and "MYMEMORY WARNING" not in trans.upper():
+                    return _normalize_persona_pronouns(trans)
+    except Exception:
+        pass
+
+    # 2. Secondary Fallback: MyMemory API
+    try:
+        q = urllib.parse.quote(chunk_text[:500])
+        url = f"https://api.mymemory.translated.net/get?q={q}&langpair=en|id"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            res_data = json.loads(resp.read().decode('utf-8'))
+            if isinstance(res_data, dict):
+                trans = res_data.get('responseData', {}).get('translatedText')
+                if trans and len(trans.strip()) > 1 and "MYMEMORY WARNING" not in trans.upper():
+                    return _normalize_persona_pronouns(trans)
+    except Exception:
+        pass
+
+    return chunk_text
+
+def translate_to_indonesian_fast(text: str) -> str:
+    """
+    Menerjemahkan teks bahasa Inggris atau bagian kalimat/paragraf yang menyasar ke bahasa Inggris
+    ke Bahasa Indonesia secara cepat dengan preservasi blok kode, markdown, dan format ekspresi.
+    """
+    if not text or not contains_english_segments(text):
+        return text
 
     try:
         code_blocks = []
@@ -180,47 +264,30 @@ def translate_to_indonesian_fast(text: str) -> str:
         masked = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _mask, text)
 
         paragraphs = masked.split('\n\n')
+        en_indices = [
+            idx for idx, p in enumerate(paragraphs)
+            if p.strip() and not p.strip().startswith('__CODE_SNIP_') and contains_english_segments(p.strip())
+        ]
+
+        if not en_indices:
+            return text
+
+        # Jika ada beberapa paragraf berbahasa Inggris dan panjang total <= 4200 karakter,
+        # terjemahkan dalam 1 batch request agar sangat cepat (~0.3s - 1.2s) dan tidak terkena rate-limit
+        if len(en_indices) >= 2 and len(masked) <= 4200 and not code_blocks:
+            res = _translate_chunk_en_to_id(masked)
+            return res
+
         translated = []
-        for p in paragraphs:
+        for idx, p in enumerate(paragraphs):
             p_strip = p.strip()
             if not p_strip or p_strip.startswith('__CODE_SNIP_'):
                 translated.append(p)
                 continue
-
-            # Jika seluruh paragraf ini didominasi bahasa Inggris
-            if is_predominantly_english(p_strip):
-                try:
-                    q = urllib.parse.quote(p_strip[:500])
-                    url = f"https://api.mymemory.translated.net/get?q={q}&langpair=en|id"
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req, timeout=3.5) as resp:
-                        res_data = json.loads(resp.read().decode('utf-8'))
-                        trans = res_data.get('responseData', {}).get('translatedText')
-                        translated.append(trans if (trans and len(trans) > 2) else p)
-                except Exception:
-                    translated.append(p)
+            if idx in en_indices:
+                translated.append(_translate_chunk_en_to_id(p_strip))
             else:
-                # Periksa apakah ada kalimat bahasa Inggris di dalam paragraf campuran
-                sentences = re.split(r'(?<=[.!?~])\s+', p_strip)
-                if len(sentences) > 1 and any(is_english_text_segment(s) for s in sentences):
-                    trans_sentences = []
-                    for s in sentences:
-                        if is_english_text_segment(s):
-                            try:
-                                q = urllib.parse.quote(s[:500])
-                                url = f"https://api.mymemory.translated.net/get?q={q}&langpair=en|id"
-                                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                                with urllib.request.urlopen(req, timeout=3.5) as resp:
-                                    res_data = json.loads(resp.read().decode('utf-8'))
-                                    trans = res_data.get('responseData', {}).get('translatedText')
-                                    trans_sentences.append(trans if (trans and len(trans) > 2) else s)
-                            except Exception:
-                                trans_sentences.append(s)
-                        else:
-                            trans_sentences.append(s)
-                    translated.append(' '.join(trans_sentences))
-                else:
-                    translated.append(p)
+                translated.append(p)
 
         res = '\n\n'.join(translated)
         for i, b in enumerate(code_blocks):

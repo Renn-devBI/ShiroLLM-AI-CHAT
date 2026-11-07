@@ -323,14 +323,14 @@ def _prepare_inference_payload(
         clean_context.pop(0)
 
     # Sanitisasi riwayat pesan (Context Anti-Poisoning):
-    # Jika pengguna saat ini tidak menggunakan bahasa Inggris, pastikan riwayat asisten yang meleset ke bahasa Inggris dinetralkan
-    from shiro.llm.cleaner import is_user_input_foreign_or_english, is_predominantly_english, translate_to_indonesian_fast
+    # Jika pengguna saat ini tidak menggunakan bahasa Inggris/asing, pastikan riwayat asisten yang meleset atau tercampur bahasa Inggris dinetralkan
+    from shiro.llm.cleaner import is_user_input_foreign_or_english, contains_english_segments, translate_to_indonesian_fast
     is_user_english_query = bool(raw_user_typed and is_user_input_foreign_or_english(raw_user_typed))
     if not is_user_english_query:
         for idx_c, ctx_msg in enumerate(clean_context):
             if ctx_msg.get("role") == "assistant":
                 c_str = ctx_msg.get("content", "")
-                if is_predominantly_english(c_str):
+                if contains_english_segments(c_str):
                     t_str = translate_to_indonesian_fast(c_str)
                     if t_str and len(t_str.strip()) > 5:
                         clean_context[idx_c]["content"] = t_str.strip()
@@ -535,9 +535,14 @@ def _prepare_inference_payload(
         else:
             parts_user.append(" ")
 
-        # Anti-drift anchor: kunci bahasa Indonesia dan larang code-switching di tengah percakapan
+        # Anti-drift anchor: kunci bahasa sesuai bahasa pengguna dan larang code-switching di tengah kalimat/narasi
         if not is_user_english_query and raw_user_typed:
-            parts_user.append(f"\n[Pedoman Bahasa]: Jawab 100% dalam Bahasa Indonesia santai khas {ai_name}. DILARANG mencampur atau menggunakan Bahasa Inggris pada narasi tindakan/ekspresi.")
+            parts_user.append(
+                f"\n[Pedoman Bahasa]: {user_name} berbicara dalam Bahasa Indonesia. "
+                f"Jawab 100% dalam Bahasa Indonesia santai khas {ai_name} dari awal sampai akhir. "
+                f"DILARANG KERAS mencampur atau beralih ke Bahasa Inggris pada narasi tindakan *...* maupun dialog "
+                f"(jangan menulis frasa seperti 'my head against his shoulder', 'Shiro here', 'you don\'t gotta', 'swallows hard', 'whispers', dll; gunakan Bahasa Indonesia alami sepenuhnya)."
+            )
 
         user_text = "\n".join(parts_user)
         user_turn_msg = {"role": "user", "content": user_text}
@@ -596,11 +601,11 @@ def _prepare_inference_payload(
         stop_tokens.extend(["\nOkay, let me", "\nThe user is"])
 
     gen_params = {
-        "temperature": 0.45 if has_image else (0.70 if api_version == "v2" else 0.65),
-        "repeat_penalty": 1.15 if has_image else 1.2,
-        "frequency_penalty": 0.2 if has_image else 0.3,
+        "temperature": 0.45 if has_image else (0.65 if api_version == "v2" else 0.55),
+        "repeat_penalty": 1.08,
+        "frequency_penalty": 0.0,
         "presence_penalty": 0.0,
-        "top_p": 0.92,
+        "top_p": 0.85,
         "top_k": 40,
         "max_tokens": max_output_tokens,
         "stop": stop_tokens
@@ -1133,6 +1138,22 @@ def stream_shiro_reply(
             else:
                 stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
 
+            from shiro.llm.cleaner import is_user_input_foreign_or_english, contains_english_segments, translate_to_indonesian_fast
+            should_guard_id = bool(raw_user_typed and not is_user_input_foreign_or_english(raw_user_typed) and api_version != "v3")
+            clause_buf = ""
+            streamed_reply_acc = ""
+
+            def _flush_stream_seg(seg: str) -> str:
+                if not seg or not seg.strip():
+                    return seg
+                if should_guard_id and "```" not in seg and contains_english_segments(seg):
+                    lead_ws = re.match(r'^\s*', seg).group(0)
+                    trail_ws = re.search(r'\s*$', seg).group(0)
+                    tr = translate_to_indonesian_fast(seg.strip())
+                    if tr and tr.strip():
+                        return lead_ws + tr.strip() + trail_ws
+                return seg
+
             in_think = False
             for chunk in stream_iter:
                 choices = chunk.get("choices", [])
@@ -1154,17 +1175,53 @@ def stream_shiro_reply(
                             in_think = False
                             after_think = token.split("</think>", 1)[-1]
                             if after_think:
-                                yield {"type": "token", "token": after_think}
+                                token = after_think
+                            else:
+                                continue
+
+                    if not should_guard_id or (raw_reply.count("```") % 2 == 1):
+                        if clause_buf:
+                            flushed = _flush_stream_seg(clause_buf)
+                            streamed_reply_acc += flushed
+                            yield {"type": "token", "token": flushed}
+                            clause_buf = ""
+                        streamed_reply_acc += token
+                        yield {"type": "token", "token": token}
+                        last_ping_time = time.perf_counter()
+                    else:
+                        clause_buf += token
+                        if "\n" in clause_buf:
+                            head, sep, tail = clause_buf.rpartition("\n")
+                            to_flush = head + sep
+                            if to_flush.count("*") % 2 == 0:
+                                flushed = _flush_stream_seg(to_flush)
+                                streamed_reply_acc += flushed
+                                yield {"type": "token", "token": flushed}
+                                clause_buf = tail
                                 last_ping_time = time.perf_counter()
-                            continue
-                    
-                    yield {"type": "token", "token": token}
-                    last_ping_time = time.perf_counter()
+                        elif clause_buf.count("*") % 2 == 0 and len(clause_buf) >= 35:
+                            m_sent = re.search(r'^([\s\S]*?[.!?~]["\'*)]?\s+)([\s\S]*)$', clause_buf)
+                            if m_sent:
+                                head_part, tail_part = m_sent.group(1), m_sent.group(2)
+                                if head_part.count("*") % 2 == 0:
+                                    flushed = _flush_stream_seg(head_part)
+                                    streamed_reply_acc += flushed
+                                    yield {"type": "token", "token": flushed}
+                                    clause_buf = tail_part
+                                    last_ping_time = time.perf_counter()
 
                 now = time.perf_counter()
                 if now - last_ping_time > 8.0:
                     yield {"type": "ping"}
                     last_ping_time = now
+
+            if clause_buf:
+                flushed = _flush_stream_seg(clause_buf)
+                streamed_reply_acc += flushed
+                yield {"type": "token", "token": flushed}
+                clause_buf = ""
+            if should_guard_id and streamed_reply_acc.strip():
+                raw_reply = streamed_reply_acc
 
             stream_success = True
 

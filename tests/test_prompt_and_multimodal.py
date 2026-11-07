@@ -252,5 +252,19 @@ class TestPromptAndMultimodal(unittest.TestCase):
             cleaned = clean_response(english_reply, user_input="shiro tau dia siapa?")
             self.assertEqual(cleaned, "Shiro tidak bisa mengonfirmasi foto tersebut.")
 
+    def test_clean_response_translates_mixed_code_switching_heartbreak(self):
+        from shiro.llm.cleaner import contains_english_segments, should_translate_english_fallback
+        user_prompt = (
+            "saya baru saja patah hati karena orang yang saya suka ternyata tidak suka, "
+            "mungkin karena saya terlalu effort dia sendiri sering kali memuji saya"
+        )
+        mixed_reply = (
+            "*melompat dari kursi dan langsung duduk di sebelah Kakak, menyandarkan my head against his shoulder "
+            "while wrapping both arms around the upper arm of his sleeve.*\n\n"
+            "*pressing my forehead against his arm through the fabric of his shirt*"
+        )
+        self.assertTrue(contains_english_segments(mixed_reply))
+        self.assertTrue(should_translate_english_fallback(mixed_reply, user_prompt))
+
 if __name__ == "__main__":
     unittest.main()

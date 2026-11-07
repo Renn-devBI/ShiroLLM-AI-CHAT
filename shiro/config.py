@@ -21,7 +21,7 @@ MEMORY_TEMPLATE_FILE = str(BASE_DIR / "data" / "templates" / "ingatan_shiro.temp
 
 # Model & Context Parameters
 CONTEXT_SIZE = int(os.environ.get("SHIRO_CONTEXT_SIZE", "8192"))
-DEFAULT_TEMPERATURE = float(os.environ.get("SHIRO_TEMPERATURE", "0.7"))
+DEFAULT_TEMPERATURE = float(os.environ.get("SHIRO_TEMPERATURE", "0.55"))
 DEFAULT_TOP_P = float(os.environ.get("SHIRO_TOP_P", "0.9"))
 DEFAULT_MAX_TOKENS = int(os.environ.get("SHIRO_MAX_TOKENS", "2048"))
 
