@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Guest-ID, X-Session-ID, X-API-Key');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Guest-ID, X-Session-ID, X-API-Key, X-UI-Lang');
     if (req.method === 'OPTIONS') {
         return res.status(204).end();
     }
@@ -168,6 +168,34 @@ function fetchBackend(endpoint, options = {}) {
 }
 
 // -------------------------------------------------------------
+// LOCALIZED OVERLOAD TRAFFIC NOTIFICATION (ID / EN)
+// Tanpa menampilkan nama server, hostname, IP, maupun port internal
+// -------------------------------------------------------------
+function resolveRequestLang(req, store = null) {
+    const raw = (
+        (req && req.body && req.body.lang) ||
+        (req && req.headers && req.headers['x-ui-lang']) ||
+        (req && req.query && req.query.lang) ||
+        (store && store.ui_language) ||
+        'id'
+    ).toString().toLowerCase().trim();
+    return raw === 'en' ? 'en' : 'id';
+}
+
+function getOverloadMessages(lang = 'id') {
+    if (lang === 'en') {
+        return {
+            reply: 'ShiroHaru AI server is currently experiencing traffic overload. Please wait a moment and try again.',
+            toast: 'Notice: ShiroHaru AI server is currently experiencing traffic overload.'
+        };
+    }
+    return {
+        reply: 'Server ShiroHaru AI saat ini sedang mengalami overload trafik. Silakan tunggu beberapa saat lalu coba kembali.',
+        toast: 'Notifikasi: Server ShiroHaru AI sedang overload trafik.'
+    };
+}
+
+// -------------------------------------------------------------
 // ISOLASI SESI GUEST PER-PENGUNJUNG (Cookies / LocalStorage)
 // -------------------------------------------------------------
 // Memory map guest stores agar percakapan antar pengunjung tidak saling tercampur
@@ -196,6 +224,8 @@ function getGuestContext(req) {
     if (!guestStores.has(guestId)) {
         guestStores.set(guestId, {
             activeSessionId: 'session-1',
+            ui_language: 'id',
+            enable_training_logging: true,
             sessions: {
                 'session-1': {
                     id: 'session-1',
@@ -208,13 +238,19 @@ function getGuestContext(req) {
         });
     }
 
+    const store = guestStores.get(guestId);
+    const headerLang = req.headers['x-ui-lang'];
+    if (headerLang === 'id' || headerLang === 'en') {
+        store.ui_language = headerLang;
+    }
+
     // Bersihkan sesi usang jika cache guest melampaui 1000 user aktif
     if (guestStores.size > 1000) {
         const firstKey = guestStores.keys().next().value;
         guestStores.delete(firstKey);
     }
 
-    return { guestId, store: guestStores.get(guestId) };
+    return { guestId, store };
 }
 
 // Pipeline sample trace untuk modal inspektor visual
@@ -235,14 +271,27 @@ app.post(['/api/profile/upload', '/profile/upload'], (req, res) => {
 
 // Privacy & Settings API
 app.get(['/api/settings/privacy', '/settings/privacy'], (req, res) => {
+    const { store } = getGuestContext(req);
     res.json({
-        enable_training_logging: true,
-        ui_language: 'id'
+        enable_training_logging: store.enable_training_logging !== false,
+        ui_language: store.ui_language || 'id'
     });
 });
 
 app.post(['/api/settings/privacy', '/settings/privacy'], (req, res) => {
-    res.json({ success: true });
+    const { store } = getGuestContext(req);
+    const body = req.body || {};
+    if (body.ui_language === 'id' || body.ui_language === 'en') {
+        store.ui_language = body.ui_language;
+    }
+    if (typeof body.enable_training_logging === 'boolean') {
+        store.enable_training_logging = body.enable_training_logging;
+    }
+    res.json({
+        success: true,
+        enable_training_logging: store.enable_training_logging !== false,
+        ui_language: store.ui_language || 'id'
+    });
 });
 
 // Memory Count & Stats API
@@ -545,13 +594,14 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
     const { message, stream = true, image = null, document_text = null } = req.body || {};
     const userMessage = (message || '').trim();
     const { guestId, store } = getGuestContext(req);
+    const reqLang = resolveRequestLang(req, store);
 
     const sess = store.sessions[store.activeSessionId] || Object.values(store.sessions)[0];
     const userMsgId = `msg-u-${Date.now()}`;
     const assistantMsgId = `msg-a-${Date.now()}`;
 
     // Catat pesan user ke memori guest browser
-    let formattedUserMsg = userMessage || 'Kirim pesan ke Shiro';
+    let formattedUserMsg = userMessage || (reqLang === 'en' ? 'Send a message to Shiro' : 'Kirim pesan ke Shiro');
     if (document_text) {
         formattedUserMsg += `\n\n[Dokumen Terlampir]:\n${document_text.slice(0, 1000)}`;
     }
@@ -563,9 +613,14 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     });
 
-    // Susun histori untuk AI (bersihkan pesan error koneksi sebelumnya)
+    // Susun histori untuk AI (bersihkan pesan error/overload sebelumnya)
     const historyPayload = sess.messages
-        .filter(m => !m.content.includes('Gagal menghubungi server') && !m.content.includes('ECONNREFUSED'))
+        .filter(m =>
+            !m.content.includes('Gagal menghubungi') &&
+            !m.content.includes('ECONNREFUSED') &&
+            !m.content.includes('overload') &&
+            !m.content.includes('traffic overload')
+        )
         .slice(-10)
         .map(m => ({
             role: m.role,
@@ -592,6 +647,30 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             clearInterval(heartbeatTimer);
             heartbeatTimer = null;
         }
+    };
+
+    const sendOverloadResponse = () => {
+        const ov = getOverloadMessages(reqLang);
+        fullReply = ov.reply;
+        res.write(`data: ${JSON.stringify({
+            type: 'overload',
+            message: ov.toast,
+            reply: ov.reply
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+            type: 'token',
+            token: fullReply
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+            type: 'done',
+            overload: true,
+            overload_toast: ov.toast,
+            reply: fullReply,
+            assistant_message_id: assistantMsgId,
+            session_title: sess.title,
+            pipeline_trace: samplePipelineTrace
+        })}\n\n`);
+        res.end();
     };
 
     // Panggil Engine AI dari Server VPS (Streaming SSE)
@@ -660,7 +739,6 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             aiRes.on('end', async () => {
                 stopHeartbeat();
                 if (aiRes.statusCode !== 200) {
-                    console.log(`[Preview-Demo /v1 failed with ${aiRes.statusCode}, attempting fallback to /api/ai/chat]`);
                     let fallbackSuccess = false;
                     try {
                         const fallbackResp = await fetchBackend('/api/ai/chat', {
@@ -677,26 +755,17 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
                         if (fallbackResp.ok && fallbackResp.data && fallbackResp.data.reply) {
                             fullReply = fallbackResp.data.reply;
                             fallbackSuccess = true;
-                            // Stream token ke antarmuka pengguna
                             const chunkSize = 4;
                             for (let i = 0; i < fullReply.length; i += chunkSize) {
                                 const tokenChunk = fullReply.slice(i, i + chunkSize);
                                 res.write(`data: ${JSON.stringify({ type: 'token', token: tokenChunk })}\n\n`);
                             }
                         }
-                    } catch (fbErr) {
-                        console.error('[Fallback /api/ai/chat error]:', fbErr.message);
-                    }
+                    } catch (_) {}
 
                     if (!fallbackSuccess) {
-                        try {
-                            const errJson = JSON.parse(buffer);
-                            const errMsg = errJson.error?.message || errJson.message || buffer;
-                            fullReply = `Server AI sedang memuat ulang model (${errMsg}). Mohon tunggu sebentar ya Kak!`;
-                        } catch (_) {
-                            fullReply = `Server AI sedang memuat ulang model. Mohon coba beberapa saat lagi!`;
-                        }
-                        res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
+                        sendOverloadResponse();
+                        return;
                     }
                 } else if (!fullReply && buffer) {
                     try {
@@ -710,8 +779,8 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
                 }
 
                 if (!fullReply) {
-                    fullReply = 'Halo Kakak! Shiro sudah aktif terhubung langsung ke server AI lokal Kakak. Ada yang bisa Shiro bantu?';
-                    res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
+                    sendOverloadResponse();
+                    return;
                 }
 
                 // Catat balasan assistant ke memori guest
@@ -724,7 +793,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
                 sess.last_active = new Date().toISOString();
 
                 // Update judul sesi jika masih nama default
-                if (sess.title === 'Chat baru' || sess.title === 'Percakapan Baru') {
+                if (sess.title === 'Chat baru' || sess.title === 'Percakapan Baru' || sess.title === 'New chat') {
                     sess.title = userMessage.slice(0, 28) + (userMessage.length > 28 ? '...' : '');
                 }
 
@@ -739,9 +808,8 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             });
         });
 
-        aiReq.on('error', async (err) => {
+        aiReq.on('error', async () => {
             stopHeartbeat();
-            console.warn('[AI Request Error, attempting /api/ai/chat fallback]:', err.message);
             try {
                 const fb = await fetchBackend('/api/ai/chat', {
                     method: 'POST',
@@ -767,7 +835,7 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
                         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     });
                     sess.last_active = new Date().toISOString();
-                    if (sess.title === 'Chat baru' || sess.title === 'Percakapan Baru') {
+                    if (sess.title === 'Chat baru' || sess.title === 'Percakapan Baru' || sess.title === 'New chat') {
                         sess.title = userMessage.slice(0, 28) + (userMessage.length > 28 ? '...' : '');
                     }
                     res.write(`data: ${JSON.stringify({
@@ -780,28 +848,15 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
                     res.end();
                     return;
                 }
-            } catch (fbErr) {
-                console.error('[Fallback on error failed]:', fbErr.message);
-            }
+            } catch (_) {}
 
-            fullReply = `Gagal menghubungi server AI (${err.message}). Pastikan server di medium.lynzz.id:2223 sedang online.`;
-            res.write(`data: ${JSON.stringify({ type: 'token', token: fullReply })}\n\n`);
-            res.write(`data: ${JSON.stringify({
-                type: 'done',
-                reply: fullReply,
-                assistant_message_id: assistantMsgId,
-                session_title: sess.title,
-                pipeline_trace: samplePipelineTrace
-            })}\n\n`);
-            res.end();
+            sendOverloadResponse();
         });
 
         aiReq.on('timeout', () => {
             stopHeartbeat();
             aiReq.destroy();
-            res.write(`data: ${JSON.stringify({ type: 'token', token: 'Waktu tunggu respon server AI habis.' })}\n\n`);
-            res.write(`data: ${JSON.stringify({ type: 'done', reply: 'Timeout' })}\n\n`);
-            res.end();
+            sendOverloadResponse();
         });
 
         aiReq.write(aiReqPayload);
@@ -814,10 +869,9 @@ app.post(['/api/chat', '/chat'], async (req, res) => {
             }
         });
 
-    } catch (e) {
-        console.error('[Preview-Demo Chat Exception]:', e.message);
-        res.write(`data: ${JSON.stringify({ type: 'error', error: e.message })}\n\n`);
-        res.end();
+    } catch (_) {
+        stopHeartbeat();
+        sendOverloadResponse();
     }
 });
 
@@ -834,6 +888,7 @@ function proxyOpenAiCompletions(req, res, apiVersion = 'v1') {
     const messages = payload.messages || [];
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content || 'Halo';
     const payloadStr = JSON.stringify(payload);
+    const reqLang = resolveRequestLang(req, null);
 
     const { Transform } = require('stream');
     const maskModelTransform = new Transform({
@@ -874,7 +929,6 @@ function proxyOpenAiCompletions(req, res, apiVersion = 'v1') {
             let errBuf = '';
             proxyRes.on('data', chunk => { errBuf += chunk.toString(); });
             proxyRes.on('end', async () => {
-                console.log(`[OpenAI Proxy ${apiVersion} status ${proxyRes.statusCode}, fallback to /api/ai/chat]`);
                 try {
                     const fallbackResp = await fetchBackend('/api/ai/chat', {
                         method: 'POST',
@@ -931,17 +985,21 @@ function proxyOpenAiCompletions(req, res, apiVersion = 'v1') {
                             return;
                         }
                     }
-                } catch (fbErr) {
-                    console.error('[OpenAI Proxy fallback failed]:', fbErr.message);
-                }
+                } catch (_) {}
 
-                res.status(proxyRes.statusCode).send(errBuf);
+                const ov = getOverloadMessages(reqLang);
+                res.status(503).json({
+                    error: {
+                        message: ov.reply,
+                        type: 'server_overload',
+                        code: 'traffic_overload'
+                    }
+                });
             });
         }
     });
 
-    proxyReq.on('error', async (err) => {
-        console.warn(`[OpenAI Proxy ${apiVersion} connection error, trying fallback]:`, err.message);
+    proxyReq.on('error', async () => {
         try {
             const fallbackResp = await fetchBackend('/api/ai/chat', {
                 method: 'POST',
@@ -1000,11 +1058,12 @@ function proxyOpenAiCompletions(req, res, apiVersion = 'v1') {
             }
         } catch (_) {}
 
-        res.status(502).json({
+        const ov = getOverloadMessages(reqLang);
+        res.status(503).json({
             error: {
-                message: `Gagal meneruskan request ke server AI: ${err.message}`,
-                type: 'bad_gateway',
-                code: 'upstream_unavailable'
+                message: ov.reply,
+                type: 'server_overload',
+                code: 'traffic_overload'
             }
         });
     });

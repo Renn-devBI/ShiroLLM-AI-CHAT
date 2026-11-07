@@ -18,18 +18,22 @@ function getOrCreateGuestId() {
 
 const currentGuestId = getOrCreateGuestId();
 
-// Intersep seluruh pemanggilan fetch agar otomatis membawa header identitas guest
+// Intersep seluruh pemanggilan fetch agar otomatis membawa header identitas guest & bahasa UI
 if (typeof window !== 'undefined' && window.fetch) {
     const originalFetch = window.fetch;
     window.fetch = function(url, options = {}) {
         options = options || {};
         options.headers = options.headers || {};
+        const activeLang = (typeof currentLang !== 'undefined' && currentLang) ? currentLang : (localStorage.getItem('shiro_lang') || 'id');
         if (typeof options.headers.set === 'function') {
             options.headers.set('X-Guest-ID', currentGuestId);
+            options.headers.set('X-UI-Lang', activeLang);
         } else if (Array.isArray(options.headers)) {
             options.headers.push(['X-Guest-ID', currentGuestId]);
+            options.headers.push(['X-UI-Lang', activeLang]);
         } else {
             options.headers['X-Guest-ID'] = currentGuestId;
+            options.headers['X-UI-Lang'] = activeLang;
         }
         return originalFetch.call(this, url, options);
     };
@@ -287,7 +291,10 @@ const SHIRO_I18N = {
         choose_file: 'Pilih Berkas',
         no_file_chosen: 'Belum ada berkas dipilih',
         link_copied_toast: 'Tautan percakapan berhasil disalin ke clipboard!',
-        session_not_found_toast: 'Sesi percakapan tidak ditemukan.'
+        session_not_found_toast: 'Sesi percakapan tidak ditemukan.',
+        server_overload_toast: 'Notifikasi: Server ShiroHaru AI sedang overload trafik.',
+        server_overload_msg: 'Server ShiroHaru AI saat ini sedang mengalami overload trafik. Silakan tunggu beberapa saat lalu coba kembali.',
+        retry_btn: 'Coba lagi'
     },
     en: {
         new_chat: 'New chat',
@@ -463,7 +470,10 @@ const SHIRO_I18N = {
         choose_file: 'Choose File',
         no_file_chosen: 'No file chosen',
         link_copied_toast: 'Conversation link copied to clipboard!',
-        session_not_found_toast: 'Conversation session not found.'
+        session_not_found_toast: 'Conversation session not found.',
+        server_overload_toast: 'Notice: ShiroHaru AI server is currently experiencing traffic overload.',
+        server_overload_msg: 'ShiroHaru AI server is currently experiencing traffic overload. Please wait a moment and try again.',
+        retry_btn: 'Try again'
     }
 };
 
@@ -491,6 +501,15 @@ function applyI18nToDOM() {
         if (key && SHIRO_I18N[currentLang] && SHIRO_I18N[currentLang][key]) {
             el.title = SHIRO_I18N[currentLang][key];
         }
+    });
+
+    // Perbarui pesan overload yang sedang tampil di layar saat bahasa diganti (ID <-> EN)
+    document.querySelectorAll('.message.assistant[data-overload="true"]').forEach(msgEl => {
+        const msgTextEl = msgEl.querySelector('.msg-text');
+        const bubbleEl = msgEl.querySelector('.bubble');
+        const localizedMsg = t('server_overload_msg');
+        if (msgTextEl) msgTextEl.innerHTML = parseMessageContent(localizedMsg);
+        if (bubbleEl) bubbleEl.setAttribute('data-original-text', localizedMsg);
     });
 
     const navLangCode = document.getElementById('nav-lang-code');
@@ -1150,16 +1169,18 @@ function retryLastFailedMessage() {
 
 function addErrorMessage(errorMsg, failedPayload = null) {
     lastFailedPayload = failedPayload;
+    showToast(t('server_overload_toast'), 4200);
+    const safeMsg = t('server_overload_msg');
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message system';
     messageDiv.innerHTML = `
         <div class="error-retry-card">
             <div class="error-retry-card-msg">
                 <i class="ph ph-warning-circle"></i>
-                <span>${errorMsg}</span>
+                <span data-i18n="server_overload_msg">${safeMsg}</span>
             </div>
             <button type="button" class="btn-retry-action" onclick="retryLastFailedMessage()">
-                <i class="ph ph-arrows-clockwise"></i> Coba lagi
+                <i class="ph ph-arrows-clockwise"></i> <span data-i18n="retry_btn">${t('retry_btn')}</span>
             </button>
         </div>
     `;
@@ -1670,7 +1691,8 @@ async function sendMessage() {
     try {
         const payload = { 
             message: message,
-            stream: true 
+            stream: true,
+            lang: currentLang
         };
         if (currentImgUrl) {
             payload.image = currentImgUrl;
@@ -1684,23 +1706,25 @@ async function sendMessage() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'text/event-stream, application/json'
+                'Accept': 'text/event-stream, application/json',
+                'X-UI-Lang': currentLang
             },
             body: JSON.stringify(payload),
             signal: abortController.signal
         });
 
         if (!response.ok) {
-            let errorMsg = 'Gagal terhubung ke Shiro.';
+            let errorMsg = t('server_overload_msg');
             try {
                 const errData = await response.json();
                 if (errData.reply) {
                     showTyping(false);
-                    addMessage('assistant', errData.reply);
+                    showToast(t('server_overload_toast'), 4200);
+                    const msgEl = addMessage('assistant', t('server_overload_msg'));
+                    if (msgEl) msgEl.dataset.overload = 'true';
                     status.textContent = t('status_ready');
                     return;
                 }
-                if (errData.error) errorMsg = errData.error;
             } catch (_) {}
             throw new Error(errorMsg);
         }
@@ -1716,6 +1740,7 @@ async function sendMessage() {
             let assistantTextEl = null;
             let finalData = null;
             let lastRenderTime = 0;
+            let overloadNotified = false;
 
             const updateAssistantUI = (text, isDone = false) => {
                 if (!assistantMsgEl) {
@@ -1799,11 +1824,19 @@ async function sendMessage() {
                                         }
                                     } catch (_) {}
                                 }
+                            } else if (evData.type === 'overload') {
+                                overloadNotified = true;
+                                showToast(t('server_overload_toast'), 4200);
+                                streamText = t('server_overload_msg');
+                                updateAssistantUI(streamText, false);
+                                if (assistantMsgEl) assistantMsgEl.dataset.overload = 'true';
                             } else if (evData.type === 'token') {
                                 if (!streamText) {
                                     status.textContent = t('status_typing');
                                 }
-                                streamText += evData.token || '';
+                                if (!overloadNotified) {
+                                    streamText += evData.token || '';
+                                }
                                 const now = Date.now();
                                 if (now - lastRenderTime > 35) {
                                     lastRenderTime = now;
@@ -1812,10 +1845,18 @@ async function sendMessage() {
                             } else if (evData.type === 'agent_action') {
                                 // Eksekusi tool/agent action
                             } else if (evData.type === 'error') {
-                                console.warn('[Stream Error Event]:', evData.error);
+                                overloadNotified = true;
+                                showToast(t('server_overload_toast'), 4200);
+                                streamText = t('server_overload_msg');
                             } else if (evData.type === 'done') {
                                 finalData = evData;
-                                if (evData.reply) {
+                                if (evData.overload) {
+                                    if (!overloadNotified) {
+                                        overloadNotified = true;
+                                        showToast(t('server_overload_toast'), 4200);
+                                    }
+                                    streamText = t('server_overload_msg');
+                                } else if (evData.reply) {
                                     streamText = evData.reply;
                                 }
                             }
@@ -1831,6 +1872,9 @@ async function sendMessage() {
             if (streamText || finalData) {
                 updateAssistantUI(streamText, true);
                 if (assistantMsgEl) {
+                    if (overloadNotified || (finalData && finalData.overload)) {
+                        assistantMsgEl.dataset.overload = 'true';
+                    }
                     if (finalData && finalData.assistant_message_id) {
                         assistantMsgEl.dataset.msgId = finalData.assistant_message_id;
                     }
