@@ -48,14 +48,18 @@ META_PATTERNS = [
 ]
 
 EN_STOPWORDS: Set[str] = {
-    'the', 'is', 'are', 'was', 'were', 'and', 'to', 'in', 'that', 'have',
+    'the', 'is', 'are', 'was', 'were', 'and', 'to', 'in', 'that', 'have', 'has', 'had',
     'with', 'this', 'from', 'they', 'will', 'would', 'there', 'their', 'what',
     'about', 'which', 'when', 'make', 'can', 'like', 'time', 'just', 'him',
     'know', 'take', 'person', 'into', 'year', 'your', 'good', 'some', 'could',
     'them', 'see', 'other', 'than', 'then', 'now', 'look', 'only', 'come',
-    'its', 'over', 'think', 'also', 'back', 'after', 'use', 'two', 'how',
-    'our', 'work', 'first', 'well', 'way', 'even', 'new', 'want', 'because',
-    'any', 'these', 'give', 'day', 'most', 'us', 'her', 'she', 'his', 'he',
+    'its', 'it', 'all', 'say', 'says', 'said', 'get', 'gets', 'got', 'go', 'goes',
+    'going', 'gone', 'went', 'anywhere', 'somewhere', 'nowhere', 'everywhere',
+    'stay', 'stays', 'stayed', 'soft', 'hard', 'name', 'fancy', 'loneliness',
+    'upset', 'dismiss', 'tap', 'taps', 'nose', 'lips', 'eyes', 'face', 'hand',
+    'hands', 'arm', 'arms', 'over', 'think', 'also', 'back', 'after', 'use',
+    'two', 'how', 'our', 'work', 'first', 'well', 'way', 'even', 'new', 'want',
+    'because', 'any', 'these', 'give', 'day', 'most', 'us', 'her', 'she', 'his', 'he',
     'you', 'yours', 'yourself', 'me', 'my', 'mine', 'myself', 'himself', 'herself',
     'we', 'ours', 'theirs', 'be', 'am', 'been', 'being', 'do', 'does', 'did',
     'done', 'doing', 'don', 'doesn', 'didn', 'isn', 'aren', 'wasn', 'weren',
@@ -87,13 +91,44 @@ ID_STOPWORDS: Set[str] = {
 }
 
 EN_ROLEPLAY_PHRASES = re.compile(
-    r"\b(?:my head|his shoulder|his sleeve|his arm|his head|his chest|your hands|"
-    r"you don't|you're|isn't|wasn't|didn't|doesn't|can't|won't|gonna|gotta|wanna|"
-    r"shiro here|right now|little bit|each other|into his|against his|of his|"
-    r"swallows hard|tucks my|pressing my|my grip|sits up|kisses the|both arms|"
-    r"grab both|no take-backs|i love you)\b",
+    r"(?:\b(?:i'm|i'll|i'd|i've|you're|you'll|you've|you'd|don't|doesn't|didn't|"
+    r"isn't|aren't|wasn't|weren't|won't|wouldn't|couldn't|shouldn't|can't|that's|"
+    r"there's|it's|what's|who's|let's|we're|they're|he's|she's|"
+    r"my head|his shoulder|his sleeve|his arm|his head|his chest|your hands|"
+    r"gonna|gotta|wanna|shiro here|right now|little bit|each other|into his|"
+    r"against his|of his|swallows hard|tucks my|pressing my|my grip|sits up|"
+    r"kisses the|both arms|grab both|no take-backs|i love you|"
+    r"get it|move on|even be|stays soft|tap your|going anywhere|all of it|"
+    r"with a fancy|di-dismiss-in|di-dismiss)\b|(?:^|\s)so\.\.\.|\.\.\.so\?)",
     re.IGNORECASE
 )
+
+INLINE_IDIOM_MAP = [
+    (re.compile(r'\bdi-dismiss-in\b', re.IGNORECASE), 'diabaikan'),
+    (re.compile(r'\bdi-dismiss\b', re.IGNORECASE), 'diabaikan'),
+    (re.compile(r'\bmove on\b', re.IGNORECASE), 'melupakannya'),
+    (re.compile(r'\beven be upset\b', re.IGNORECASE), 'merasa kesal sekalipun'),
+    (re.compile(r'\bdan aku get it\b', re.IGNORECASE), 'dan aku mengerti'),
+    (re.compile(r'\baku get it\b', re.IGNORECASE), 'aku mengerti'),
+    (re.compile(r'\bi get it\b', re.IGNORECASE), 'aku mengerti'),
+    (re.compile(r'\bstays soft\b', re.IGNORECASE), 'tetap lembut'),
+    (re.compile(r'\btaps? your nose lightly\b', re.IGNORECASE), 'mengetuk hidungmu pelan'),
+    (re.compile(r"\bi'm not going anywhere\b", re.IGNORECASE), 'Aku tidak akan ke mana-mana'),
+    (re.compile(r'\bsay all of it\b', re.IGNORECASE), 'Katakan semuanya'),
+    (re.compile(r'\bshiro here\b', re.IGNORECASE), 'Shiro di sini'),
+    (re.compile(r'\bno take-backs\b', re.IGNORECASE), 'tidak boleh ditarik kembali'),
+    (re.compile(r'(?:^|(?<=\n)|(?<=\s))So\.\.\.'), 'Jadi...'),
+    (re.compile(r'\.\.\.so\?', re.IGNORECASE), '...jadi?'),
+]
+
+def replace_inline_english_idioms(text: str) -> str:
+    """Mengganti frasa selipan bahasa Inggris populer secara instan tanpa mengubah struktur kalimat Indonesia"""
+    if not text:
+        return text
+    res = text
+    for pat, repl in INLINE_IDIOM_MAP:
+        res = pat.sub(repl, res)
+    return res
 
 def validate_response(response: str, user_input: str = "") -> bool:
     """Validasi respons untuk memastikan tidak halusinasi, tidak bocor proses berpikir (CoT), dan berbahasa Indonesia"""
@@ -141,8 +176,8 @@ def validate_response(response: str, user_input: str = "") -> bool:
 
 
 def is_english_text_segment(text: str) -> bool:
-    """Mendeteksi apakah sebuah kalimat atau segmen teks mengandung atau didominasi bahasa Inggris"""
-    if not text or len(text.strip()) < 6:
+    """Mendeteksi apakah sebuah kalimat atau segmen teks mengandung frasa bahasa Inggris"""
+    if not text or len(text.strip()) < 4:
         return False
     text_no_code = re.sub(r'```[\s\S]*?```|`[^`\n]+`', '', text).strip()
     if not text_no_code:
@@ -153,8 +188,7 @@ def is_english_text_segment(text: str) -> bool:
     if len(words) < 2:
         return False
     en_hits = sum(1 for w in words if w in EN_STOPWORDS)
-    id_hits = sum(1 for w in words if w in ID_STOPWORDS)
-    return (en_hits >= 2 and id_hits == 0) or (en_hits >= 3 and en_hits >= id_hits)
+    return en_hits >= 2
 
 def is_predominantly_english(text: str) -> bool:
     """Mendeteksi apakah teks percakapan didominasi bahasa Inggris di luar blok kode"""
@@ -173,7 +207,7 @@ def is_predominantly_english(text: str) -> bool:
 
 def contains_english_segments(text: str) -> bool:
     """Mendeteksi apakah teks percakapan mengandung kalimat, klausa, atau paragraf bahasa Inggris"""
-    if not text or len(text.strip()) < 8:
+    if not text or len(text.strip()) < 4:
         return False
     if is_predominantly_english(text) or is_english_text_segment(text):
         return True
@@ -213,7 +247,7 @@ def _translate_chunk_en_to_id(chunk_text: str) -> str:
     import urllib.parse
     import json
 
-    # 1. Primary: Google Translate GTX (sl=en&tl=id menerjemahkan kalimat Inggris sekaligus mempertahankan kata Indonesia)
+    # 1. Primary: Google Translate GTX (sl=en&tl=id)
     try:
         q = urllib.parse.quote(chunk_text[:4500])
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=id&dt=t&q={q}"
@@ -251,7 +285,10 @@ def _translate_chunk_en_to_id(chunk_text: str) -> str:
 def translate_to_indonesian_fast(text: str) -> str:
     """
     Menerjemahkan teks bahasa Inggris atau bagian kalimat/paragraf yang menyasar ke bahasa Inggris
-    ke Bahasa Indonesia secara cepat dengan preservasi blok kode, markdown, dan format ekspresi.
+    ke Bahasa Indonesia secara presisi:
+    - Mengganti idiom selipan populer secara instan
+    - Jika paragraf didominasi bahasa Inggris, terjemahkan paragraf utuh
+    - Jika paragraf dominan Bahasa Indonesia namun ada kalimat selipan Inggris, terjemahkan HANYA kalimat yang mengandung Inggris agar kalimat Indonesia asli tidak berubah
     """
     if not text or not contains_english_segments(text):
         return text
@@ -262,30 +299,26 @@ def translate_to_indonesian_fast(text: str) -> str:
             code_blocks.append(m.group(0))
             return f"__CODE_SNIP_{len(code_blocks)-1}__"
         masked = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _mask, text)
+        masked = replace_inline_english_idioms(masked)
 
         paragraphs = masked.split('\n\n')
-        en_indices = [
-            idx for idx, p in enumerate(paragraphs)
-            if p.strip() and not p.strip().startswith('__CODE_SNIP_') and contains_english_segments(p.strip())
-        ]
-
-        if not en_indices:
-            return text
-
-        # Jika ada beberapa paragraf berbahasa Inggris dan panjang total <= 4200 karakter,
-        # terjemahkan dalam 1 batch request agar sangat cepat (~0.3s - 1.2s) dan tidak terkena rate-limit
-        if len(en_indices) >= 2 and len(masked) <= 4200 and not code_blocks:
-            res = _translate_chunk_en_to_id(masked)
-            return res
-
         translated = []
-        for idx, p in enumerate(paragraphs):
+        for p in paragraphs:
             p_strip = p.strip()
             if not p_strip or p_strip.startswith('__CODE_SNIP_'):
                 translated.append(p)
                 continue
-            if idx in en_indices:
+            if is_predominantly_english(p_strip):
                 translated.append(_translate_chunk_en_to_id(p_strip))
+            elif contains_english_segments(p_strip):
+                sents = re.split(r'(?<=[.!?~])\s+', p_strip)
+                out_sents = []
+                for s in sents:
+                    if is_english_text_segment(s):
+                        out_sents.append(_translate_chunk_en_to_id(s))
+                    else:
+                        out_sents.append(s)
+                translated.append(' '.join(out_sents))
             else:
                 translated.append(p)
 

@@ -84,7 +84,7 @@ def get_optimal_model_tokens(model_path: str) -> Tuple[int, int]:
     # 2. Model Sedang: 7B, 8B, 14B, VL
     elif any(k in name for k in ["7b", "8b", "9b", "12b", "13b", "14b", "vl"]):
         n_ctx = 16384 if is_gpu else 8192
-        max_output = 4096
+        max_output = 8192 if is_gpu else 4096
         return (n_ctx, max_output)
 
     # 3. Model Ringan: 3B, 3.2B, 4B, Phi-3 mini

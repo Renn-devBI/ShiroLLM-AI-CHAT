@@ -317,7 +317,7 @@ def _prepare_inference_payload(
     active_model_path = getattr(llm, 'model_path', '') if hasattr(llm, 'model_path') else ''
     _, model_max_out = get_optimal_model_tokens(active_model_path or active_model_name)
     
-    reserved_budget = max(2048, min(8192, model_max_out + 512))
+    reserved_budget = max(4096, min(16384, model_max_out + 512))
     max_history_tokens = max(1024, active_ctx - reserved_budget)
     while len(clean_context) > 1 and calculate_messages_tokens(clean_context, llm) > max_history_tokens:
         clean_context.pop(0)
@@ -587,7 +587,7 @@ def _prepare_inference_payload(
     elif is_reasoning_enabled or tools:
         desired_max = max(model_max_out, 8192)
     else:
-        desired_max = max(model_max_out, 4096)
+        desired_max = max(model_max_out, 8192)
 
     remaining_space = max(256, active_ctx - prompt_tokens_est - 128)
     max_output_tokens = min(desired_max, remaining_space)
