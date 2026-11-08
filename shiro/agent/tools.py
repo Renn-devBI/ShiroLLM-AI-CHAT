@@ -372,7 +372,26 @@ def calculate_math(expression: str) -> Dict[str, Any]:
         }
 
 def get_current_time_info() -> Dict[str, Any]:
-    """Mengambil informasi tanggal, hari, dan waktu real-time dalam zona WIB dan JST"""
+    """Mengambil informasi tanggal, hari, dan waktu real-time yang terverifikasi dalam zona WIB dan JST"""
+    try:
+        from shiro.web.realtime_intel import format_verified_time_info
+        info = format_verified_time_info()
+        wib_str = f"{info['day']}, {info['date']} - Jam {info['time_wib']} WIB"
+        jst_str = f"{info['time_jst']} JST (Waktu Jepang)"
+        summary = (
+            f"📅 Waktu Sekarang:\n"
+            f"• Indonesia (WIB): **{wib_str}**\n"
+            f"• Jepang (JST)    : **{jst_str}**"
+        )
+        return {
+            "success": True,
+            "wib": wib_str,
+            "jst": jst_str,
+            "summary": summary
+        }
+    except Exception:
+        pass
+
     now_utc = datetime.now(timezone.utc)
     wib_tz = timezone(timedelta(hours=7))
     jst_tz = timezone(timedelta(hours=9))
@@ -785,7 +804,23 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
                     "params": {"expression": expr}
                 }
 
-    # 4. Deteksi Waktu / Jam / Tanggal
+    # 4. Deteksi Waktu / Jam / Kalender (Real-Time Intel Multibahasa)
+    try:
+        from shiro.web.realtime_intel import classify_intent
+        intel_res = classify_intent(text)
+        if intel_res.kind == "time":
+            return {
+                "intent": "time",
+                "params": {}
+            }
+        elif intel_res.kind == "search":
+            return {
+                "intent": "search",
+                "params": {"query": text.strip()}
+            }
+    except Exception:
+        pass
+
     time_triggers = ["jam berapa", "tanggal berapa", "hari apa sekarang", "waktu sekarang", "sekarang jam", "hari ini tanggal"]
     if any(tt in text_lower for tt in time_triggers):
         return {
@@ -793,7 +828,7 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
             "params": {}
         }
 
-    # 5. Deteksi Pencarian Web / Google
+    # 5. Deteksi Pencarian Web / Google (Fallback eksplisit)
     search_triggers = [
         "cari di web", "cari di google", "googling", "search", "cari info",
         "cari informasi", "browsing", "berita tentang", "cek di internet",

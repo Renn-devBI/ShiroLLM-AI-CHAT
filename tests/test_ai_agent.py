@@ -110,5 +110,13 @@ class TestShiroAIAgent(unittest.TestCase):
         res = take_web_screenshot("")
         self.assertFalse(res["success"])
 
+    def test_detect_agent_intent_natural_time_and_search(self):
+        """Deteksi intent waktu dan pencarian web alami tanpa kata kunci kaku"""
+        intent_time = detect_agent_intent("tolong cari tahu saat ini hari apa")
+        self.assertEqual(intent_time["intent"], "time")
+
+        intent_search = detect_agent_intent("anime populer tahun ini apa")
+        self.assertEqual(intent_search["intent"], "search")
+
 if __name__ == "__main__":
     unittest.main()

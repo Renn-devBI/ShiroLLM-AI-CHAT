@@ -132,12 +132,33 @@ def _prepare_inference_payload(
                     obs_summary = w_res.get("summary", "")
                     structured_obs = w_res.get("data")
                 elif agent_intent == "search":
-                    tool_name = "google_web_search"
+                    tool_name = "multi_source_web_research"
                     q = agent_params.get("query", raw_user_typed)
-                    tool_desc = f"Membuka browser Mozilla & mencari di Google/Web via Cloudflare 1.1.1.1: '{q}'"
-                    s_res = search_google_web(q)
-                    obs_summary = s_res.get("summary", "")
-                    structured_obs = s_res.get("results")
+                    tool_desc = f"Riset multi-sumber adaptif & verifikasi silang: '{q}'"
+                    try:
+                        from shiro.web.realtime_intel import research, wrap_search_fn, default_fetcher
+                        res_intel = research(
+                            user_query=q,
+                            search_fn=wrap_search_fn(search_google_web),
+                            fetch_fn=default_fetcher
+                        )
+                        obs_summary = res_intel.summary_text
+                        structured_obs = {
+                            "topic": res_intel.topic,
+                            "confidence": res_intel.confidence,
+                            "independent_sources": res_intel.independent_sources_count,
+                            "verified_facts": [
+                                {"claim": f.claim, "status": f.status, "sources": f.supporting_sources}
+                                for f in res_intel.verified_facts
+                            ],
+                            "storable_facts": res_intel.storable_facts()
+                        }
+                        web_prompt_addon = f"\n\n{res_intel.prompt_block}\n"
+                    except Exception as e_intel:
+                        print(f"[Research Error Fallback]: {e_intel}")
+                        s_res = search_google_web(q)
+                        obs_summary = s_res.get("summary", "")
+                        structured_obs = s_res.get("results")
                 elif agent_intent == "browse":
                     tool_name = "web_browser_reader"
                     target_url = agent_params.get("url", "")
@@ -420,14 +441,21 @@ def _prepare_inference_payload(
             f"- DILARANG KERAS mengaitkan atau berasumsi bahwa gambar baru ini adalah situs web, link, atau halaman dari percakapan masa lalu jika tidak disebutkan secara eksplisit oleh {user_name}.\n"
         )
 
+    time_ctx_addon = ""
+    try:
+        from shiro.web.realtime_intel import time_prompt_block
+        time_ctx_addon = f"\n\n{time_prompt_block()}\n"
+    except Exception:
+        pass
+
     if api_version == "v2":
         system_prompt = build_vtuber_system_prompt(
             owner_name=user_name,
             custom_instruction=custom_persona
-        ) + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
+        ) + tools_addon + reasoning_addon + time_ctx_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
     elif api_version == "v3":
         base_p = custom_system_prompt or custom_persona or ""
-        system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
+        system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + time_ctx_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
     else:
         system_prompt = build_system_prompt(
             home_location=getattr(state, "home_location", "Pondok Kayu"),
@@ -442,7 +470,7 @@ def _prepare_inference_payload(
             custom_persona=custom_persona,
             user_name=user_name,
             user_context=user_context
-        ) + tools_addon + reasoning_addon + visual_guidance_addon
+        ) + tools_addon + reasoning_addon + time_ctx_addon + visual_guidance_addon
 
     visual_evidence_text = ""
     has_vision_handler = bool(
@@ -779,14 +807,29 @@ def _finalize_inference_output(
     if memory and agent_action_data and agent_action_data.get("observation"):
         try:
             from shiro.web.reader import integrate_web_knowledge
-            integrate_web_knowledge(
-                memory,
-                user_input=raw_user_typed,
-                assistant_reply=cleaned_reply,
-                web_title=agent_action_data.get("tool", "AI Agent"),
-                url_or_query=agent_action_data.get("description", ""),
-                web_content=agent_action_data.get("observation", "")
-            )
+            storable_facts = []
+            if isinstance(agent_action_data.get("details"), dict):
+                storable_facts = agent_action_data["details"].get("storable_facts", [])
+
+            if storable_facts:
+                for sf in storable_facts:
+                    integrate_web_knowledge(
+                        memory,
+                        user_input=raw_user_typed,
+                        assistant_reply=cleaned_reply,
+                        web_title=sf.get("subject", "Fakta Riset"),
+                        url_or_query=", ".join(sf.get("sources", []))[:100],
+                        web_content=sf.get("object", "")
+                    )
+            elif agent_action_data.get("tool") != "multi_source_web_research":
+                integrate_web_knowledge(
+                    memory,
+                    user_input=raw_user_typed,
+                    assistant_reply=cleaned_reply,
+                    web_title=agent_action_data.get("tool", "AI Agent"),
+                    url_or_query=agent_action_data.get("description", ""),
+                    web_content=agent_action_data.get("observation", "")
+                )
         except Exception as e_web_save:
             print(f"[Inference] Warning integrating web knowledge: {e_web_save}")
     elif memory and web_data:

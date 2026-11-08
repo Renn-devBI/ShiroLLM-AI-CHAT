@@ -100,6 +100,20 @@ def detect_web_intent(text: str) -> Dict[str, Any]:
                         "urls": [],
                         "query": query
                     }
+
+    # Klasifikasi intent pencarian semantik (tanpa kata kunci kaku)
+    try:
+        from shiro.web.realtime_intel import classify_intent
+        intel = classify_intent(text)
+        if intel.kind == "search":
+            return {
+                "type": "search",
+                "urls": [],
+                "query": text.strip()
+            }
+    except Exception:
+        pass
+
     return {
         "type": "none",
         "urls": [],
