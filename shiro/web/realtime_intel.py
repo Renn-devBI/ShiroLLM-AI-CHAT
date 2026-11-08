@@ -168,7 +168,8 @@ register_language(LanguageLexicon(
     temporal_words=[
         "tahun ini", "saat ini", "sekarang", "hari ini", "bulan ini", "minggu ini",
         "musim ini", "terbaru", "terkini", "update", "kemarin", "baru rilis",
-        "mendatang", "besok", "lusa", "jadwal rilis"
+        "mendatang", "besok", "lusa", "jadwal rilis", "jadwal tayang", "lagi tayang",
+        "sedang tayang", "tayang hari ini", "tayang", "on-going", "ongoing", "airing"
     ],
     trend_words=[
         "populer", "trending", "viral", "terbaik", "top", "rekomendasi",
@@ -178,7 +179,9 @@ register_language(LanguageLexicon(
     inquiry_words=[
         "cari tahu", "carikan", "cariin", "tolong cek", "coba cek", "lihatin",
         "info tentang", "informasi tentang", "berita", "artikel", "kabar",
-        "ada info", "apakah sudah rilis", "kapan rilis"
+        "ada info", "apakah sudah rilis", "kapan rilis", "apa saja", "apa aja",
+        "ada apa saja", "ada apa aja", "daftar", "list", "sebutkan", "apa yang",
+        "mana saja", "mana aja"
     ],
     officeholder_words=[
         "siapa presiden", "siapa wakil presiden", "siapa menteri", "siapa ceo",
@@ -196,7 +199,7 @@ register_language(LanguageLexicon(
         r"hari\s+apa\s+(?:saat ini|sekarang|hari ini)",
         r"tanggal\s+berapa\s+(?:saat ini|sekarang|hari ini)"
     ],
-    fillers=["tolong", "coba", "dong", "sih", "ya", "kak", "shiro", "dek", "mohon"],
+    fillers=["tolong", "coba", "dong", "sih", "ya", "kak", "shiro", "dek", "mohon", "apa saja", "apa aja"],
     year_markers=["tahun ini", "saat ini"]
 ))
 
@@ -470,6 +473,34 @@ def classify_intent(text: str) -> IntentResult:
             reasons.append(f"Perintah eksplisit: {cmd}")
             break
 
+    # Sinyal spesifik web / situs / platform konten
+    site_triggers = [
+        "otakudesu", "samehadaku", "anoboy", "komikcast", "myanimelist", "mal", "anilist",
+        "netflix", "iqiyi", "bilibili", "bstation", "crunchyroll", "wikipedia", "youtube",
+        "detik", "kompas", "cnn", "kumparan", "tirto", "github", "reddit", "twitter"
+    ]
+    for st in site_triggers:
+        if st in lower:
+            score += 2.5
+            reasons.append(f"Penyebutan platform/situs: '{st}'")
+            break
+
+    web_mention = re.search(r'\b(?:di\s+)?(?:web|situs|website)\s+([a-zA-Z0-9\-_]+)', lower)
+    if web_mention and not any(st in lower for st in site_triggers):
+        score += 2.0
+        reasons.append(f"Penyebutan web: '{web_mention.group(0)}'")
+
+    # Sinyal domain konten & media
+    content_domain_words = [
+        "anime", "manga", "film", "movie", "bioskop", "drakor", "drama", "series",
+        "game", "lagu", "musik", "jadwal", "episode", "chapter", "komik"
+    ]
+    for cw in content_domain_words:
+        if cw in lower:
+            score += 1.5
+            reasons.append(f"Topik Konten: '{cw}'")
+            break
+
     # Cek leksikon temporal, tren, inkuiri, pemegang jabatan
     found_temporal = False
     found_trend = False
@@ -577,6 +608,14 @@ def build_queries(
     yr = current_year or datetime.now().year
 
     clean = user_input.strip()
+
+    # Hapus awalan percakapan transisi / reset (misal: "oke lupakan", "lupakan", "abaikan", "skip", "btw")
+    clean = re.sub(
+        r'^(?:oke\s+)?(?:lupakan(?:\s+(?:yang\s+)?tadi)?|abaikan|skip|ganti\s+topik|ngomong-ngomong|btw|by\s+the\s+way)\s*[,.:;!-]?\s*',
+        '',
+        clean,
+        flags=re.IGNORECASE
+    ).strip()
 
     # Hapus awalan perintah cari eksplisit jika ada
     clean = re.sub(

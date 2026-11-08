@@ -206,7 +206,7 @@ def search_google_web(query: str, max_results: int = 5) -> Dict[str, Any]:
 
     # 1. Bing HTML Search
     try:
-        bing_url = f"https://www.bing.com/search?q={urllib.parse.quote(clean_q)}"
+        bing_url = f"https://www.bing.com/search?q={urllib.parse.quote(clean_q)}&setlang=id-id&cc=ID"
         resp = session.get(bing_url, timeout=7)
         if resp.status_code == 200 and BeautifulSoup:
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -218,7 +218,7 @@ def search_google_web(query: str, max_results: int = 5) -> Dict[str, Any]:
                     title = title_elem.text.strip()
                     link = title_elem.get("href", "")
                     snippet = snippet_elem.text.strip() if snippet_elem else ""
-                    if title and link:
+                    if title and link and not any(bad in link.lower() for bad in ["scholar.google", "pinkbike"]):
                         results.append({
                             "title": title,
                             "url": link,
@@ -228,27 +228,28 @@ def search_google_web(query: str, max_results: int = 5) -> Dict[str, Any]:
     except Exception as e_bing:
         pass
 
-    # 2. Google News RSS Search jika berita / topik terkini
-    if len(results) < 3:
-        try:
-            news_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(clean_q)}&hl=id&gl=ID&ceid=ID:id"
-            resp_news = session.get(news_url, timeout=6)
-            if resp_news.status_code == 200 and BeautifulSoup:
-                soup_news = BeautifulSoup(resp_news.text, "xml")
-                items = soup_news.find_all("item")
-                for it in items[:(max_results - len(results))]:
-                    t = it.title.text.strip() if it.title else ""
-                    l = it.link.text.strip() if it.link else ""
-                    pub = it.pubDate.text.strip() if it.pubDate else ""
-                    if t and l:
-                        results.append({
-                            "title": t,
-                            "url": l,
-                            "snippet": f"Publikasi: {pub}",
-                            "source": "Google News"
-                        })
-        except Exception:
-            pass
+    # 2. Google News RSS Search untuk informasi real-time dan jadwal rilis
+    try:
+        news_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(clean_q)}&hl=id&gl=ID&ceid=ID:id"
+        resp_news = session.get(news_url, timeout=6)
+        if resp_news.status_code == 200 and BeautifulSoup:
+            soup_news = BeautifulSoup(resp_news.text, "xml")
+            items = soup_news.find_all("item")
+            for it in items:
+                if len(results) >= (max_results * 2):
+                    break
+                t = it.title.text.strip() if it.title else ""
+                l = it.link.text.strip() if it.link else ""
+                pub = it.pubDate.text.strip() if it.pubDate else ""
+                if t and l and not any(r["url"] == l for r in results):
+                    results.append({
+                        "title": t,
+                        "url": l,
+                        "snippet": f"Publikasi: {pub}",
+                        "source": "Google News"
+                    })
+    except Exception:
+        pass
 
     # 3. Wikipedia API Search sebagai fallback fakta ensiklopedis
     if not results:

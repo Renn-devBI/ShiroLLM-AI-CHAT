@@ -54,6 +54,8 @@ class TestRealtimeIntelV2(unittest.TestCase):
         test_cases = [
             ("id", "anime populer tahun ini apa", "search"),
             ("id", "tolong cari tahu saat ini hari apa", "time"),
+            ("id", "oke lupakan anime hari ini yang tayang di web otakudesu apa saja", "search"),
+            ("id", "oke yang lagi tayang musim ini anime apa saja", "search"),
             ("en", "what are the most popular anime this year", "search"),
             ("en", "what day is it today", "time"),
             ("ja", "今年の人気アニメは何ですか", "search"),
