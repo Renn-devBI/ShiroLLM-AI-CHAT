@@ -391,6 +391,159 @@ class TestLyraAliasAndTiers(unittest.TestCase):
         self.assertTrue(len(token_events) > 0)
         self.assertTrue(token_events[0].strip(), f"Token pertama tidak boleh hanya spasi kosong: {token_events!r}")
 
+    def test_a100_40gb_uses_fast_q8_kv_cache_and_tuned_batch(self):
+        """Pada A100 40GB, tier Low/Medium/High memakai KV Q8_0 (bukan Q4_0 yang lambat) serta n_batch=2048 & n_ubatch=512."""
+        calls = []
+
+        def fake_llama(**kwargs):
+            calls.append(kwargs)
+            m = MagicMock()
+            m.n_ctx = lambda: kwargs["n_ctx"]
+            return m
+
+        fake_mod = types.ModuleType("llama_cpp")
+        fake_mod.Llama = fake_llama
+        fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_Q8_0 = 8
+        fake_mod.GGML_TYPE_Q4_0 = 2
+
+        expected_a100 = [
+            ("low", 190000, 8),
+            ("medium", 262144, 8),
+            ("high", 500000, 8),
+            ("extra_high", 700000, 2),
+            ("ultra_high", 1000000, 2),
+        ]
+        with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch("shiro.models.init_vision_handler", return_value=None), \
+             patch("shiro.models.find_active_lora_path", return_value=None), \
+             patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=40.0):
+            for tier_id, expected_ctx, expected_kv in expected_a100:
+                llm, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=expected_ctx)
+                kw = calls[-1]
+                self.assertEqual(kw["type_k"], expected_kv)
+                self.assertEqual(kw["type_v"], expected_kv)
+                self.assertEqual(kw["n_batch"], 2048)
+                self.assertEqual(kw["n_ubatch"], 512)
+                self.assertEqual(llm._shiro_kv_type, "q8_0" if expected_kv == 8 else "q4_0")
+
+    def test_fast_chatml_prompt_and_zero_think_prefill(self):
+        """_format_chatml_prompt menutup <think> kosong secara eksplisit saat disable_thinking=True."""
+        from shiro.pipeline.inference import _format_chatml_prompt
+
+        msgs = [
+            {"role": "system", "content": "Kamu adalah Shiro."},
+            {"role": "user", "content": "Halo!"},
+        ]
+        p_fast = _format_chatml_prompt(msgs, disable_thinking=True)
+        self.assertIn("<|im_start|>system\nKamu adalah Shiro.<|im_end|>\n", p_fast)
+        self.assertTrue(p_fast.endswith("<|im_start|>assistant\n<think>\n\n</think>\n"))
+
+        p_think = _format_chatml_prompt(msgs, disable_thinking=False)
+        self.assertTrue(p_think.endswith("<|im_start|>assistant\n"))
+        self.assertNotIn("<think>", p_think)
+
+    def test_fast_text_path_bypasses_vision_handler_and_reuses_kv_cache(self):
+        """Giliran teks murni memanggil create_completion (KV cache tetap utuh), giliran gambar memanggil create_chat_completion, dan reset hanya saat transisi gambar->teks."""
+        from shiro.pipeline.inference import stream_shiro_reply
+
+        class NativeSimulatedLlama:
+            model_path = LYRA_REAL_PATH
+            _shiro_fast_chatml = True
+
+            def __init__(self):
+                self.completion_calls = []
+                self.chat_calls = []
+                self.reset_count = 0
+
+            def n_ctx(self):
+                return 500000
+
+            def reset(self):
+                self.reset_count += 1
+
+            def create_completion(self, prompt, stream=False, **kwargs):
+                self.completion_calls.append({"prompt": prompt, "kwargs": kwargs})
+                def _gen():
+                    yield {"choices": [{"text": "Halo "}]}
+                    yield {"choices": [{"text": "Kakak!"}]}
+                return _gen() if stream else {"choices": [{"text": "Halo Kakak!", "finish_reason": "stop"}]}
+
+            def create_chat_completion(self, messages, stream=False, **kwargs):
+                self.chat_calls.append({"messages": messages, "kwargs": kwargs})
+                def _gen():
+                    yield {"choices": [{"delta": {"content": "Gambar terlihat jelas!"}}]}
+                return _gen() if stream else {"choices": [{"message": {"content": "Gambar terlihat jelas!"}, "finish_reason": "stop"}]}
+
+        sim = NativeSimulatedLlama()
+        state.set_llm(sim, MagicMock())
+
+        with patch("shiro.models.get_gpu_layers", return_value=-1):
+            # Turn 1: teks murni di mode Low -> pakai fast create_completion + zero-think prefill, tanpa reset()
+            evs1 = list(stream_shiro_reply("hai shiro", lyra_tier="low"))
+            self.assertEqual(len(sim.completion_calls), 1)
+            self.assertEqual(len(sim.chat_calls), 0)
+            self.assertEqual(sim.reset_count, 0)
+            self.assertTrue(sim.completion_calls[0]["prompt"].endswith("<|im_start|>assistant\n<think>\n\n</think>\n"))
+            self.assertTrue(any(e.get("type") == "done" for e in evs1))
+
+            # Turn 2: teks murni berturut-turut -> tetap tanpa reset() (KV prefix cache aktif)
+            list(stream_shiro_reply("apa kabar?", lyra_tier="low"))
+            self.assertEqual(len(sim.completion_calls), 2)
+            self.assertEqual(sim.reset_count, 0)
+
+            # Turn 3: giliran dengan gambar -> pakai create_chat_completion (Qwen25VLChatHandler)
+            tiny_img = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            list(stream_shiro_reply("lihat gambar ini", image_base64=tiny_img, lyra_tier="low"))
+            self.assertEqual(len(sim.chat_calls), 1)
+            self.assertTrue(state.last_turn_had_image)
+
+            # Turn 4: kembali ke teks murni -> reset() sekali lalu lanjut create_completion
+            list(stream_shiro_reply("terima kasih", lyra_tier="low"))
+            self.assertEqual(len(sim.completion_calls), 3)
+            self.assertEqual(sim.reset_count, 1)
+            self.assertFalse(state.last_turn_had_image)
+
+    def test_needs_lyra_ctx_reload_avoids_downscale_stall(self):
+        """Beralih dari High (500K Q8_0) ke Low (190K) TIDAK me-reload model 16.8 GB saat kirim pesan."""
+        fake_cur = MagicMock()
+        fake_cur.model_path = LYRA_REAL_PATH
+        fake_cur.n_ctx = lambda: 500000
+        fake_cur._shiro_kv_type = "q8_0"
+        state.llm = fake_cur
+
+        with patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models.instantiate_llama_model") as mock_inst, \
+             patch("shiro.routes.chat.stream_shiro_reply", return_value=iter([{"type": "done", "reply": "Siap Kakak!"}])):
+            resp = self.client.post("/api/chat", json={"message": "halo", "lyra_tier": "low", "stream": True})
+            self.assertEqual(resp.status_code, 200)
+            _ = resp.data
+            mock_inst.assert_not_called()
+
+    def test_cpu_only_llama_cpp_wheel_guard(self):
+        """Jika llama_supports_gpu_offload() False meski GPU terdeteksi, fallback aman ke mode CPU 32K tanpa crash."""
+        calls = []
+
+        def fake_llama(**kwargs):
+            calls.append(kwargs)
+            m = MagicMock()
+            m.n_ctx = lambda: kwargs["n_ctx"]
+            return m
+
+        fake_mod = types.ModuleType("llama_cpp")
+        fake_mod.Llama = fake_llama
+        fake_mod.llama_supports_gpu_offload = lambda: False
+
+        with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch("shiro.models.init_vision_handler", return_value=None), \
+             patch("shiro.models.find_active_lora_path", return_value=None), \
+             patch("shiro.models.get_gpu_layers", return_value=-1):
+            llm, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=500000)
+            self.assertEqual(calls[-1]["n_gpu_layers"], 0)
+            self.assertEqual(calls[-1]["n_ctx"], sm.QWEN38_27B_CPU_SAFE_CTX)
+            self.assertFalse(llm._shiro_gpu_offload_verified)
+
 
 if __name__ == "__main__":
     unittest.main()

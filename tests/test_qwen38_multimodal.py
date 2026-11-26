@@ -160,7 +160,27 @@ class TestQwen38NativeMultimodal(unittest.TestCase):
              patch("shiro.models._get_gpu_vram_gb", return_value=40.0):
             llm, _ = instantiate_llama_model("model/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf")
             self.assertEqual(llm.n_ctx(), 262144)
-            self.assertEqual(attempted_ctx, [(500000, True), (262144, False)])
+            # Di A100 40GB, sistem mencoba 500K Q8_0 dulu, lalu 500K Q4_0, lalu step-down ke 262K tanpa YaRN
+            self.assertEqual(attempted_ctx, [(500000, True), (500000, True), (262144, False)])
+
+        attempted_ctx_16g = []
+        def fake_llama_oom_16g(**kwargs):
+            attempted_ctx_16g.append((kwargs["n_ctx"], "rope_scaling_type" in kwargs))
+            if kwargs["n_ctx"] > 262144:
+                raise RuntimeError("CUDA out of memory")
+            m = MagicMock()
+            m.n_ctx = lambda: kwargs["n_ctx"]
+            return m
+
+        fake_mod.Llama = fake_llama_oom_16g
+        with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch("shiro.models.init_vision_handler", return_value=None), \
+             patch("shiro.models.find_active_lora_path", return_value=None), \
+             patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=16.0):
+            llm_16g, _ = instantiate_llama_model("model/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf")
+            self.assertEqual(llm_16g.n_ctx(), 262144)
+            self.assertEqual(attempted_ctx_16g, [(500000, True), (262144, False)])
 
 if __name__ == '__main__':
     unittest.main()

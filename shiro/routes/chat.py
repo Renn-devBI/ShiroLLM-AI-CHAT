@@ -296,14 +296,24 @@ def chat():
         # 2. NON-STREAMING FALLBACK (Jika client eksplisit meminta stream: false)
         agent_route = should_route_to_local_agent(user_message, has_image=bool(image_base64))
 
+        def _needs_lyra_ctx_reload(llm_inst, target_ctx: int) -> bool:
+            if llm_inst is None:
+                return False
+            active_ctx = get_active_model_ctx(llm_inst)
+            if active_ctx + 1024 < target_ctx:
+                return True
+            if active_ctx > 524288 and target_ctx <= 500000 and getattr(llm_inst, "_shiro_kv_type", None) == "q4_0":
+                return True
+            return False
+
         def _ensure_lyra_tier_loaded():
             if not (lyra_tier_obj and state.llm is not None and get_gpu_layers() != 0):
                 return
             target_ctx = lyra_tier_obj["tokens"]
-            if abs(get_active_model_ctx(state.llm) - target_ctx) <= 1024:
+            if not _needs_lyra_ctx_reload(state.llm, target_ctx):
                 return
             with state.llm_lock:
-                if state.llm is None or abs(get_active_model_ctx(state.llm) - target_ctx) <= 1024:
+                if not _needs_lyra_ctx_reload(state.llm, target_ctx):
                     return
                 old_llm = state.llm
                 old_vis = state.vision_chat_handler
@@ -444,11 +454,16 @@ def chat():
                     and lyra_tier_obj
                     and state.llm is not None
                     and get_gpu_layers() != 0
-                    and abs(get_active_model_ctx(state.llm) - lyra_tier_obj["tokens"]) > 1024
+                    and _needs_lyra_ctx_reload(state.llm, lyra_tier_obj["tokens"])
                 ):
                     import threading
                     tier_prep_label = lyra_tier_obj["label"]
-                    yield f"data: {py_json.dumps({'type': 'status', 'status': f'Menyiapkan {tier_prep_label}...'})}\n\n"
+                    prep_msg = (
+                        f"Memperluas kapasitas konteks {tier_prep_label}..."
+                        if get_active_model_ctx(state.llm) + 1024 < lyra_tier_obj["tokens"]
+                        else f"Mengoptimalkan {tier_prep_label}..."
+                    )
+                    yield f"data: {py_json.dumps({'type': 'status', 'status': prep_msg})}\n\n"
                     yield ": ping\n\n"
                     reload_thread = threading.Thread(target=_ensure_lyra_tier_loaded, daemon=True)
                     reload_thread.start()

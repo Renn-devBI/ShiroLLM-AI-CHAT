@@ -16,6 +16,7 @@ class ServerRuntimeState:
         self.memory: Optional[Any] = None
         self.web_reader: Optional[Any] = None
         self.serial_questions: int = 0
+        self.last_turn_had_image: bool = False
         # Global lock untuk menserialisasi seluruh operasi llama.cpp (inferensi, vision, switch model)
         # Mencegah race condition C++ (GGML_ASSERT / SIGABRT) akibat akses paralel ke llama_context
         self.llm_lock = threading.Lock()
@@ -45,6 +46,7 @@ class ServerRuntimeState:
         """Memperbarui LLM instance aktif dan vision handler"""
         self.llm = llm_instance
         self.vision_chat_handler = vision_handler
+        self.last_turn_had_image = False
 
 # Singleton instance
 state = ServerRuntimeState()

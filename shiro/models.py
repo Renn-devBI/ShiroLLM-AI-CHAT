@@ -209,6 +209,23 @@ def _has_cuda_gpu() -> bool:
     return False
 
 
+def check_llama_cpp_gpu_offload(llama_cpp_mod: Any = None) -> Optional[bool]:
+    """Memeriksa apakah biner llama-cpp-python benar-benar terkompilasi dengan dukungan offload GPU/CUDA."""
+    mod = llama_cpp_mod
+    if mod is None:
+        try:
+            import llama_cpp as mod
+        except Exception:
+            return None
+    fn = getattr(mod, "llama_supports_gpu_offload", None)
+    if callable(fn):
+        try:
+            return bool(fn())
+        except Exception:
+            return None
+    return None
+
+
 def _get_gpu_vram_gb() -> Optional[float]:
     """Mengambil kapasitas VRAM GPU pertama dalam GB jika CUDA tersedia."""
     try:
@@ -272,7 +289,9 @@ def build_qwen38_500k_llama_kwargs(
                 kv_mode = "q4_0"
             else:
                 vram_gb = _get_gpu_vram_gb()
-                if vram_gb is not None and vram_gb >= 70.0:
+                if vram_gb is not None and vram_gb >= 35.0:
+                    kv_mode = "q8_0"
+                elif vram_gb is not None and vram_gb >= 22.0 and chosen_ctx <= 262144:
                     kv_mode = "q8_0"
                 else:
                     kv_mode = "q4_0"
@@ -669,7 +688,10 @@ def init_vision_handler(model_path: str):
         try:
             from llama_cpp.llama_chat_format import Qwen25VLChatHandler
             if mmproj_file:
-                vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file)
+                try:
+                    vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file, verbose=False)
+                except TypeError:
+                    vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file)
                 print(f"👁️ Vision Chat Handler (Qwen25VL) aktif dengan projector: {mmproj_file}")
                 return vision_chat_handler
         except Exception as e1:
@@ -679,7 +701,10 @@ def init_vision_handler(model_path: str):
     if mmproj_file:
         try:
             from llama_cpp.llama_chat_format import Llava15ChatHandler
-            vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file)
+            try:
+                vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file, verbose=False)
+            except TypeError:
+                vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file)
             print(f"👁️ Vision Chat Handler (Llava15) aktif dengan projector: {mmproj_file}")
             return vision_chat_handler
         except Exception as e2:
@@ -905,12 +930,25 @@ def instantiate_llama_model(
         chosen_ctx = optimal_ctx
 
     n_threads = get_optimal_n_threads(gpu_layers)
+    gpu_offload_ok = check_llama_cpp_gpu_offload(llama_cpp)
+    if is_gpu and gpu_offload_ok is False:
+        safe_print(
+            "⚠️ [CRITICAL] GPU CUDA terdeteksi, tetapi llama-cpp-python terkompilasi CPU-ONLY "
+            "(llama_supports_gpu_offload=False)! Jalankan ulang Langkah 3 di Colab dengan CMAKE_ARGS=\"-DGGML_CUDA=on\"."
+        )
+        is_gpu = False
+        gpu_layers = 0
+        if is_qwen38_unc:
+            chosen_ctx = min(chosen_ctx, QWEN38_27B_CPU_SAFE_CTX)
+        n_threads = get_optimal_n_threads(gpu_layers)
+
     llama_kwargs = {
         "model_path": model_path,
         "n_ctx": chosen_ctx,
         "n_threads": n_threads,
         "n_gpu_layers": gpu_layers,
-        "n_batch": 1024 if is_gpu else 512,
+        "n_batch": 2048 if is_gpu else 512,
+        "n_ubatch": 512 if is_gpu else 256,
         "verbose": False,
     }
     orig_ctx = QWEN38_27B_NATIVE_CTX
@@ -923,15 +961,19 @@ def instantiate_llama_model(
         )
         orig_ctx = qwen_extra.get("yarn_orig_ctx", get_model_native_context_length(model_path, default=QWEN38_27B_NATIVE_CTX))
         llama_kwargs.update(qwen_extra)
+        q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
+        q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
+        tk_init = qwen_extra.get("type_k")
+        kv_lbl = "q8_0" if tk_init == q8_val else ("q4_0" if tk_init == q4_val else "f16")
         if is_gpu and chosen_ctx > orig_ctx:
             safe_print(
                 f"🚀 [{LYRA_DISPLAY_NAME}] Extended Context aktif: {chosen_ctx:,} tokens "
-                f"(YaRN dari {orig_ctx:,}, flash_attn={qwen_extra.get('flash_attn', False)})"
+                f"(YaRN dari {orig_ctx:,}, flash_attn={qwen_extra.get('flash_attn', False)}, kv={kv_lbl}, n_batch={llama_kwargs['n_batch']}, n_ubatch={llama_kwargs['n_ubatch']})"
             )
         elif is_gpu:
             safe_print(
                 f"🚀 [{LYRA_DISPLAY_NAME}] Context aktif: {chosen_ctx:,} tokens "
-                f"(flash_attn={qwen_extra.get('flash_attn', False)})"
+                f"(flash_attn={qwen_extra.get('flash_attn', False)}, kv={kv_lbl}, n_batch={llama_kwargs['n_batch']}, n_ubatch={llama_kwargs['n_ubatch']})"
             )
         elif not is_gpu:
             safe_print(
@@ -954,10 +996,16 @@ def instantiate_llama_model(
         try:
             return Llama(**kwargs_dict)
         except TypeError as te:
-            # Fallback jika versi llama-cpp-python lama belum mendukung type_k/type_v/flash_attn
-            stripped = {k: v for k, v in kwargs_dict.items() if k not in ("type_k", "type_v", "flash_attn")}
+            # Fallback jika versi llama-cpp-python lama belum mendukung n_ubatch / type_k / type_v / flash_attn
+            if "n_ubatch" in kwargs_dict and "n_ubatch" in str(te):
+                without_ubatch = {k: v for k, v in kwargs_dict.items() if k != "n_ubatch"}
+                try:
+                    return Llama(**without_ubatch)
+                except TypeError:
+                    pass
+            stripped = {k: v for k, v in kwargs_dict.items() if k not in ("type_k", "type_v", "flash_attn", "n_ubatch")}
             if len(stripped) < len(kwargs_dict):
-                safe_print(f"⚠️ Runtime llama-cpp tidak mendukung parameter KV/flash_attn ({te}), mencoba tanpa parameter tersebut...")
+                safe_print(f"⚠️ Runtime llama-cpp tidak mendukung parameter KV/flash_attn/ubatch ({te}), mencoba tanpa parameter tersebut...")
                 return Llama(**stripped)
             raise
 
@@ -987,6 +1035,7 @@ def instantiate_llama_model(
                     err = e_vis
             return None, err
 
+    final_kwargs = llama_kwargs
     llm, load_err = _load_with_lora_and_vision_fallback(llama_kwargs)
 
     if load_err is not None and is_qwen38_unc:
@@ -1000,6 +1049,7 @@ def instantiate_llama_model(
             llm, load_err = _load_with_lora_and_vision_fallback(q4_kwargs)
             if llm is not None:
                 llama_kwargs = q4_kwargs
+                final_kwargs = q4_kwargs
 
         if load_err is not None and chosen_ctx > 32768:
             yarn_keys = (
@@ -1020,10 +1070,26 @@ def instantiate_llama_model(
                     step_kwargs.update(build_qwen38_500k_llama_kwargs(model_path, step_ctx, llama_cpp_mod=llama_cpp, kv_cache_override="q4_0", use_gpu=is_gpu))
                 llm, load_err = _load_with_lora_and_vision_fallback(step_kwargs)
                 if llm is not None:
+                    final_kwargs = step_kwargs
                     break
 
     if load_err is not None:
         raise load_err
+
+    try:
+        q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
+        q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
+        tk = final_kwargs.get("type_k")
+        llm._shiro_kv_type = "q8_0" if tk == q8_val else ("q4_0" if tk == q4_val else "f16")
+        llm._shiro_fast_chatml = bool(
+            detect_chat_format(model_path) == "chatml"
+            and hasattr(llm, "create_completion")
+            and callable(llm.create_completion)
+            and type(llm).__module__.startswith("llama_cpp")
+        )
+        llm._shiro_gpu_offload_verified = gpu_offload_ok
+    except Exception:
+        pass
 
     return llm, vision_handler
 

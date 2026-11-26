@@ -1740,18 +1740,25 @@ async function sendMessage() {
 
     let typingProgressInterval = null;
     let elapsedSec = 0;
+    let serverStatusReceived = false;
     typingProgressInterval = setInterval(() => {
         elapsedSec++;
         if (!isGenerating) {
             clearInterval(typingProgressInterval);
             return;
         }
+        if (serverStatusReceived) return;
+        let nextMsg = null;
         if (elapsedSec === 4) {
-            updateTypingStatus(t('status_processing') || 'Shiro sedang menganalisis pesan...');
+            nextMsg = t('status_processing') || 'Shiro sedang menganalisis pesan...';
         } else if (elapsedSec === 8) {
-            updateTypingStatus('Shiro sedang menyusun jawaban...');
+            nextMsg = 'Shiro sedang menyusun jawaban...';
         } else if (elapsedSec === 15) {
-            updateTypingStatus('Sedang memproses instruksi mendalam...');
+            nextMsg = 'Sedang memproses instruksi mendalam...';
+        }
+        if (nextMsg) {
+            updateTypingStatus(nextMsg);
+            if (status) status.textContent = nextMsg;
         }
     }, 1000);
 
@@ -1924,8 +1931,9 @@ async function sendMessage() {
                                 }
                             } else if (evData.type === 'status') {
                                 if (evData.status) {
+                                    serverStatusReceived = true;
                                     updateTypingStatus(evData.status);
-                                    status.textContent = evData.status;
+                                    if (status) status.textContent = evData.status;
                                 }
                             } else if (evData.type === 'agent_plan') {
                                 lastAgentTaskId = evData.task_id;
@@ -3885,7 +3893,7 @@ function handleLongPaste(text) {
 
     status.textContent = `Teks ${text.length.toLocaleString()} karakter otomatis dijadikan lampiran (${meta.filename}).`;
     setTimeout(() => {
-        if (status.textContent.includes('otomatis dijadikan lampiran')) {
+        if (!isGenerating && status && status.textContent.includes('otomatis dijadikan lampiran')) {
             status.textContent = 'Siap';
         }
     }, 4000);
@@ -4291,7 +4299,9 @@ async function switchModel() {
             
             setTimeout(() => {
                 loadModels();
-                status.textContent = 'Siap';
+                if (!isGenerating && status) {
+                    status.textContent = 'Siap';
+                }
             }, 600);
         } else {
             showToast(`Error: ${data.error}`);

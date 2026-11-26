@@ -166,8 +166,15 @@ if __name__ == '__main__':
         if active_vision:
             print("👁️ Multimodal Vision Mode: AKTIF (Mendukung Kamera Real-Time & Analisis Gambar)")
         gpu_layers = get_gpu_layers()
+        kv_type = getattr(active_llm, "_shiro_kv_type", None)
+        offload_ok = getattr(active_llm, "_shiro_gpu_offload_verified", None)
         if gpu_layers != 0:
-            print(f"🚀 Akselerasi GPU AKTIF (Layers: {gpu_layers})")
+            if offload_ok is False:
+                print("⚠️ PERINGATAN KRITIS: GPU CUDA ada di sistem, tetapi llama-cpp-python berjalan CPU-ONLY!")
+                print("💡 Jalankan ulang Langkah 3 di Colab (install dengan CMAKE_ARGS='-DGGML_CUDA=on') agar respons kilat di GPU.")
+            else:
+                kv_info = f", KV={kv_type}" if kv_type else ""
+                print(f"🚀 Akselerasi GPU AKTIF (Layers: {gpu_layers}{kv_info}, CUDA offload={offload_ok if offload_ok is not None else 'auto'})")
         else:
             print("⚠️ Mode: CPU (Di Colab pastikan Runtime -> Change runtime type -> T4/A100 GPU)")
     except Exception as e:

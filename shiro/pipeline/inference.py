@@ -28,6 +28,7 @@ from shiro.models import (
     resolve_lyra_tier,
     get_saved_lyra_tier,
     is_valid_lyra_tier,
+    detect_chat_format,
 )
 from shiro.persona import (
     build_system_prompt,
@@ -73,6 +74,70 @@ def calculate_messages_tokens(messages: List[Dict[str, Any]], llm_instance: Any)
         s = str(m.get('content', ''))
         total_est += max(len(s.split()), len(s) // 3)
     return total_est
+
+
+def _format_chatml_prompt(messages: List[Dict[str, Any]], disable_thinking: bool = False) -> str:
+    """
+    Merakit prompt ChatML secara langsung (<|im_start|>role\\n...<|im_end|>) untuk inferensi teks cepat
+    tanpa melewati Qwen25VLChatHandler yang mengosongkan KV cache setiap giliran.
+    """
+    parts: List[str] = []
+    for msg in messages:
+        role = str(msg.get("role", "user")).strip() or "user"
+        raw_content = msg.get("content", "")
+        if isinstance(raw_content, list):
+            text_chunks = [
+                str(p.get("text", ""))
+                for p in raw_content
+                if isinstance(p, dict) and p.get("type") == "text"
+            ]
+            text = "\n".join([c for c in text_chunks if c])
+        else:
+            text = str(raw_content or "")
+        parts.append(f"<|im_start|>{role}\n{text}<|im_end|>\n")
+
+    if disable_thinking:
+        parts.append("<|im_start|>assistant\n<think>\n\n</think>\n")
+    else:
+        parts.append("<|im_start|>assistant\n")
+    return "".join(parts)
+
+
+def _should_use_fast_text_completion(
+    llm: Any,
+    has_image: bool,
+    tools: Any,
+    active_model_path: str
+) -> bool:
+    """
+    Menentukan apakah giliran teks murni aman menggunakan llama.create_completion (ChatML native
+    dengan KV prefix caching) agar tidak mereset cache via Qwen25VLChatHandler.
+    """
+    if llm is None or has_image or tools:
+        return False
+    if not (hasattr(llm, "create_completion") and callable(llm.create_completion)):
+        return False
+    if getattr(llm, "_shiro_fast_chatml", None) is True:
+        return True
+    try:
+        mod_name = type(llm).__module__ or ""
+    except Exception:
+        mod_name = ""
+    if mod_name.startswith("llama_cpp"):
+        target_path = active_model_path or getattr(llm, "model_path", "") or ""
+        return detect_chat_format(target_path) == "chatml"
+    return False
+
+
+def _build_completion_kwargs(call_kwargs: Dict[str, Any], stream: bool = False) -> Dict[str, Any]:
+    """Menyaring parameter aman untuk llama.create_completion."""
+    allowed = (
+        "max_tokens", "temperature", "top_p", "top_k",
+        "repeat_penalty", "frequency_penalty", "presence_penalty", "stop"
+    )
+    out = {k: call_kwargs[k] for k in allowed if k in call_kwargs}
+    out["stream"] = stream
+    return out
 
 def _prepare_inference_payload(
     user_input: str,
@@ -370,9 +435,11 @@ def _prepare_inference_payload(
     active_model_path = getattr(llm, 'model_path', '') if hasattr(llm, 'model_path') else ''
     is_lyra_model = is_qwen38_27b_uncensored(active_model_path or active_model_name)
     lyra_tier_info = None
+    effective_ctx = active_ctx
     if is_lyra_model:
         chosen_tier_id = lyra_tier if is_valid_lyra_tier(lyra_tier) else get_saved_lyra_tier()
         lyra_tier_info = resolve_lyra_tier(chosen_tier_id)
+        effective_ctx = min(active_ctx, int(lyra_tier_info["tokens"]))
         max_turns = lyra_tier_info.get("max_history_turns")
         if isinstance(max_turns, int) and max_turns > 0 and len(clean_context) > max_turns:
             clean_context = clean_context[-max_turns:]
@@ -384,7 +451,7 @@ def _prepare_inference_payload(
         _, model_max_out = get_optimal_model_tokens(active_model_path or active_model_name)
     
     reserved_budget = max(4096, min(16384, model_max_out + 512))
-    max_history_tokens = max(1024, active_ctx - reserved_budget)
+    max_history_tokens = max(1024, effective_ctx - reserved_budget)
     while len(clean_context) > 1 and calculate_messages_tokens(clean_context, llm) > max_history_tokens:
         clean_context.pop(0)
 
@@ -438,11 +505,11 @@ def _prepare_inference_payload(
     doc_prompt_addon = ""
     if has_doc and document_info:
         from shiro.document.reader import build_document_prompt
-        if is_qwen38_27b_uncensored(active_model_path or active_model_name) and active_ctx > 65536:
-            doc_token_budget = max(20000, active_ctx - reserved_budget - 4096)
+        if is_qwen38_27b_uncensored(active_model_path or active_model_name) and effective_ctx > 65536:
+            doc_token_budget = max(20000, effective_ctx - reserved_budget - 4096)
             max_doc_chars = min(3_000_000, doc_token_budget * 3)
         else:
-            max_doc_chars = max(10000, min(60000, (active_ctx - 2000) * 3))
+            max_doc_chars = max(10000, min(60000, (effective_ctx - 2000) * 3))
         doc_full_text = document_info.get("text", "")
         if len(doc_full_text) > max_doc_chars:
             doc_full_text = doc_full_text[:max_doc_chars] + f"\n\n... [Sisa teks dokumen dipotong karena melampaui batas {max_doc_chars} karakter]"
@@ -662,7 +729,7 @@ def _prepare_inference_payload(
 
     # Dynamic Token Budget & Context Safety Guard
     prompt_tokens_est = calculate_messages_tokens(msgs, llm)
-    while clean_context and (prompt_tokens_est + 512 > active_ctx):
+    while clean_context and (prompt_tokens_est + 512 > effective_ctx):
         clean_context.pop(0)
         msgs = [{"role": "system", "content": system_prompt}] + clean_context + [user_turn_msg]
         prompt_tokens_est = calculate_messages_tokens(msgs, llm)
@@ -700,7 +767,7 @@ def _prepare_inference_payload(
     else:
         desired_max = max(model_max_out, 8192)
 
-    remaining_space = max(256, active_ctx - prompt_tokens_est - 128)
+    remaining_space = max(256, effective_ctx - prompt_tokens_est - 128)
     max_output_tokens = min(desired_max, remaining_space)
 
     stop_tokens = [
@@ -724,18 +791,28 @@ def _prepare_inference_payload(
     }
 
     call_kwargs = dict(gen_params)
+    disable_thinking = bool(
+        is_lyra_model
+        and not is_reasoning_enabled
+        and api_version != "v3"
+        and lyra_thinking_mode in ("off", "light")
+    )
 
     return {
         "t_start_total": t_start_total,
         "nodes": nodes,
         "llm": llm,
         "active_model_name": active_model_name,
+        "active_model_path": active_model_path,
+        "is_lyra_model": is_lyra_model,
         "lyra_tier_info": lyra_tier_info,
+        "disable_thinking": disable_thinking,
         "raw_user_typed": raw_user_typed,
         "msgs": msgs,
         "call_kwargs": call_kwargs,
         "gen_params": gen_params,
         "active_ctx": active_ctx,
+        "effective_ctx": effective_ctx,
         "user_turn_msg": user_turn_msg,
         "system_prompt": system_prompt,
         "all_images": all_images,
@@ -1046,34 +1123,85 @@ def get_shiro_reply(
             raise RuntimeError("Model LLM belum dimuat di memori server.")
 
         t0 = time.perf_counter()
+        active_model_path = prep.get("active_model_path", "")
+        disable_thinking = bool(prep.get("disable_thinking", False))
+        use_fast_text = _should_use_fast_text_completion(llm, has_image, tools, active_model_path)
+
         with state.llm_lock:
-            try:
-                if tools:
-                    try:
-                        res = llm.create_chat_completion(
-                            messages=msgs,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            **call_kwargs
-                        )
-                    except (TypeError, Exception):
+            res = None
+            if use_fast_text:
+                try:
+                    if state.last_turn_had_image and hasattr(llm, "reset"):
+                        llm.reset()
+                        state.last_turn_had_image = False
+                    prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
+                    comp_res = llm.create_completion(
+                        prompt=prompt_str,
+                        **_build_completion_kwargs(call_kwargs, stream=False)
+                    )
+                    comp_choice = (comp_res.get("choices") or [{}])[0] if isinstance(comp_res, dict) else {}
+                    res = {
+                        "choices": [{
+                            "message": {"content": comp_choice.get("text", "") or ""},
+                            "finish_reason": comp_choice.get("finish_reason", "stop"),
+                        }],
+                        "usage": comp_res.get("usage", {}) if isinstance(comp_res, dict) else {},
+                    }
+                except Exception as e_fast:
+                    err_fast_str = str(e_fast).lower()
+                    if "exceed" in err_fast_str and ("context" in err_fast_str or "token" in err_fast_str or "window" in err_fast_str):
+                        try:
+                            em_prompt = _format_chatml_prompt(
+                                [{"role": "system", "content": system_prompt[:1200]}, user_turn_msg],
+                                disable_thinking=disable_thinking
+                            )
+                            comp_res = llm.create_completion(
+                                prompt=em_prompt,
+                                **_build_completion_kwargs(call_kwargs, stream=False)
+                            )
+                            comp_choice = (comp_res.get("choices") or [{}])[0] if isinstance(comp_res, dict) else {}
+                            res = {
+                                "choices": [{
+                                    "message": {"content": comp_choice.get("text", "") or ""},
+                                    "finish_reason": comp_choice.get("finish_reason", "stop"),
+                                }],
+                                "usage": comp_res.get("usage", {}) if isinstance(comp_res, dict) else {},
+                            }
+                        except Exception:
+                            res = None
+                    if res is None:
+                        print(f"[Inference Fast-Path Fallback]: {e_fast}")
+
+            if res is None:
+                try:
+                    if tools:
+                        try:
+                            res = llm.create_chat_completion(
+                                messages=msgs,
+                                tools=tools,
+                                tool_choice=tool_choice,
+                                **call_kwargs
+                            )
+                        except (TypeError, Exception):
+                            res = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                    else:
                         res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                else:
-                    res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-            except Exception as inf_err:
-                err_str = str(inf_err).lower()
-                if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
-                    emergency_msgs = [{"role": "system", "content": system_prompt[:1200]}]
-                    emergency_msgs.append(user_turn_msg)
-                    res = llm.create_chat_completion(messages=emergency_msgs, **call_kwargs)
-                elif has_image and any(k in err_str for k in ["image", "list", "content", "dict", "str", "iterable"]):
-                    from shiro.vision.bridge import extract_local_image_text_and_info
-                    local_obs = extract_local_image_text_and_info(all_images) or "Gambar visual terlampir"
-                    text_user = f"[Pengamatan Gambar Visual: {local_obs}]\n{raw_user_typed}"
-                    msgs[-1] = {"role": "user", "content": text_user}
-                    res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                else:
-                    raise inf_err
+                    if has_image:
+                        state.last_turn_had_image = True
+                except Exception as inf_err:
+                    err_str = str(inf_err).lower()
+                    if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
+                        emergency_msgs = [{"role": "system", "content": system_prompt[:1200]}]
+                        emergency_msgs.append(user_turn_msg)
+                        res = llm.create_chat_completion(messages=emergency_msgs, **call_kwargs)
+                    elif has_image and any(k in err_str for k in ["image", "list", "content", "dict", "str", "iterable"]):
+                        from shiro.vision.bridge import extract_local_image_text_and_info
+                        local_obs = extract_local_image_text_and_info(all_images) or "Gambar visual terlampir"
+                        text_user = f"[Pengamatan Gambar Visual: {local_obs}]\n{raw_user_typed}"
+                        msgs[-1] = {"role": "user", "content": text_user}
+                        res = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                    else:
+                        raise inf_err
 
             raw_reply = res['choices'][0]['message'].get('content', '') or ''
             raw_reply = raw_reply.strip()
@@ -1103,7 +1231,17 @@ def get_shiro_reply(
                     except Exception as e_retry:
                         print(f"[Grounding Verifier] Regenerasi gagal: {e_retry}")
 
-        t_llm_dur = (time.perf_counter() - t0) * 1000
+        t_end = time.perf_counter()
+        t_llm_dur = (t_end - t0) * 1000
+        tier_lbl_sync = (prep.get("lyra_tier_info") or {}).get("id", "default")
+        path_lbl_sync = "fast_chatml" if use_fast_text else "chat_handler"
+        est_tok_sync = max(1, len(raw_reply) // 4)
+        est_tps_sync = est_tok_sync / max(0.05, t_end - t0)
+        print(
+            f"⚡ [Inference] model={prep.get('active_model_name')} tier={tier_lbl_sync} "
+            f"path={path_lbl_sync} ctx={prep.get('effective_ctx', prep.get('active_ctx')):,} "
+            f"total={round(t_llm_dur)}ms chars={len(raw_reply)} (~{est_tps_sync:.1f} tok/s)"
+        )
         delivery_reply, trace, details = _finalize_inference_output(
             prep=prep,
             raw_reply=raw_reply,
@@ -1272,49 +1410,92 @@ def stream_shiro_reply(
         chunk_queue: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
         cancel_event = threading.Event()
         worker_started = False
+        has_image_turn = bool(prep.get("has_image"))
+        tools_turn = prep.get("tools")
+        tool_choice_turn = prep.get("tool_choice")
+        active_model_path = prep.get("active_model_path", "")
+        disable_thinking = bool(prep.get("disable_thinking", False))
+        use_fast_text = _should_use_fast_text_completion(llm, has_image_turn, tools_turn, active_model_path)
+        path_used = "fast_chatml" if use_fast_text else "chat_handler"
 
         def _llm_stream_worker():
+            nonlocal path_used
             stream_iter = None
             try:
-                stream_kwargs = dict(call_kwargs)
-                stream_kwargs["stream"] = True
-                try:
-                    if tools:
-                        try:
-                            stream_iter = llm.create_chat_completion(
-                                messages=msgs,
-                                tools=tools,
-                                tool_choice=tool_choice,
-                                **stream_kwargs
-                            )
-                        except (TypeError, Exception):
-                            stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
-                    else:
-                        stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
-
-                    for ch in stream_iter:
+                fast_succeeded = False
+                if use_fast_text:
+                    try:
+                        if state.last_turn_had_image and hasattr(llm, "reset"):
+                            llm.reset()
+                            state.last_turn_had_image = False
+                        prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
+                        stream_iter = llm.create_completion(
+                            prompt=prompt_str,
+                            **_build_completion_kwargs(call_kwargs, stream=True)
+                        )
+                        for ch in stream_iter:
+                            if cancel_event.is_set():
+                                break
+                            txt = ((ch.get("choices") or [{}])[0].get("text", "") or "") if isinstance(ch, dict) else ""
+                            if txt:
+                                chunk_queue.put(("chunk", {"choices": [{"delta": {"content": txt}}]}))
+                        fast_succeeded = True
+                    except Exception as e_fast_stream:
                         if cancel_event.is_set():
-                            break
-                        chunk_queue.put(("chunk", ch))
-                except Exception as e_stream_inner:
-                    if cancel_event.is_set():
-                        return
-                    print(f"[Inference Stream Fallback]: {e_stream_inner}")
-                    # Fallback jika model/wrapper tidak mendukung generator stream=True
-                    if tools:
-                        try:
-                            res_sync = llm.create_chat_completion(
-                                messages=msgs,
-                                tools=tools,
-                                tool_choice=tool_choice,
-                                **call_kwargs
-                            )
-                        except (TypeError, Exception):
+                            return
+                        print(f"[Inference Fast-Path Fallback]: {e_fast_stream}")
+                        path_used = "chat_handler"
+                        if stream_iter is not None and hasattr(stream_iter, "close"):
+                            try:
+                                stream_iter.close()
+                            except Exception:
+                                pass
+                        stream_iter = None
+
+                if not fast_succeeded:
+                    stream_kwargs = dict(call_kwargs)
+                    stream_kwargs["stream"] = True
+                    try:
+                        if tools_turn:
+                            try:
+                                stream_iter = llm.create_chat_completion(
+                                    messages=msgs,
+                                    tools=tools_turn,
+                                    tool_choice=tool_choice_turn,
+                                    **stream_kwargs
+                                )
+                            except (TypeError, Exception):
+                                stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
+                        else:
+                            stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
+                        if has_image_turn:
+                            state.last_turn_had_image = True
+
+                        for ch in stream_iter:
+                            if cancel_event.is_set():
+                                break
+                            chunk_queue.put(("chunk", ch))
+                    except Exception as e_stream_inner:
+                        if cancel_event.is_set():
+                            return
+                        print(f"[Inference Stream Fallback]: {e_stream_inner}")
+                        # Fallback jika model/wrapper tidak mendukung generator stream=True
+                        if tools_turn:
+                            try:
+                                res_sync = llm.create_chat_completion(
+                                    messages=msgs,
+                                    tools=tools_turn,
+                                    tool_choice=tool_choice_turn,
+                                    **call_kwargs
+                                )
+                            except (TypeError, Exception):
+                                res_sync = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                        else:
                             res_sync = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                    else:
-                        res_sync = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                    if not cancel_event.is_set():
-                        chunk_queue.put(("sync_result", res_sync))
+                        if has_image_turn:
+                            state.last_turn_had_image = True
+                        if not cancel_event.is_set():
+                            chunk_queue.put(("sync_result", res_sync))
             except Exception as e_worker:
                 if not cancel_event.is_set():
                     chunk_queue.put(("error", e_worker))
@@ -1369,6 +1550,8 @@ def stream_shiro_reply(
 
             in_think = False
             thinking_status_sent = False
+            t_first_token = None
+            max_clause_len = 48 if lyra_tier_id == "low" else 80
             while True:
                 try:
                     ev_kind, ev_val = chunk_queue.get(timeout=ping_interval)
@@ -1387,6 +1570,8 @@ def stream_shiro_reply(
                     if isinstance(res_sync, dict) and res_sync.get("choices"):
                         sync_text = res_sync["choices"][0].get("message", {}).get("content", "") or ""
                     if sync_text:
+                        if t_first_token is None:
+                            t_first_token = time.perf_counter()
                         raw_reply = sync_text
                         streamed_reply_acc = sync_text
                         yield {"type": "token", "token": sync_text}
@@ -1423,6 +1608,9 @@ def stream_shiro_reply(
                     if not streamed_reply_acc and not clause_buf and not token.strip():
                         continue
 
+                    if t_first_token is None and token.strip():
+                        t_first_token = time.perf_counter()
+
                     if not should_guard_id or (raw_reply.count("```") % 2 == 1):
                         if clause_buf:
                             flushed = _flush_stream_seg(clause_buf)
@@ -1434,6 +1622,8 @@ def stream_shiro_reply(
                         last_ping_time = time.perf_counter()
                     else:
                         clause_buf += token
+                        is_first_emit = not streamed_reply_acc
+                        buf_cap = 48 if is_first_emit else max_clause_len
                         if "\n" in clause_buf:
                             head, sep, tail = clause_buf.rpartition("\n")
                             to_flush = head + sep
@@ -1443,7 +1633,7 @@ def stream_shiro_reply(
                                 yield {"type": "token", "token": flushed}
                                 clause_buf = tail
                                 last_ping_time = time.perf_counter()
-                        elif clause_buf.count("*") % 2 == 0 and len(clause_buf) >= 35:
+                        elif clause_buf.count("*") % 2 == 0 and len(clause_buf) >= (20 if is_first_emit else 35):
                             m_sent = re.search(r'^([\s\S]*?[.!?~]["\'*)]?\s+)([\s\S]*)$', clause_buf)
                             if m_sent:
                                 head_part, tail_part = m_sent.group(1), m_sent.group(2)
@@ -1453,7 +1643,13 @@ def stream_shiro_reply(
                                     yield {"type": "token", "token": flushed}
                                     clause_buf = tail_part
                                     last_ping_time = time.perf_counter()
-                        elif len(clause_buf) >= 120:
+                            elif is_first_emit and re.search(r'\s$', clause_buf):
+                                flushed = _flush_stream_seg(clause_buf)
+                                streamed_reply_acc += flushed
+                                yield {"type": "token", "token": flushed}
+                                clause_buf = ""
+                                last_ping_time = time.perf_counter()
+                        elif len(clause_buf) >= buf_cap:
                             flushed = _flush_stream_seg(clause_buf)
                             streamed_reply_acc += flushed
                             yield {"type": "token", "token": flushed}
@@ -1480,7 +1676,17 @@ def stream_shiro_reply(
                 except RuntimeError:
                     pass
 
-        t_llm_dur = (time.perf_counter() - t0) * 1000
+        t_end = time.perf_counter()
+        t_llm_dur = (t_end - t0) * 1000
+        ttft_ms = round((t_first_token - t0) * 1000) if t_first_token else round(t_llm_dur)
+        est_tok = max(1, len(raw_reply) // 4)
+        gen_sec = max(0.05, t_end - (t_first_token or t0))
+        est_tps = est_tok / gen_sec
+        print(
+            f"⚡ [Inference] model={prep.get('active_model_name')} tier={lyra_tier_id} "
+            f"path={path_used} ctx={prep.get('effective_ctx', prep.get('active_ctx')):,} "
+            f"ttft={ttft_ms}ms total={round(t_llm_dur)}ms chars={len(raw_reply)} (~{est_tps:.1f} tok/s)"
+        )
         delivery_reply, trace, details = _finalize_inference_output(
             prep=prep,
             raw_reply=raw_reply,
