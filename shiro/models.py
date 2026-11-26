@@ -41,6 +41,90 @@ KNOWN_SUPPORTED_ARCHITECTURES = {
     "baichuan", "internlm2", "minicpm", "deepseek2", "bloom"
 }
 
+# Konfigurasi Extended Context khusus Qwen3.8-27B-Uncensored (262K bawaan -> 500K via YaRN)
+QWEN38_27B_NATIVE_CTX = 262144
+QWEN38_27B_EXTENDED_CTX = int(os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE", "500000"))
+QWEN38_27B_MAX_OUTPUT = 16384
+
+
+def is_qwen38_27b_uncensored(model_path: str) -> bool:
+    """Mendeteksi secara ketat apakah model adalah Qwen3.8-27B-Uncensored."""
+    if not model_path:
+        return False
+    name = os.path.basename(model_path).lower()
+    has_qwen38 = any(k in name for k in ("qwen3.8", "qwen3_8", "qwen38", "qwen-3.8"))
+    has_27b = "27b" in name
+    has_uncensored = any(k in name for k in ("uncensored", "hauhaucs", "abliterated"))
+    return has_qwen38 and has_27b and has_uncensored
+
+
+def get_model_native_context_length(model_path: str, default: int = QWEN38_27B_NATIVE_CTX) -> int:
+    """Membaca panjang context bawaan dari metadata GGUF model."""
+    meta = read_gguf_metadata(model_path)
+    for k, v in meta.items():
+        if k.endswith(".context_length") and isinstance(v, int) and v > 0:
+            return v
+    return default
+
+
+def _get_gpu_vram_gb() -> Optional[float]:
+    """Mengambil kapasitas VRAM GPU pertama dalam GB jika CUDA tersedia."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    except Exception:
+        pass
+    return None
+
+
+def build_qwen38_500k_llama_kwargs(
+    model_path: str,
+    chosen_ctx: int,
+    llama_cpp_mod: Any = None,
+    kv_cache_override: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Menyusun parameter YaRN RoPE scaling, Flash Attention, dan kuantisasi KV cache
+    khusus untuk model Qwen3.8-27B-Uncensored agar context dapat mencapai 500K.
+    """
+    if not is_qwen38_27b_uncensored(model_path):
+        return {}
+
+    orig_ctx = get_model_native_context_length(model_path, default=QWEN38_27B_NATIVE_CTX)
+    extra: Dict[str, Any] = {}
+
+    if chosen_ctx > orig_ctx:
+        yarn_type = getattr(llama_cpp_mod, "LLAMA_ROPE_SCALING_TYPE_YARN", 2)
+        extra["rope_scaling_type"] = yarn_type
+        extra["yarn_orig_ctx"] = orig_ctx
+        extra["rope_freq_scale"] = round(orig_ctx / float(chosen_ctx), 6)
+        extra["yarn_ext_factor"] = -1.0
+        extra["yarn_attn_factor"] = 1.0
+        extra["yarn_beta_fast"] = 32.0
+        extra["yarn_beta_slow"] = 1.0
+
+    if chosen_ctx > 65536:
+        extra["flash_attn"] = True
+        kv_mode = (kv_cache_override or os.environ.get("SHIRO_KV_CACHE_TYPE", "")).strip().lower()
+        if not kv_mode:
+            vram_gb = _get_gpu_vram_gb()
+            if vram_gb is not None and vram_gb >= 70.0:
+                kv_mode = "q8_0"
+            else:
+                kv_mode = "q4_0"
+
+        if kv_mode == "q8_0":
+            kv_val = getattr(llama_cpp_mod, "GGML_TYPE_Q8_0", 8)
+            extra["type_k"] = kv_val
+            extra["type_v"] = kv_val
+        elif kv_mode == "q4_0":
+            kv_val = getattr(llama_cpp_mod, "GGML_TYPE_Q4_0", 2)
+            extra["type_k"] = kv_val
+            extra["type_v"] = kv_val
+
+    return extra
+
 
 
 # Deteksi GPU CUDA
@@ -70,6 +154,11 @@ def get_optimal_model_tokens(model_path: str) -> Tuple[int, int]:
     """
     if not model_path:
         return (CONTEXT_SIZE, DEFAULT_MAX_TOKENS)
+
+    # 0. Khusus Qwen3.8-27B-Uncensored: Extended Context 500K (dari 262K bawaan via YaRN)
+    if is_qwen38_27b_uncensored(model_path):
+        target_ctx = int(os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE", str(QWEN38_27B_EXTENDED_CTX)))
+        return (target_ctx, QWEN38_27B_MAX_OUTPUT)
 
     name = os.path.basename(model_path).lower()
     gpu_layers = get_gpu_layers()
@@ -557,13 +646,23 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
     Instantiate Llama model instance dan vision handler.
     Mengembalikan (llm_instance, vision_handler).
     """
+    import llama_cpp
     from llama_cpp import Llama
     gpu_layers = get_gpu_layers()
     vision_handler = init_vision_handler(model_path)
-    
+
+    is_qwen38_unc = is_qwen38_27b_uncensored(model_path)
     optimal_ctx, optimal_out = get_optimal_model_tokens(model_path)
     env_ctx = os.environ.get("SHIRO_CONTEXT_SIZE")
-    if env_ctx:
+    if is_qwen38_unc:
+        if env_ctx:
+            try:
+                chosen_ctx = max(int(env_ctx), optimal_ctx)
+            except Exception:
+                chosen_ctx = optimal_ctx
+        else:
+            chosen_ctx = optimal_ctx
+    elif env_ctx:
         try:
             chosen_ctx = max(int(env_ctx), optimal_ctx)
         except Exception:
@@ -578,36 +677,99 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
         "n_gpu_layers": gpu_layers,
         "verbose": False,
     }
+    orig_ctx = QWEN38_27B_NATIVE_CTX
+    if is_qwen38_unc:
+        qwen_extra = build_qwen38_500k_llama_kwargs(model_path, chosen_ctx, llama_cpp_mod=llama_cpp)
+        orig_ctx = qwen_extra.get("yarn_orig_ctx", get_model_native_context_length(model_path, default=QWEN38_27B_NATIVE_CTX))
+        llama_kwargs.update(qwen_extra)
+        safe_print(
+            f"🚀 [Qwen3.8-27B-Uncensored] Extended Context aktif: {chosen_ctx:,} tokens "
+            f"(YaRN dari {orig_ctx:,}, flash_attn={qwen_extra.get('flash_attn', False)})"
+        )
+
     if vision_handler:
         llama_kwargs["chat_handler"] = vision_handler
     else:
         llama_kwargs["chat_format"] = detect_chat_format(model_path)
-        
+
     active_lora = find_active_lora_path(version=lora_version)
     if active_lora:
         llama_kwargs["lora_path"] = active_lora
-        print(f"🎯 LoRA Adapter Terdeteksi & Dimuat: {os.path.basename(active_lora)}")
+        safe_print(f"🎯 LoRA Adapter Terdeteksi & Dimuat: {os.path.basename(active_lora)}")
 
-    try:
-        llm = Llama(**llama_kwargs)
-    except Exception as err:
-        if "lora_path" in llama_kwargs:
-            print(f"⚠️ Gagal memuat LoRA ({err}), mencoba tanpa LoRA...")
-            llama_kwargs.pop("lora_path", None)
-            try:
-                llm = Llama(**llama_kwargs)
-                err = None
-            except Exception as e_retry:
-                err = e_retry
-        if err:
-            if vision_handler:
-                print(f"⚠️ Gagal memuat Vision Handler ({err}), fallback ke teks...")
-                llama_kwargs.pop("chat_handler", None)
-                llama_kwargs["chat_format"] = detect_chat_format(model_path)
-                llm = Llama(**llama_kwargs)
-                vision_handler = None
-            else:
-                raise err
+    def _try_init_llama(kwargs_dict: Dict[str, Any]):
+        try:
+            return Llama(**kwargs_dict)
+        except TypeError as te:
+            # Fallback jika versi llama-cpp-python lama belum mendukung type_k/type_v/flash_attn
+            stripped = {k: v for k, v in kwargs_dict.items() if k not in ("type_k", "type_v", "flash_attn")}
+            if len(stripped) < len(kwargs_dict):
+                safe_print(f"⚠️ Runtime llama-cpp tidak mendukung parameter KV/flash_attn ({te}), mencoba tanpa parameter tersebut...")
+                return Llama(**stripped)
+            raise
+
+    def _load_with_lora_and_vision_fallback(kwargs_dict: Dict[str, Any]):
+        nonlocal vision_handler
+        work_kwargs = dict(kwargs_dict)
+        try:
+            return _try_init_llama(work_kwargs), None
+        except Exception as first_err:
+            err = first_err
+            if "lora_path" in work_kwargs:
+                safe_print(f"⚠️ Gagal memuat LoRA ({err}), mencoba tanpa LoRA...")
+                work_kwargs.pop("lora_path", None)
+                try:
+                    return _try_init_llama(work_kwargs), None
+                except Exception as e_retry:
+                    err = e_retry
+            if "chat_handler" in work_kwargs:
+                safe_print(f"⚠️ Gagal memuat Vision Handler ({err}), fallback ke teks...")
+                work_kwargs.pop("chat_handler", None)
+                work_kwargs["chat_format"] = detect_chat_format(model_path)
+                try:
+                    llm_inst = _try_init_llama(work_kwargs)
+                    vision_handler = None
+                    return llm_inst, None
+                except Exception as e_vis:
+                    err = e_vis
+            return None, err
+
+    llm, load_err = _load_with_lora_and_vision_fallback(llama_kwargs)
+
+    if load_err is not None and is_qwen38_unc:
+        q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
+        q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
+        if llama_kwargs.get("type_k") == q8_val:
+            safe_print(f"⚠️ [Qwen3.8-27B-Uncensored] Gagal memuat 500K dengan KV Q8_0 ({load_err}), mencoba KV Q4_0...")
+            q4_kwargs = dict(llama_kwargs)
+            q4_kwargs["type_k"] = q4_val
+            q4_kwargs["type_v"] = q4_val
+            llm, load_err = _load_with_lora_and_vision_fallback(q4_kwargs)
+            if llm is not None:
+                llama_kwargs = q4_kwargs
+
+        if load_err is not None and chosen_ctx > 32768:
+            yarn_keys = (
+                "rope_scaling_type", "yarn_orig_ctx", "rope_freq_scale",
+                "yarn_ext_factor", "yarn_attn_factor", "yarn_beta_fast", "yarn_beta_slow"
+            )
+            for step_ctx in [262144, 131072, 65536, 32768]:
+                if step_ctx >= chosen_ctx:
+                    continue
+                safe_print(f"⚠️ [Qwen3.8-27B-Uncensored] Gagal memuat context {chosen_ctx:,} ({load_err}), fallback ke {step_ctx:,} tokens...")
+                step_kwargs = dict(llama_kwargs)
+                step_kwargs["n_ctx"] = step_ctx
+                if step_ctx <= orig_ctx:
+                    for yk in yarn_keys:
+                        step_kwargs.pop(yk, None)
+                else:
+                    step_kwargs.update(build_qwen38_500k_llama_kwargs(model_path, step_ctx, llama_cpp_mod=llama_cpp, kv_cache_override="q4_0"))
+                llm, load_err = _load_with_lora_and_vision_fallback(step_kwargs)
+                if llm is not None:
+                    break
+
+    if load_err is not None:
+        raise load_err
 
     return llm, vision_handler
 

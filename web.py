@@ -28,7 +28,9 @@ from shiro.models import (
     instantiate_llama_model,
     instantiate_llama_model_with_autodetect,
     find_active_lora_path,
-    get_gpu_layers
+    get_gpu_layers,
+    get_active_model_ctx,
+    is_qwen38_27b_uncensored
 )
 from shiro.auth import (
     get_active_api_key,
@@ -135,8 +137,10 @@ if __name__ == '__main__':
         current_model_path = loaded_model_path
 
         model_name = os.path.basename(current_model_path)
+        active_ctx = get_active_model_ctx(active_llm)
+        ctx_suffix = " (Extended 500K via YaRN dari 262K)" if (is_qwen38_27b_uncensored(current_model_path) and active_ctx > 262144) else ""
         print(f"✓ Model loaded: {model_name}")
-        print(f"✓ Context Window: {CONTEXT_SIZE} tokens")
+        print(f"✓ Context Window: {active_ctx:,} tokens{ctx_suffix}")
         if active_vision:
             print("👁️ Multimodal Vision Mode: AKTIF (Mendukung Kamera Real-Time & Analisis Gambar)")
         gpu_layers = get_gpu_layers()

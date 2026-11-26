@@ -12,7 +12,7 @@ COLAB_MODELS = {
         "file": "Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf",
         "extra_file": "mmproj-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
         "extra_alias": "mmproj-BF16.gguf",
-        "desc": "Qwen3.8-27B-Uncensored Multimodal (Model Utama: Roleplay, Gambar/Vision & Deep Reasoning / A100 GPU, ~16.8 GB + mmproj)",
+        "desc": "Qwen3.8-27B-Uncensored Multimodal (Model Utama: Roleplay, Gambar/Vision, 500K Extended Context via YaRN dari 262K & Deep Reasoning / A100 GPU, ~16.8 GB + mmproj)",
         "fallbacks": [
             {
                 "repo": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",

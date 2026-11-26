@@ -40,7 +40,14 @@ def upload_document():
                 "error": f"Format biner '{ext or f.filename}' tidak didukung. Gunakan berkas dokumen (PDF, DOCX, TXT, MD) atau berkas kode pemrograman (.js, .py, .ts, .cpp, .html, dll.)."
             }), 400
 
-        res = extract_text_from_file(save_path, filename=f.filename)
+        from shiro.server_state import state
+        from shiro.models import is_qwen38_27b_uncensored
+        active_model_path = getattr(state.llm, 'model_path', '') if state.llm else ''
+        doc_max_chars = None
+        if not os.environ.get("SHIRO_MAX_DOC_CHARS") and is_qwen38_27b_uncensored(active_model_path):
+            doc_max_chars = 1_200_000
+
+        res = extract_text_from_file(save_path, filename=f.filename, max_chars=doc_max_chars)
         if not res.get("success"):
             return jsonify(res), 400
 

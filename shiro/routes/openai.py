@@ -14,7 +14,7 @@ from flask import Blueprint, request, jsonify
 
 from shiro.auth import verify_api_key
 from shiro.server_state import state
-from shiro.models import load_model_config
+from shiro.models import load_model_config, get_optimal_model_tokens
 from shiro.memory.optimization import compress_old_messages
 from shiro.pipeline.inference import get_shiro_reply
 
@@ -267,7 +267,8 @@ def openai_models():
             "object": "model",
             "created": now_ts,
             "owned_by": "shiro",
-            "is_current": (mid == current_name)
+            "is_current": (mid == current_name),
+            "context_window": get_optimal_model_tokens(mid)[0]
         })
 
     active_model = current_name or (model_ids[0] if model_ids else "Qwen3.8-27B-Uncensored")

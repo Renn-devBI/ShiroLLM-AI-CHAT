@@ -178,11 +178,14 @@ def chat():
                 reply = f"[MoE] {e_mode}"
             return jsonify({"reply": reply, "system_command": True, "moe": moe.status()})
         
-        # Fleksibel mendukung teks panjang / kode pemrograman hingga 120.000 karakter
-        if len(user_message) > 120000:
+        # Fleksibel mendukung teks panjang / kode pemrograman hingga 120.000 karakter (atau 1.200.000 khusus Qwen3.8-27B-Uncensored 500K)
+        from shiro.models import is_qwen38_27b_uncensored
+        active_model_path = getattr(state.llm, 'model_path', '') if state.llm else ''
+        max_msg_chars = 1_200_000 if is_qwen38_27b_uncensored(active_model_path) else 120_000
+        if len(user_message) > max_msg_chars:
             return jsonify({
-                "error": "Pesan terlalu panjang (Maksimal 120.000 karakter)",
-                "reply": "Pesan Kakak melampaui batas aman konteks (120.000 karakter). Mohon persingkat sedikit atau kirim dalam berkas dokumen ya, Kak!"
+                "error": f"Pesan terlalu panjang (Maksimal {max_msg_chars:,} karakter)",
+                "reply": f"Pesan Kakak melampaui batas aman konteks ({max_msg_chars:,} karakter). Mohon persingkat sedikit atau kirim dalam berkas dokumen ya, Kak!"
             }), 400
 
         memory = state.init_memory()

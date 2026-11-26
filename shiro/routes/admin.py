@@ -20,7 +20,8 @@ from shiro.models import (
     save_model_config,
     is_running_in_colab,
     instantiate_llama_model,
-    instantiate_llama_model_with_autodetect
+    instantiate_llama_model_with_autodetect,
+    get_active_model_ctx
 )
 
 admin_bp = Blueprint("admin_bp", __name__)
@@ -243,6 +244,7 @@ def get_models():
         "auto_detect": config.get("auto_detect", True),
         "available_models": config.get("available_models", []),
         "model_info": config.get("model_info", {}),
+        "active_context_window": get_active_model_ctx(state.llm),
         "is_colab": is_running_in_colab()
     })
 
@@ -281,11 +283,13 @@ def switch_model():
                 save_model_config(config)
 
                 model_name = os.path.basename(active_path)
-                print(f"[Admin] Autodetect berhasil beralih ke: {model_name}")
+                active_ctx = get_active_model_ctx(new_llm)
+                print(f"[Admin] Autodetect berhasil beralih ke: {model_name} (Context Window: {active_ctx:,} tokens)")
                 return jsonify({
                     "success": True,
                     "message": f"Model switched to {model_name} (Auto-detected)",
                     "current_model": active_path,
+                    "active_context_window": active_ctx,
                     "has_vision": bool(vision_handler is not None)
                 })
             except Exception as load_error:
@@ -345,11 +349,13 @@ def switch_model():
             config["current_model"] = model_path
             save_model_config(config)
 
-            print(f"[Admin] Berhasil beralih ke model: {model_name}")
+            active_ctx = get_active_model_ctx(new_llm)
+            print(f"[Admin] Berhasil beralih ke model: {model_name} (Context Window: {active_ctx:,} tokens)")
             return jsonify({
                 "success": True,
                 "message": f"Model switched to {model_name}",
                 "current_model": model_path,
+                "active_context_window": active_ctx,
                 "has_vision": bool(vision_handler is not None)
             })
 

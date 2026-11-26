@@ -157,9 +157,20 @@ class TestPromptAndMultimodal(unittest.TestCase):
     def test_optimal_tokens_scaling_for_27b_32b(self):
         from shiro.models import get_optimal_model_tokens
         with patch('shiro.models.get_gpu_layers', return_value=33):
+            # Khusus Qwen3.8-27B-Uncensored -> 500K (500000) tokens
             n_ctx, max_out = get_optimal_model_tokens("model/Qwen3.8-27B-Uncensored-Q4_K_M.gguf")
-            self.assertEqual(n_ctx, 32768)
+            self.assertEqual(n_ctx, 500000)
             self.assertEqual(max_out, 16384)
+
+            n_ctx_hp, max_out_hp = get_optimal_model_tokens("model/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf")
+            self.assertEqual(n_ctx_hp, 500000)
+            self.assertEqual(max_out_hp, 16384)
+
+            # Model lain tetap pada batas context masing-masing
+            self.assertEqual(get_optimal_model_tokens("model/Qwen3-32B-Q4_K_M.gguf"), (32768, 16384))
+            self.assertEqual(get_optimal_model_tokens("model/Qwen3.8-27B-Instruct-Q4_K_M.gguf"), (32768, 16384))
+            self.assertEqual(get_optimal_model_tokens("model/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf"), (16384, 8192))
+            self.assertEqual(get_optimal_model_tokens("model/Llama-3.2-3B-Instruct-uncensored-Q6_K.gguf"), (8192, 2048))
 
     def test_inference_preserves_reasoning_when_inside_think_block(self):
         mock_llm = MagicMock()

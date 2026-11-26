@@ -15,7 +15,7 @@ from typing import Dict, Any, Optional, List, Tuple, Union, Generator
 
 from shiro.config import CONTEXT_SIZE
 from shiro.server_state import state
-from shiro.models import get_active_model_ctx, get_optimal_model_tokens
+from shiro.models import get_active_model_ctx, get_optimal_model_tokens, is_qwen38_27b_uncensored
 from shiro.persona import (
     build_system_prompt,
     build_vtuber_system_prompt,
@@ -393,7 +393,11 @@ def _prepare_inference_payload(
     doc_prompt_addon = ""
     if has_doc and document_info:
         from shiro.document.reader import build_document_prompt
-        max_doc_chars = max(10000, min(60000, (active_ctx - 2000) * 3))
+        if is_qwen38_27b_uncensored(active_model_path or active_model_name) and active_ctx > 65536:
+            doc_token_budget = max(20000, active_ctx - reserved_budget - 4096)
+            max_doc_chars = min(1_200_000, doc_token_budget * 3)
+        else:
+            max_doc_chars = max(10000, min(60000, (active_ctx - 2000) * 3))
         doc_full_text = document_info.get("text", "")
         if len(doc_full_text) > max_doc_chars:
             doc_full_text = doc_full_text[:max_doc_chars] + f"\n\n... [Sisa teks dokumen dipotong karena melampaui batas {max_doc_chars} karakter]"
