@@ -1635,6 +1635,13 @@ function setInputLock(locked) {
             sendBtn.classList.remove('hidden');
         }
     }
+    const lyraBtn = document.getElementById('lyra-tier-btn');
+    if (lyraBtn) {
+        lyraBtn.disabled = locked;
+    }
+    if (locked && typeof toggleLyraTierMenu === 'function') {
+        toggleLyraTierMenu(false);
+    }
     if (stopBtn) {
         if (locked) {
             stopBtn.classList.remove('hidden');
@@ -1942,10 +1949,11 @@ async function sendMessage() {
                                 const toolTitle = activeAgentAction ? (activeAgentAction.tool || 'eksekusi') : 'eksekusi';
                                 updateTypingStatus(`Selesai menjalankan ${toolTitle} · Menyusun jawaban...`);
                             } else if (evData.type === 'token') {
-                                if (!streamText) {
+                                const chunkTok = evData.token || '';
+                                if (!streamText && chunkTok.trim()) {
                                     status.textContent = t('status_typing');
                                 }
-                                streamText += evData.token || '';
+                                streamText += chunkTok;
                                 const now = Date.now();
                                 if (now - lastRenderTime > 35) {
                                     lastRenderTime = now;
@@ -4020,9 +4028,14 @@ function syncLyraTierUI(enabled, tierId = null) {
     }
 
     const picker = document.getElementById('lyra-tier-picker');
+    const btn = document.getElementById('lyra-tier-btn');
     const labelEl = document.getElementById('lyra-tier-current-label');
     if (picker) {
         picker.classList.toggle('hidden', !isLyraActive);
+    }
+    if (btn) {
+        btn.disabled = Boolean(isGenerating);
+        btn.classList.remove('is-loading');
     }
     if (labelEl) {
         labelEl.textContent = LYRA_TIER_LABELS[activeLyraTier] || LYRA_TIER_LABELS.high;
@@ -4047,68 +4060,34 @@ function toggleLyraTierMenu(forceState = null) {
     btn.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
 }
 
-async function selectLyraTier(tierId) {
+function selectLyraTier(tierId) {
     if (!tierId || !LYRA_TIER_LABELS[tierId]) return;
     if (isGenerating) {
         showToast(currentLang === 'en' ? 'Wait until the current response finishes' : 'Tunggu hingga respons saat ini selesai');
         toggleLyraTierMenu(false);
         return;
     }
-    if (isSwitchingLyraTier) return;
 
-    const prevTier = activeLyraTier;
     toggleLyraTierMenu(false);
-
-    if (tierId === activeLyraTier && isLyraActive) {
-        return;
-    }
-
-    isSwitchingLyraTier = true;
-    const btn = document.getElementById('lyra-tier-btn');
-    const statusEl = document.getElementById('status');
-    syncLyraTierUI(true, tierId);
-    if (btn) {
-        btn.disabled = true;
-        btn.classList.add('is-loading');
-    }
-    if (statusEl) {
-        statusEl.textContent = `Menyesuaikan ${LYRA_TIER_LABELS[tierId]}...`;
-    }
-
+    const changed = tierId !== activeLyraTier;
+    activeLyraTier = tierId;
     try {
-        const res = await fetch('/api/models/context-tier', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tier: tierId })
-        });
-        const data = await res.json();
-        if (res.ok && data.success) {
-            const finalTier = data.lyra_tier || tierId;
-            syncLyraTierUI(true, finalTier);
-            if (data.cpu_capped) {
-                showToast(`${data.tier_label || LYRA_TIER_LABELS[finalTier]} disimpan (Mode CPU membatasi konteks agar stabil)`);
-            } else if (data.fallback_applied) {
-                showToast(`${data.tier_label || LYRA_TIER_LABELS[finalTier]} disesuaikan ke kapasitas VRAM GPU`);
-            } else {
-                showToast(`Mode aktif: ${data.tier_label || LYRA_TIER_LABELS[finalTier]}`);
-            }
-        } else {
-            syncLyraTierUI(isLyraActive, prevTier);
-            showToast(`Gagal mengubah mode: ${data.error || 'Server error'}`);
-        }
-    } catch (e) {
-        syncLyraTierUI(isLyraActive, prevTier);
-        showToast(`Error: ${e.message}`);
-    } finally {
-        isSwitchingLyraTier = false;
-        if (btn) {
-            btn.disabled = false;
-            btn.classList.remove('is-loading');
-        }
-        if (statusEl) {
-            statusEl.textContent = t('status_ready');
-        }
+        localStorage.setItem('shiro_lyra_tier', tierId);
+    } catch (_) {}
+    syncLyraTierUI(true, tierId);
+
+    if (changed) {
+        showToast(`Mode dipilih: ${LYRA_TIER_LABELS[tierId]}`);
     }
+
+    // Simpan preferensi secara non-blocking di background tanpa mengunci tombol
+    fetch('/api/models/context-tier', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier: tierId, defer_reload: true })
+    }).catch((err) => {
+        console.warn('[Lyra Tier] Background sync failed:', err);
+    });
 }
 
 function initLyraTierPicker() {
@@ -4217,7 +4196,15 @@ async function loadModels() {
         const lyraEnabled = typeof data.is_lyra_active === 'boolean'
             ? data.is_lyra_active
             : isQwen38UncensoredPath(data.current_model);
-        syncLyraTierUI(lyraEnabled, data.lyra_tier || activeLyraTier);
+        let resolvedTier = data.lyra_tier;
+        if (!resolvedTier || !LYRA_TIER_LABELS[resolvedTier]) {
+            try {
+                resolvedTier = localStorage.getItem('shiro_lyra_tier') || activeLyraTier;
+            } catch (_) {
+                resolvedTier = activeLyraTier;
+            }
+        }
+        syncLyraTierUI(lyraEnabled, resolvedTier);
 
         loadMoeSettings();
     } catch (error) {

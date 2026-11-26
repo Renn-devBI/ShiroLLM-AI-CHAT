@@ -45,11 +45,51 @@ KNOWN_SUPPORTED_ARCHITECTURES = {
 LYRA_DISPLAY_NAME = "ShiroHaru-Lyra-Agent"
 DEFAULT_LYRA_TIER = "high"
 LYRA_CONTEXT_TIERS = [
-    {"id": "low", "label": "ShiroHaru-Lyra Low", "tokens": 190000},
-    {"id": "medium", "label": "ShiroHaru-Lyra Medium", "tokens": 262144},
-    {"id": "high", "label": "ShiroHaru-Lyra High", "tokens": 500000},
-    {"id": "extra_high", "label": "ShiroHaru-Lyra Extra High", "tokens": 700000},
-    {"id": "ultra_high", "label": "ShiroHaru-Lyra Ultra High", "tokens": 1000000},
+    {
+        "id": "low",
+        "label": "ShiroHaru-Lyra Low",
+        "tokens": 190000,
+        "max_output": 2048,
+        "thinking_mode": "off",
+        "max_history_turns": 16,
+        "top_k": 20,
+    },
+    {
+        "id": "medium",
+        "label": "ShiroHaru-Lyra Medium",
+        "tokens": 262144,
+        "max_output": 4096,
+        "thinking_mode": "light",
+        "max_history_turns": 32,
+        "top_k": 30,
+    },
+    {
+        "id": "high",
+        "label": "ShiroHaru-Lyra High",
+        "tokens": 500000,
+        "max_output": 16384,
+        "thinking_mode": "standard",
+        "max_history_turns": 64,
+        "top_k": 40,
+    },
+    {
+        "id": "extra_high",
+        "label": "ShiroHaru-Lyra Extra High",
+        "tokens": 700000,
+        "max_output": 24576,
+        "thinking_mode": "deep",
+        "max_history_turns": 128,
+        "top_k": 40,
+    },
+    {
+        "id": "ultra_high",
+        "label": "ShiroHaru-Lyra Ultra High",
+        "tokens": 1000000,
+        "max_output": 32768,
+        "thinking_mode": "ultra",
+        "max_history_turns": None,
+        "top_k": 50,
+    },
 ]
 LYRA_TIER_MAP = {t["id"]: t for t in LYRA_CONTEXT_TIERS}
 
@@ -302,19 +342,23 @@ def get_optimal_model_tokens(model_path: str, tier_override: Optional[str] = Non
     is_gpu = gpu_layers != 0
 
     # 0. Khusus Qwen3.8-27B-Uncensored (ShiroHaru-Lyra-Agent):
-    # GPU mendukung 5 tingkat konteks (Low 190K, Medium 262K, High 500K, Extra High 700K, Ultra High 1M)
+    # GPU mendukung 5 tingkat konteks & kecepatan berbeda (Low 190K -> Ultra High 1M)
     if is_qwen38_27b_uncensored(model_path):
         explicit_ctx = os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE")
+        active_tier = resolve_lyra_tier(
+            tier_override if (tier_override and is_valid_lyra_tier(tier_override)) else get_saved_lyra_tier()
+        )
+        tier_max_out = int(active_tier.get("max_output", QWEN38_27B_MAX_OUTPUT))
         if is_gpu:
             if tier_override and is_valid_lyra_tier(tier_override):
-                target_ctx = resolve_lyra_tier(tier_override)["tokens"]
+                target_ctx = active_tier["tokens"]
             elif explicit_ctx:
                 try:
                     target_ctx = int(explicit_ctx)
                 except ValueError:
-                    target_ctx = resolve_lyra_tier(get_saved_lyra_tier())["tokens"]
+                    target_ctx = active_tier["tokens"]
             else:
-                target_ctx = resolve_lyra_tier(get_saved_lyra_tier())["tokens"]
+                target_ctx = active_tier["tokens"]
         else:
             if explicit_ctx:
                 try:
@@ -323,7 +367,7 @@ def get_optimal_model_tokens(model_path: str, tier_override: Optional[str] = Non
                     target_ctx = QWEN38_27B_CPU_SAFE_CTX
             else:
                 target_ctx = QWEN38_27B_CPU_SAFE_CTX
-        max_out = QWEN38_27B_MAX_OUTPUT if is_gpu else 8192
+        max_out = tier_max_out if is_gpu else min(tier_max_out, 8192)
         return (target_ctx, max_out)
 
     name = os.path.basename(model_path).lower()
@@ -866,6 +910,7 @@ def instantiate_llama_model(
         "n_ctx": chosen_ctx,
         "n_threads": n_threads,
         "n_gpu_layers": gpu_layers,
+        "n_batch": 1024 if is_gpu else 512,
         "verbose": False,
     }
     orig_ctx = QWEN38_27B_NATIVE_CTX

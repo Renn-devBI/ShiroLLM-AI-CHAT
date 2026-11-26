@@ -219,34 +219,17 @@ def chat():
         )
         active_model_path = getattr(state.llm, 'model_path', '') if state.llm else ''
         req_lyra_tier = data.get('lyra_tier')
+        lyra_tier_obj = None
         if (
             req_lyra_tier
-            and state.llm is not None
             and is_qwen38_27b_uncensored(active_model_path)
             and is_valid_lyra_tier(req_lyra_tier)
         ):
-            tier_info = resolve_lyra_tier(req_lyra_tier)
-            target_ctx = tier_info["tokens"]
-            if get_gpu_layers() != 0 and abs(get_active_model_ctx(state.llm) - target_ctx) > 1024:
-                with state.llm_lock:
-                    old_llm = state.llm
-                    old_vis = state.vision_chat_handler
-                    try:
-                        import gc
-                        if hasattr(old_llm, 'close'):
-                            old_llm.close()
-                        state.llm = None
-                        gc.collect()
-                        new_llm, new_vis = instantiate_llama_model(active_model_path, target_ctx_override=target_ctx)
-                        state.set_llm(new_llm, new_vis)
-                        save_lyra_tier(tier_info["id"])
-                    except Exception as e_tier:
-                        print(f"[Chat] Warning reloading Lyra tier {tier_info['id']}: {e_tier}")
-                        if state.llm is None and old_llm is not None:
-                            state.set_llm(old_llm, old_vis)
+            lyra_tier_obj = resolve_lyra_tier(req_lyra_tier)
+            save_lyra_tier(lyra_tier_obj["id"])
 
         if is_qwen38_27b_uncensored(active_model_path):
-            active_ctx_chars = get_active_model_ctx(state.llm) * 3 if state.llm else 1_500_000
+            active_ctx_chars = (lyra_tier_obj["tokens"] * 3) if lyra_tier_obj else (get_active_model_ctx(state.llm) * 3 if state.llm else 1_500_000)
             max_msg_chars = max(500_000, min(3_000_000, active_ctx_chars))
         else:
             max_msg_chars = 120_000
@@ -313,7 +296,33 @@ def chat():
         # 2. NON-STREAMING FALLBACK (Jika client eksplisit meminta stream: false)
         agent_route = should_route_to_local_agent(user_message, has_image=bool(image_base64))
 
+        def _ensure_lyra_tier_loaded():
+            if not (lyra_tier_obj and state.llm is not None and get_gpu_layers() != 0):
+                return
+            target_ctx = lyra_tier_obj["tokens"]
+            if abs(get_active_model_ctx(state.llm) - target_ctx) <= 1024:
+                return
+            with state.llm_lock:
+                if state.llm is None or abs(get_active_model_ctx(state.llm) - target_ctx) <= 1024:
+                    return
+                old_llm = state.llm
+                old_vis = state.vision_chat_handler
+                try:
+                    import gc
+                    if hasattr(old_llm, 'close'):
+                        old_llm.close()
+                    state.llm = None
+                    gc.collect()
+                    new_llm, new_vis = instantiate_llama_model(active_model_path, target_ctx_override=target_ctx)
+                    state.set_llm(new_llm, new_vis)
+                except Exception as e_tier:
+                    print(f"[Chat] Warning reloading Lyra tier {lyra_tier_obj['id']}: {e_tier}")
+                    if state.llm is None and old_llm is not None:
+                        state.set_llm(old_llm, old_vis)
+
         if not stream_mode:
+            if not agent_route.get("route"):
+                _ensure_lyra_tier_loaded()
             if agent_route.get("route"):
                 from shiro.agent.autonomous_runner import autonomous_runner
                 ag_res = autonomous_runner.run_task(
@@ -354,6 +363,7 @@ def chat():
                 image_base64=image_base64,
                 document_info=document_info,
                 max_tokens=user_max_tokens,
+                lyra_tier=req_lyra_tier,
                 return_trace=True
             )
             
@@ -429,6 +439,24 @@ def chat():
             yield f"data: {py_json.dumps(init_payload)}\n\n"
 
             try:
+                if (
+                    not agent_route.get("route")
+                    and lyra_tier_obj
+                    and state.llm is not None
+                    and get_gpu_layers() != 0
+                    and abs(get_active_model_ctx(state.llm) - lyra_tier_obj["tokens"]) > 1024
+                ):
+                    import threading
+                    tier_prep_label = lyra_tier_obj["label"]
+                    yield f"data: {py_json.dumps({'type': 'status', 'status': f'Menyiapkan {tier_prep_label}...'})}\n\n"
+                    yield ": ping\n\n"
+                    reload_thread = threading.Thread(target=_ensure_lyra_tier_loaded, daemon=True)
+                    reload_thread.start()
+                    while reload_thread.is_alive():
+                        reload_thread.join(timeout=4.0)
+                        if reload_thread.is_alive():
+                            yield ": ping\n\n"
+
                 if agent_route.get("route"):
                     from shiro.agent.autonomous_runner import autonomous_runner
                     active_stream_gen = autonomous_runner.run_task_stream(
@@ -467,7 +495,8 @@ def chat():
                         user_message,
                         image_base64=image_base64,
                         document_info=document_info,
-                        max_tokens=user_max_tokens
+                        max_tokens=user_max_tokens,
+                        lyra_tier=req_lyra_tier
                     )
                     for event in active_stream_gen:
                         ev_type = event.get("type")

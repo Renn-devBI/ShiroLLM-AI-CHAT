@@ -25,6 +25,9 @@ from shiro.models import (
     get_optimal_model_tokens,
     is_qwen38_27b_uncensored,
     get_model_display_name,
+    resolve_lyra_tier,
+    get_saved_lyra_tier,
+    is_valid_lyra_tier,
 )
 from shiro.persona import (
     build_system_prompt,
@@ -84,6 +87,7 @@ def _prepare_inference_payload(
     reasoning_effort: Optional[str] = None,
     include_reasoning: bool = False,
     max_tokens: Optional[int] = None,
+    lyra_tier: Optional[str] = None,
     t_start_total: Optional[float] = None
 ) -> Dict[str, Any]:
     """
@@ -361,10 +365,23 @@ def _prepare_inference_payload(
             if r in ["user", "assistant"] and c:
                 clean_context.append({"role": r, "content": str(c)})
 
-    # Dynamic Token Budget Guard
+    # Dynamic Token Budget Guard & Tier History Cap
     active_ctx = get_active_model_ctx(llm)
     active_model_path = getattr(llm, 'model_path', '') if hasattr(llm, 'model_path') else ''
-    _, model_max_out = get_optimal_model_tokens(active_model_path or active_model_name)
+    is_lyra_model = is_qwen38_27b_uncensored(active_model_path or active_model_name)
+    lyra_tier_info = None
+    if is_lyra_model:
+        chosen_tier_id = lyra_tier if is_valid_lyra_tier(lyra_tier) else get_saved_lyra_tier()
+        lyra_tier_info = resolve_lyra_tier(chosen_tier_id)
+        max_turns = lyra_tier_info.get("max_history_turns")
+        if isinstance(max_turns, int) and max_turns > 0 and len(clean_context) > max_turns:
+            clean_context = clean_context[-max_turns:]
+        _, model_max_out = get_optimal_model_tokens(
+            active_model_path or active_model_name,
+            tier_override=lyra_tier_info["id"]
+        )
+    else:
+        _, model_max_out = get_optimal_model_tokens(active_model_path or active_model_name)
     
     reserved_budget = max(4096, min(16384, model_max_out + 512))
     max_history_tokens = max(1024, active_ctx - reserved_budget)
@@ -504,6 +521,20 @@ def _prepare_inference_payload(
             user_context=user_context
         ) + tools_addon + reasoning_addon + time_ctx_addon + visual_guidance_addon
 
+    # Mode Kecepatan & Penalaran khusus per-tier ShiroHaru-Lyra-Agent
+    lyra_thinking_mode = lyra_tier_info.get("thinking_mode", "standard") if lyra_tier_info else None
+    if is_lyra_model and not is_reasoning_enabled and api_version != "v3":
+        if lyra_thinking_mode == "off":
+            system_prompt += (
+                "\n\n[Mode Cepat ShiroHaru-Lyra Low]: Jawab cepat, padat, langsung ke inti, "
+                "dan tetap fungsional tanpa bertele-tele."
+            )
+        elif lyra_thinking_mode == "light":
+            system_prompt += (
+                "\n\n[Mode Seimbang ShiroHaru-Lyra Medium]: Jawab langsung dengan cepat, jelas, "
+                "dan lengkap tanpa proses berpikir berpanjang-panjang."
+            )
+
     visual_evidence_text = ""
     has_vision_handler = bool(
         getattr(state, "vision_chat_handler", None) or 
@@ -607,6 +638,24 @@ def _prepare_inference_payload(
         user_text = "\n".join(parts_user)
         user_turn_msg = {"role": "user", "content": user_text}
 
+    # Soft-switch resmi Qwen3/Qwen3.8 (/no_think) pada mode Low & Medium agar respons langsung keluar tanpa blok <think> panjang
+    if is_lyra_model and not is_reasoning_enabled and api_version != "v3" and lyra_thinking_mode in ("off", "light"):
+        c_val = user_turn_msg.get("content")
+        if isinstance(c_val, list):
+            new_parts = list(c_val)
+            appended = False
+            for idx_p in range(len(new_parts) - 1, -1, -1):
+                if isinstance(new_parts[idx_p], dict) and new_parts[idx_p].get("type") == "text":
+                    new_parts[idx_p] = dict(new_parts[idx_p])
+                    new_parts[idx_p]["text"] = str(new_parts[idx_p].get("text", "")) + "\n/no_think"
+                    appended = True
+                    break
+            if not appended:
+                new_parts.append({"type": "text", "text": "/no_think"})
+            user_turn_msg["content"] = new_parts
+        else:
+            user_turn_msg["content"] = str(c_val or "") + "\n/no_think"
+
     msgs = [{"role": "system", "content": system_prompt}]
     msgs.extend(clean_context)
     msgs.append(user_turn_msg)
@@ -642,6 +691,8 @@ def _prepare_inference_payload(
     # Generation Parameters
     if max_tokens:
         desired_max = int(max_tokens)
+    elif is_lyra_model:
+        desired_max = int(model_max_out)
     elif api_version == "v2":
         desired_max = max(model_max_out, 4096)
     elif is_reasoning_enabled or tools:
@@ -660,13 +711,14 @@ def _prepare_inference_payload(
     if not is_reasoning_enabled:
         stop_tokens.extend(["\nOkay, let me", "\nThe user is"])
 
+    tier_top_k = int(lyra_tier_info.get("top_k", 40)) if lyra_tier_info else 40
     gen_params = {
         "temperature": 0.45 if has_image else (0.65 if api_version == "v2" else 0.55),
         "repeat_penalty": 1.08,
         "frequency_penalty": 0.0,
         "presence_penalty": 0.0,
         "top_p": 0.85,
-        "top_k": 40,
+        "top_k": tier_top_k,
         "max_tokens": max_output_tokens,
         "stop": stop_tokens
     }
@@ -678,6 +730,7 @@ def _prepare_inference_payload(
         "nodes": nodes,
         "llm": llm,
         "active_model_name": active_model_name,
+        "lyra_tier_info": lyra_tier_info,
         "raw_user_typed": raw_user_typed,
         "msgs": msgs,
         "call_kwargs": call_kwargs,
@@ -952,7 +1005,8 @@ def get_shiro_reply(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
     include_reasoning: bool = False,
-    max_tokens: Optional[int] = None
+    max_tokens: Optional[int] = None,
+    lyra_tier: Optional[str] = None
 ) -> Union[str, Tuple[str, Any]]:
     """
     Eksekusi pipeline kognitif Shiro (Synchronous Non-Streaming).
@@ -972,6 +1026,7 @@ def get_shiro_reply(
             reasoning_effort=reasoning_effort,
             include_reasoning=include_reasoning,
             max_tokens=max_tokens,
+            lyra_tier=lyra_tier,
             t_start_total=t_start_total
         )
         llm = prep["llm"]
@@ -1107,7 +1162,8 @@ def stream_shiro_reply(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
     include_reasoning: bool = False,
-    max_tokens: Optional[int] = None
+    max_tokens: Optional[int] = None,
+    lyra_tier: Optional[str] = None
 ) -> Generator[Dict[str, Any], None, None]:
     """
     Eksekusi streaming token neural real-time (Server-Sent Events generator).
@@ -1175,6 +1231,7 @@ def stream_shiro_reply(
             reasoning_effort=reasoning_effort,
             include_reasoning=include_reasoning,
             max_tokens=max_tokens,
+            lyra_tier=lyra_tier,
             t_start_total=t_start_total
         )
         if prep.get("agent_action_data"):
@@ -1282,8 +1339,16 @@ def stream_shiro_reply(
             worker_thread.start()
             worker_started = True
 
-            from shiro.llm.cleaner import is_user_input_foreign_or_english, contains_english_segments, translate_to_indonesian_fast
+            from shiro.llm.cleaner import (
+                is_user_input_foreign_or_english,
+                contains_english_segments,
+                translate_to_indonesian_fast,
+                replace_inline_english_idioms,
+                is_predominantly_english,
+            )
             should_guard_id = bool(raw_user_typed and not is_user_input_foreign_or_english(raw_user_typed) and api_version != "v3")
+            lyra_tier_info = prep.get("lyra_tier_info")
+            lyra_tier_id = lyra_tier_info["id"] if lyra_tier_info else "high"
             clause_buf = ""
             streamed_reply_acc = ""
 
@@ -1291,14 +1356,19 @@ def stream_shiro_reply(
                 if not seg or not seg.strip():
                     return seg
                 if should_guard_id and "```" not in seg and contains_english_segments(seg):
-                    lead_ws = re.match(r'^\s*', seg).group(0)
-                    trail_ws = re.search(r'\s*$', seg).group(0)
-                    tr = translate_to_indonesian_fast(seg.strip())
-                    if tr and tr.strip():
-                        return lead_ws + tr.strip() + trail_ws
+                    replaced = replace_inline_english_idioms(seg)
+                    # Di mode Low atau kalimat campuran istilah teknis, hindari blocking HTTP translate tiap baris
+                    if lyra_tier_id != "low" and is_predominantly_english(replaced.strip()):
+                        lead_ws = re.match(r'^\s*', replaced).group(0)
+                        trail_ws = re.search(r'\s*$', replaced).group(0)
+                        tr = translate_to_indonesian_fast(replaced.strip())
+                        if tr and tr.strip():
+                            return lead_ws + tr.strip() + trail_ws
+                    return replaced
                 return seg
 
             in_think = False
+            thinking_status_sent = False
             while True:
                 try:
                     ev_kind, ev_val = chunk_queue.get(timeout=ping_interval)
@@ -1333,6 +1403,9 @@ def stream_shiro_reply(
                     if not is_reasoning_enabled:
                         if "<think>" in token or ("<think>" in raw_reply and "</think>" not in raw_reply):
                             in_think = True
+                            if not thinking_status_sent:
+                                thinking_status_sent = True
+                                yield {"type": "status", "status": f"{prep.get('ai_name', 'Shiro')} sedang menalar mendalam..."}
                             now = time.perf_counter()
                             if now - last_ping_time > ping_interval:
                                 yield {"type": "ping"}
@@ -1345,6 +1418,10 @@ def stream_shiro_reply(
                                 token = after_think
                             else:
                                 continue
+
+                    # Jangan kirim spasi/newline kosong sebelum karakter terlihat pertama keluar (agar status UI tetap akurat)
+                    if not streamed_reply_acc and not clause_buf and not token.strip():
+                        continue
 
                     if not should_guard_id or (raw_reply.count("```") % 2 == 1):
                         if clause_buf:
@@ -1376,6 +1453,12 @@ def stream_shiro_reply(
                                     yield {"type": "token", "token": flushed}
                                     clause_buf = tail_part
                                     last_ping_time = time.perf_counter()
+                        elif len(clause_buf) >= 120:
+                            flushed = _flush_stream_seg(clause_buf)
+                            streamed_reply_acc += flushed
+                            yield {"type": "token", "token": flushed}
+                            clause_buf = ""
+                            last_ping_time = time.perf_counter()
 
                 now = time.perf_counter()
                 if now - last_ping_time > ping_interval:

@@ -293,6 +293,7 @@ def set_lyra_context_tier():
     try:
         data = request.json or {}
         req_tier = data.get("tier") or data.get("lyra_tier")
+        defer_reload = bool(data.get("defer_reload", False))
         if not is_valid_lyra_tier(req_tier):
             valid_ids = [t["id"] for t in LYRA_CONTEXT_TIERS]
             return jsonify({"error": f"Tier tidak valid. Pilihan: {', '.join(valid_ids)}"}), 400
@@ -309,6 +310,22 @@ def set_lyra_context_tier():
 
         save_lyra_tier(tier_id)
         os.environ.pop("SHIRO_QWEN38_27B_CONTEXT_SIZE", None)
+
+        if defer_reload:
+            actual_ctx = get_active_model_ctx(state.llm) if state.llm is not None else target_tokens
+            return jsonify({
+                "success": True,
+                "lyra_tier": tier_id,
+                "tier_label": tier_label,
+                "display_name": LYRA_DISPLAY_NAME,
+                "requested_tokens": target_tokens,
+                "active_context_window": actual_ctx,
+                "reloaded": False,
+                "deferred": True,
+                "cpu_capped": (get_gpu_layers() == 0),
+                "fallback_applied": False,
+                "message": f"{tier_label} dipilih."
+            })
 
         with state.llm_lock:
             gpu_layers = get_gpu_layers()

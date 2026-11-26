@@ -264,6 +264,133 @@ class TestLyraAliasAndTiers(unittest.TestCase):
         for forbidden in ("190k", "262", "500k", "700k", "1m", "tokens", "toknes", "("):
             self.assertNotIn(forbidden, lower_menu, f"Submenu tidak boleh mengandung '{forbidden}'")
 
+    def test_tiers_have_distinct_speed_and_output_profiles(self):
+        """Setiap tier harus punya kapasitas max_output dan thinking_mode yang benar-benar berbeda."""
+        expected_profiles = [
+            ("low", 2048, "off", 16, 20),
+            ("medium", 4096, "light", 32, 30),
+            ("high", 16384, "standard", 64, 40),
+            ("extra_high", 24576, "deep", 128, 40),
+            ("ultra_high", 32768, "ultra", None, 50),
+        ]
+        for tier_id, max_out, think_mode, max_hist, top_k in expected_profiles:
+            t = sm.resolve_lyra_tier(tier_id)
+            self.assertEqual(t["max_output"], max_out)
+            self.assertEqual(t["thinking_mode"], think_mode)
+            self.assertEqual(t["max_history_turns"], max_hist)
+            self.assertEqual(t["top_k"], top_k)
+
+    def test_prepare_payload_differentiates_low_vs_high_vs_ultra(self):
+        """Low memakai /no_think, max_tokens <= 2048, history <= 16; High/Ultra High bebas menalar & max_tokens jauh lebih besar."""
+        from shiro.pipeline.inference import _prepare_inference_payload
+
+        fake_llm = MagicMock()
+        fake_llm.model_path = LYRA_REAL_PATH
+        fake_llm.n_ctx = lambda: 500000
+        state.llm = fake_llm
+        state.vision_chat_handler = None
+
+        long_history = []
+        for i in range(40):
+            long_history.append({"role": "user", "content": f"Pesan {i}"})
+            long_history.append({"role": "assistant", "content": f"Balasan {i}"})
+        long_history.append({"role": "user", "content": "Buatkan website login modern"})
+
+        with patch("shiro.models.get_gpu_layers", return_value=-1):
+            prep_low = _prepare_inference_payload(
+                "Buatkan website login modern",
+                incoming_messages=long_history,
+                lyra_tier="low",
+            )
+            prep_med = _prepare_inference_payload(
+                "Buatkan website login modern",
+                incoming_messages=long_history,
+                lyra_tier="medium",
+            )
+            prep_high = _prepare_inference_payload(
+                "Buatkan website login modern",
+                incoming_messages=long_history,
+                lyra_tier="high",
+            )
+            prep_ultra = _prepare_inference_payload(
+                "Buatkan website login modern",
+                incoming_messages=long_history,
+                lyra_tier="ultra_high",
+            )
+
+        self.assertLessEqual(prep_low["call_kwargs"]["max_tokens"], 2048)
+        self.assertEqual(prep_low["call_kwargs"]["top_k"], 20)
+        self.assertIn("/no_think", prep_low["user_turn_msg"]["content"])
+        # 1 system + <= 16 history turns + 1 user turn = <= 18
+        self.assertLessEqual(len(prep_low["msgs"]), 18)
+
+        self.assertLessEqual(prep_med["call_kwargs"]["max_tokens"], 4096)
+        self.assertEqual(prep_med["call_kwargs"]["top_k"], 30)
+        self.assertIn("/no_think", prep_med["user_turn_msg"]["content"])
+
+        self.assertEqual(prep_high["call_kwargs"]["max_tokens"], 16384)
+        self.assertNotIn("/no_think", prep_high["user_turn_msg"]["content"])
+
+        self.assertEqual(prep_ultra["call_kwargs"]["max_tokens"], 32768)
+        self.assertEqual(prep_ultra["call_kwargs"]["top_k"], 50)
+        self.assertNotIn("/no_think", prep_ultra["user_turn_msg"]["content"])
+
+    def test_context_tier_defer_reload_returns_instantly(self):
+        """POST /api/models/context-tier dengan defer_reload=true menyimpan pilihan tanpa me-reload model secara memblokir."""
+        fake_cur = MagicMock()
+        fake_cur.model_path = LYRA_REAL_PATH
+        fake_cur.n_ctx = lambda: 500000
+        state.llm = fake_cur
+
+        fake_cfg = {
+            "current_model": LYRA_REAL_PATH,
+            "auto_detect": True,
+            "available_models": [LYRA_REAL_PATH],
+            "model_info": {LYRA_REAL_PATH: {"name": "ShiroHaru-Lyra-Agent", "size": "~16.8 GB"}},
+            "lyra_tier": "high",
+        }
+        with patch("shiro.routes.admin.load_model_config", return_value=fake_cfg), \
+             patch("shiro.routes.admin.save_lyra_tier") as mock_save, \
+             patch("shiro.routes.admin.get_gpu_layers", return_value=-1), \
+             patch("shiro.routes.admin.instantiate_llama_model") as mock_inst:
+            resp = self.client.post("/api/models/context-tier", json={"tier": "low", "defer_reload": True})
+            self.assertEqual(resp.status_code, 200)
+            data = resp.get_json()
+            self.assertTrue(data["success"])
+            self.assertTrue(data["deferred"])
+            self.assertFalse(data["reloaded"])
+            self.assertEqual(data["lyra_tier"], "low")
+            mock_save.assert_called_once_with("low")
+            mock_inst.assert_not_called()
+
+    def test_stream_skips_leading_whitespace_after_think(self):
+        """Stream tidak boleh mengirim token spasi kosong sebelum teks nyata setelah </think>."""
+        from shiro.pipeline.inference import stream_shiro_reply
+
+        class FakeThinkStreamLLM:
+            model_path = LYRA_REAL_PATH
+
+            def n_ctx(self):
+                return 500000
+
+            def create_chat_completion(self, messages, stream=False, **kwargs):
+                def _gen():
+                    yield {"choices": [{"delta": {"content": "<think>"}}]}
+                    yield {"choices": [{"delta": {"content": "berpikir..."}}]}
+                    yield {"choices": [{"delta": {"content": "</think>"}}]}
+                    yield {"choices": [{"delta": {"content": "\n\n"}}]}
+                    yield {"choices": [{"delta": {"content": "Halo Kakak!\n"}}]}
+
+                return _gen()
+
+        state.llm = FakeThinkStreamLLM()
+        with patch("shiro.models.get_gpu_layers", return_value=-1):
+            events = list(stream_shiro_reply("halo", lyra_tier="high"))
+
+        token_events = [e["token"] for e in events if e.get("type") == "token"]
+        self.assertTrue(len(token_events) > 0)
+        self.assertTrue(token_events[0].strip(), f"Token pertama tidak boleh hanya spasi kosong: {token_events!r}")
+
 
 if __name__ == "__main__":
     unittest.main()
