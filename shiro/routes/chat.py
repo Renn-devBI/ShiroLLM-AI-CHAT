@@ -177,6 +177,35 @@ def chat():
             except ValueError as e_mode:
                 reply = f"[MoE] {e_mode}"
             return jsonify({"reply": reply, "system_command": True, "moe": moe.status()})
+
+        # Perintah kontrol cepat Local PC Agent: /agent status|mode|admin|on|off
+        from shiro.agent.local_agent import (
+            parse_agent_command,
+            get_agent_status,
+            save_agent_settings,
+            should_route_to_local_agent,
+        )
+        agent_ctrl = parse_agent_command(user_message)
+        if agent_ctrl and agent_ctrl.get("cmd") != "run":
+            cmd_type = agent_ctrl["cmd"]
+            if cmd_type == "mode":
+                st = save_agent_settings({"approval_mode": agent_ctrl["value"]})
+                reply = f"[Agent PC] Mode persetujuan diatur ke `{st['approval_mode']}`."
+            elif cmd_type == "admin":
+                st = save_agent_settings({"allow_admin": agent_ctrl["value"]})
+                reply = f"[Agent PC] Pre-otorisasi Administrator (UAC): `{'AKTIF' if st['allow_admin'] else 'NONAKTIF'}`."
+            elif cmd_type == "enabled":
+                st = save_agent_settings({"enabled": agent_ctrl["value"]})
+                reply = f"[Agent PC] Mode Agen Otonom PC Lokal: `{'AKTIF' if st['enabled'] else 'NONAKTIF'}`."
+            else:
+                st = get_agent_status()
+                env_lbl = "PC Lokal (Aktif)" if st["is_local_pc"] else "Google Colab (Dinonaktifkan otomatis)"
+                reply = (
+                    f"[Agent PC] Lingkungan: {env_lbl} • Status: {'AKTIF' if st['effective_enabled'] else 'NONAKTIF'} "
+                    f"• Mode: `{st['approval_mode']}` • Admin UAC Pre-Auth: `{'YA' if st['allow_admin'] else 'TIDAK'}` "
+                    f"• Workspace: `{st['effective_workspace']}`"
+                )
+            return jsonify({"reply": reply, "system_command": True, "agent_status": st})
         
         # Fleksibel mendukung teks panjang / kode pemrograman hingga 120.000 karakter (atau 1.200.000 khusus Qwen3.8-27B-Uncensored 500K)
         from shiro.models import is_qwen38_27b_uncensored
@@ -243,7 +272,44 @@ def chat():
             memory.save_memory()
 
         # 2. NON-STREAMING FALLBACK (Jika client eksplisit meminta stream: false)
+        agent_route = should_route_to_local_agent(user_message, has_image=bool(image_base64))
+
         if not stream_mode:
+            if agent_route.get("route"):
+                from shiro.agent.autonomous_runner import autonomous_runner
+                ag_res = autonomous_runner.run_task(
+                    agent_route["task"],
+                    state.llm,
+                    session_id=active_sess_id,
+                )
+                reply = ag_res.get("reply", "")
+                assistant_msg_id = None
+                if ag_res.get("status") in ("completed", "rejected") and reply:
+                    with memory.lock:
+                        assistant_msg_id = memory.add_message("assistant", reply)
+                        memory.update_emotional_state_from_response(reply)
+                        memory.update_mood_from_emotions()
+                        if training_enabled:
+                            memory.record_learned_pattern(log_msg, reply)
+                        if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
+                            memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
+                            memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
+                        if len(memory.short_term_history) > 500:
+                            compress_old_messages(memory, keep_count=500)
+                        memory.save_memory()
+                return jsonify({
+                    "reply": reply,
+                    "status": ag_res.get("status"),
+                    "task_id": ag_res.get("task_id"),
+                    "plan": ag_res.get("plan"),
+                    "pending_action": ag_res.get("pending_action"),
+                    "agent_action": ag_res.get("agent_action"),
+                    "user_message_id": user_msg_id,
+                    "assistant_message_id": assistant_msg_id,
+                    "count": memory.system_metadata["total_turns"],
+                    "active_session_id": active_sess_id,
+                })
+
             reply, trace = get_shiro_reply(
                 user_message,
                 image_base64=image_base64,
@@ -308,6 +374,8 @@ def chat():
             trace = None
             assistant_img_url = None
             agent_action = None
+            agent_plan = None
+            agent_status = None
 
             # Kirim metadata awal segera agar UI mendapatkan user_msg_id
             init_payload = {
@@ -320,37 +388,70 @@ def chat():
             yield f"data: {py_json.dumps(init_payload)}\n\n"
 
             try:
-                for event in stream_shiro_reply(
-                    user_message,
-                    image_base64=image_base64,
-                    document_info=document_info,
-                    max_tokens=user_max_tokens
-                ):
-                    ev_type = event.get("type")
-                    if ev_type == "ping":
-                        yield ": ping\n\n"
-                    elif ev_type == "token":
-                        token = event.get("token", "")
-                        full_reply += token
-                        yield f"data: {py_json.dumps({'type': 'token', 'token': token})}\n\n"
-                    elif ev_type == "status":
-                        yield f"data: {py_json.dumps({'type': 'status', 'status': event.get('status', '')})}\n\n"
-                    elif ev_type == "agent_action":
-                        agent_action = event.get("agent_action")
-                        if agent_action and agent_action.get("image_url"):
-                            assistant_img_url = agent_action.get("image_url")
-                        yield f"data: {py_json.dumps({'type': 'agent_action', 'agent_action': agent_action})}\n\n"
-                    elif ev_type == "error":
-                        err_text = event.get("error", "Terjadi kesalahan internal.")
-                        err_reply = event.get("reply", f"*menatap cemas* Maaf Kakak, ada kendala teknis: {str(err_text)[:60]}")
-                        if not full_reply:
-                            full_reply = err_reply
-                        yield f"data: {py_json.dumps({'type': 'error', 'error': err_text, 'reply': err_reply})}\n\n"
-                    elif ev_type == "done":
-                        full_reply = event.get("reply", full_reply)
-                        trace = event.get("trace")
-                        if trace and isinstance(trace.get("agent_action"), dict):
-                            assistant_img_url = trace["agent_action"].get("image_url")
+                if agent_route.get("route"):
+                    from shiro.agent.autonomous_runner import autonomous_runner
+                    for event in autonomous_runner.run_task_stream(
+                        agent_route["task"],
+                        state.llm,
+                        session_id=active_sess_id,
+                    ):
+                        ev_type = event.get("type")
+                        if ev_type == "token":
+                            token = event.get("token", "")
+                            full_reply += token
+                            yield f"data: {py_json.dumps({'type': 'token', 'token': token})}\n\n"
+                        elif ev_type == "status":
+                            yield f"data: {py_json.dumps({'type': 'status', 'status': event.get('status', '')})}\n\n"
+                        elif ev_type in ("agent_plan", "agent_step", "approval_required"):
+                            if event.get("plan"):
+                                agent_plan = event.get("plan")
+                            yield f"data: {py_json.dumps(event)}\n\n"
+                        elif ev_type == "agent_action":
+                            agent_action = event.get("agent_action")
+                            yield f"data: {py_json.dumps({'type': 'agent_action', 'agent_action': agent_action})}\n\n"
+                        elif ev_type == "error":
+                            err_text = event.get("error", "Terjadi kesalahan internal.")
+                            err_reply = f"*menatap cemas* Maaf Kakak, ada kendala teknis: {str(err_text)[:80]}"
+                            if not full_reply:
+                                full_reply = err_reply
+                            yield f"data: {py_json.dumps({'type': 'error', 'error': err_text, 'reply': err_reply})}\n\n"
+                        elif ev_type == "done":
+                            full_reply = event.get("reply", full_reply)
+                            trace = event.get("trace")
+                            agent_plan = event.get("plan", agent_plan)
+                            agent_status = event.get("status", agent_status)
+                else:
+                    for event in stream_shiro_reply(
+                        user_message,
+                        image_base64=image_base64,
+                        document_info=document_info,
+                        max_tokens=user_max_tokens
+                    ):
+                        ev_type = event.get("type")
+                        if ev_type == "ping":
+                            yield ": ping\n\n"
+                        elif ev_type == "token":
+                            token = event.get("token", "")
+                            full_reply += token
+                            yield f"data: {py_json.dumps({'type': 'token', 'token': token})}\n\n"
+                        elif ev_type == "status":
+                            yield f"data: {py_json.dumps({'type': 'status', 'status': event.get('status', '')})}\n\n"
+                        elif ev_type == "agent_action":
+                            agent_action = event.get("agent_action")
+                            if agent_action and agent_action.get("image_url"):
+                                assistant_img_url = agent_action.get("image_url")
+                            yield f"data: {py_json.dumps({'type': 'agent_action', 'agent_action': agent_action})}\n\n"
+                        elif ev_type == "error":
+                            err_text = event.get("error", "Terjadi kesalahan internal.")
+                            err_reply = event.get("reply", f"*menatap cemas* Maaf Kakak, ada kendala teknis: {str(err_text)[:60]}")
+                            if not full_reply:
+                                full_reply = err_reply
+                            yield f"data: {py_json.dumps({'type': 'error', 'error': err_text, 'reply': err_reply})}\n\n"
+                        elif ev_type == "done":
+                            full_reply = event.get("reply", full_reply)
+                            trace = event.get("trace")
+                            if trace and isinstance(trace.get("agent_action"), dict):
+                                assistant_img_url = trace["agent_action"].get("image_url")
             except (GeneratorExit, BrokenPipeError, ConnectionResetError):
                 print("[Stream] Client disconnected or aborted by user.")
             except Exception as e_stream:
@@ -394,6 +495,8 @@ def chat():
                                 "session_title": session_title,
                                 "pipeline_trace": trace,
                                 "agent_action": agent_action or (trace.get("agent_action") if trace else None),
+                                "plan": agent_plan,
+                                "status": agent_status,
                                 "count": memory.system_metadata["total_turns"],
                                 "mood": memory.agent_persona.get("current_mood", "Neutral")
                             }

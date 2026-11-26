@@ -48,7 +48,8 @@ from shiro.routes import (
     openai_bp,
     documents_bp,
     sessions_bp,
-    admin_bp
+    admin_bp,
+    agent_bp
 )
 
 # Initialize Flask App
@@ -66,6 +67,7 @@ app.register_blueprint(openai_bp)
 app.register_blueprint(documents_bp)
 app.register_blueprint(sessions_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(agent_bp)
 
 # Error Handlers
 @app.errorhandler(404)

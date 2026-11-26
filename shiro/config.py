@@ -16,6 +16,7 @@ PROFILE_DIR = os.environ.get("SHIRO_PROFILE_DIR", "profile")
 MODEL_DIR = os.environ.get("SHIRO_MODEL_DIR", "model")
 MODEL_CONFIG_FILE = os.environ.get("SHIRO_MODEL_CONFIG", "model_config.json")
 API_KEY_FILE = os.environ.get("SHIRO_API_KEY_FILE", "api_key.json")
+AGENT_SETTINGS_FILE = os.environ.get("SHIRO_AGENT_SETTINGS_FILE", "agent_settings.json")
 TRAINING_DIR = os.environ.get("SHIRO_TRAINING_DIR", "training_data")
 MEMORY_TEMPLATE_FILE = str(BASE_DIR / "data" / "templates" / "ingatan_shiro.template.json")
 

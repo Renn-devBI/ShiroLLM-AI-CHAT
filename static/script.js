@@ -1260,6 +1260,9 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         } else if (tool === 'realtime_clock') {
             toolIcon = 'ph-clock';
             toolTitle = 'Jam Dunia';
+        } else if (tool === 'local_autonomous_agent') {
+            toolIcon = 'ph-terminal-window';
+            toolTitle = 'Antigravity Local Agent';
         }
         
         const obsText = agentActionData.observation || JSON.stringify(agentActionData.details || {}, null, 2);
@@ -1766,6 +1769,8 @@ async function sendMessage() {
             let activeAgentAction = null;
             let activeAssistantImgUrl = null;
             let lastRenderTime = 0;
+            let awaitingApproval = false;
+            let lastAgentTaskId = null;
 
             const updateAssistantUI = (text, isDone = false) => {
                 const trimmedText = (text || '').trim();
@@ -1880,6 +1885,20 @@ async function sendMessage() {
                                     updateTypingStatus(evData.status);
                                     status.textContent = evData.status;
                                 }
+                            } else if (evData.type === 'agent_plan') {
+                                lastAgentTaskId = evData.task_id;
+                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, null);
+                                updateTypingStatus('Rencana siap · Memulai eksekusi...');
+                            } else if (evData.type === 'agent_step') {
+                                lastAgentTaskId = evData.task_id;
+                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, evData, null);
+                                updateTypingStatus(`Langkah ${evData.step_index}: ${evData.tool} (${evData.status})...`);
+                            } else if (evData.type === 'approval_required') {
+                                awaitingApproval = true;
+                                lastAgentTaskId = evData.task_id;
+                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, evData.pending_action);
+                                status.textContent = 'Menunggu persetujuan Anda...';
+                                updateTypingStatus('Menunggu persetujuan pengguna...');
                             } else if (evData.type === 'agent_action') {
                                 activeAgentAction = evData.agent_action;
                                 if (activeAgentAction && activeAgentAction.image_url) {
@@ -1928,6 +1947,13 @@ async function sendMessage() {
             // Render final setelah pembacaan stream tuntas
             if (typingProgressInterval) clearInterval(typingProgressInterval);
             showTyping(false);
+            if (awaitingApproval && !streamText && !finalData) {
+                // Tugas berhenti sementara menunggu klik Approve / Reject dari user
+                clearPipelineSimulation();
+                status.textContent = 'Menunggu persetujuan Anda...';
+                scrollToBottom(true);
+                return;
+            }
             // Selalu gunakan respons final yang sudah difilter / dibersihkan / diterjemahkan oleh server jika ada
             if (finalData && finalData.reply && finalData.reply.trim()) {
                 streamText = finalData.reply.trim();
@@ -1937,6 +1963,9 @@ async function sendMessage() {
             if (!streamText) {
                 // Safeguard: AI tidak boleh menghilang atau kosong
                 streamText = '*menatap cemas* Maaf Kakak, Shiro tidak dapat menyelesaikan respons ini (koneksi terputus atau server tidak memberikan jawaban).';
+            }
+            if (lastAgentTaskId && finalData && finalData.plan) {
+                createOrUpdateAgentWorkspaceCard(lastAgentTaskId, finalData.plan, null, null, finalData.status || 'completed');
             }
             updateAssistantUI(streamText, true);
                 if (assistantMsgEl) {
@@ -3371,12 +3400,24 @@ const settingsModal = document.getElementById('settings-modal');
 const settingsBtn = document.getElementById('settings-btn');
 const closeSettingsBtn = document.getElementById('close-settings');
 
-function openSettings() {
+function openSettings(defaultTab) {
     settingsModal.classList.remove('hidden');
+    if (typeof defaultTab === 'string' && defaultTab) {
+        const targetBtn = document.querySelector(`#settings-modal .tab-btn[data-tab="${defaultTab}"]`);
+        const targetPanel = document.getElementById(`${defaultTab}-tab`);
+        if (targetBtn && targetPanel) {
+            document.querySelectorAll('#settings-modal .tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('#settings-modal .tab-content').forEach(c => c.classList.remove('active'));
+            targetBtn.classList.add('active');
+            targetPanel.classList.add('active');
+            if (defaultTab === 'api') loadApiKey();
+        }
+    }
     loadProfiles();
     loadModels();
     loadPrivacySettings();
     loadMoeSettings();
+    loadAgentSettings();
     setTimeout(() => {
         initModalTabsScroll();
     }, 40);
@@ -4543,7 +4584,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         await Promise.allSettled([
             loadProfiles(),
             loadPrivacySettings(),
-            loadModels()
+            loadModels(),
+            loadAgentSettings()
         ]);
     } catch (e) {
         console.error('Profiles/models error:', e);
@@ -4683,3 +4725,324 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     refresh();
 })();
+
+
+// ============================================================================
+// Antigravity Local PC Agent Controls & Live Plan Card
+// ============================================================================
+
+async function loadAgentSettings() {
+    try {
+        const res = await fetch('/api/agent/settings');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const banner = document.getElementById('agent-env-banner');
+        const bannerText = document.getElementById('agent-env-status-text');
+        if (banner && bannerText) {
+            if (data.is_local_pc) {
+                banner.classList.remove('is-colab');
+                const adminTxt = data.is_os_admin ? 'Hak OS: Administrator' : 'Hak OS: User Standar (UAC On-Demand)';
+                bannerText.textContent = `PC Lokal (${data.os_name || 'PC'}) • ${adminTxt} • Status: ${data.effective_enabled ? 'AKTIF' : 'NONAKTIF'}`;
+            } else {
+                banner.classList.add('is-colab');
+                bannerText.textContent = 'Lingkungan Google Colab terdeteksi: Mode Agent PC Lokal otomatis dinonaktifkan (hanya aktif di PC lokal).';
+            }
+        }
+
+        const enabledEl = document.getElementById('agent-enabled-toggle');
+        const modeEl = document.getElementById('agent-approval-mode');
+        const adminEl = document.getElementById('agent-allow-admin-toggle');
+        const wsEl = document.getElementById('agent-workspace-input');
+        const stepsEl = document.getElementById('agent-max-steps-input');
+
+        if (enabledEl) enabledEl.checked = Boolean(data.enabled);
+        if (modeEl && data.approval_mode) modeEl.value = data.approval_mode;
+        if (adminEl) adminEl.checked = Boolean(data.allow_admin);
+        if (wsEl) wsEl.value = data.workspace_root || '';
+        if (stepsEl && data.max_steps) stepsEl.value = data.max_steps;
+    } catch (e) {
+        console.error('Error loading Local Agent settings:', e);
+    }
+}
+
+async function saveAgentSettings() {
+    const enabledEl = document.getElementById('agent-enabled-toggle');
+    const modeEl = document.getElementById('agent-approval-mode');
+    const adminEl = document.getElementById('agent-allow-admin-toggle');
+    const wsEl = document.getElementById('agent-workspace-input');
+    const stepsEl = document.getElementById('agent-max-steps-input');
+
+    const payload = {
+        enabled: enabledEl ? enabledEl.checked : true,
+        approval_mode: modeEl ? modeEl.value : 'ask',
+        allow_admin: adminEl ? adminEl.checked : false,
+        workspace_root: wsEl ? wsEl.value.trim() : '',
+        max_steps: stepsEl ? parseInt(stepsEl.value || '12', 10) : 12
+    };
+
+    try {
+        const res = await fetch('/api/agent/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast('Pengaturan Agent PC Lokal berhasil disimpan');
+            loadAgentSettings();
+        } else {
+            showToast('Gagal menyimpan pengaturan Agent: ' + (data.error || 'Error'));
+        }
+    } catch (e) {
+        showToast('Error menyimpan pengaturan Agent: ' + e.message);
+    }
+}
+
+function createOrUpdateAgentWorkspaceCard(taskId, plan, stepEvent = null, approvalEvent = null, overrideStatus = null) {
+    if (!taskId || !chatMessages) return null;
+    const cardId = `ag-card-${taskId}`;
+    let card = document.getElementById(cardId);
+
+    if (!card) {
+        card = document.createElement('div');
+        card.id = cardId;
+        card.className = 'antigravity-plan-card';
+        card.innerHTML = `
+            <div class="ag-plan-header">
+                <div class="ag-plan-title">
+                    <i class="ph ph-terminal-window"></i>
+                    <span class="ag-goal-text">Menyusun rencana...</span>
+                </div>
+                <span class="ag-plan-badge">Merencanakan</span>
+            </div>
+            <ul class="ag-step-list"></ul>
+            <div class="ag-step-logs"></div>
+            <div class="ag-approval-slot"></div>
+        `;
+        chatMessages.appendChild(card);
+    }
+
+    const goalEl = card.querySelector('.ag-goal-text');
+    const badgeEl = card.querySelector('.ag-plan-badge');
+    const listEl = card.querySelector('.ag-step-list');
+    const logsEl = card.querySelector('.ag-step-logs');
+    const approvalSlot = card.querySelector('.ag-approval-slot');
+
+    if (plan && goalEl) {
+        goalEl.textContent = plan.goal || 'Tugas Otonom PC Lokal';
+    }
+
+    let badgeStatus = overrideStatus || (approvalEvent ? 'awaiting_approval' : 'running');
+    const badgeLabels = {
+        planning: 'Merencanakan',
+        running: 'Menjalankan',
+        awaiting_approval: 'Menunggu Persetujuan',
+        completed: 'Selesai',
+        rejected: 'Dibatalkan'
+    };
+    if (badgeEl) {
+        badgeEl.className = `ag-plan-badge status-${badgeStatus}`;
+        badgeEl.textContent = badgeLabels[badgeStatus] || 'Menjalankan';
+    }
+
+    if (plan && Array.isArray(plan.steps) && listEl) {
+        listEl.innerHTML = plan.steps.map((st, idx) => {
+            const stStatus = st.status || 'pending';
+            let icon = 'ph-circle';
+            if (stStatus === 'done') icon = 'ph-check-circle';
+            else if (stStatus === 'in_progress') icon = 'ph-spinner';
+            else if (stStatus === 'awaiting_approval') icon = 'ph-shield-warning';
+            else if (stStatus === 'failed') icon = 'ph-x-circle';
+            else if (stStatus === 'skipped') icon = 'ph-minus-circle';
+
+            const risk = st.risk || 'exec';
+            const riskLabel = risk === 'admin' ? 'ADMIN / UAC' : risk;
+            return `
+                <li class="ag-step-item step-${escapeHtml(stStatus)}">
+                    <i class="ph ${icon}"></i>
+                    <span>${idx + 1}. ${escapeHtml(st.title || '')}</span>
+                    <span class="ag-risk-badge risk-${escapeHtml(risk)}">${escapeHtml(riskLabel)}</span>
+                </li>
+            `;
+        }).join('');
+    }
+
+    if (stepEvent && logsEl) {
+        const entry = document.createElement('div');
+        entry.className = 'ag-log-entry';
+        const argsStr = stepEvent.args ? JSON.stringify(stepEvent.args, null, 2) : '{}';
+        const outStr = stepEvent.output || stepEvent.summary || '';
+        const riskTag = stepEvent.risk === 'admin' ? ' [ADMIN / UAC]' : '';
+        entry.innerHTML = `
+            <details>
+                <summary>${escapeHtml(stepEvent.status === 'done' ? '✓' : '✗')} Langkah ${stepEvent.step_index}: ${escapeHtml(stepEvent.tool)}${riskTag}</summary>
+                <pre>Args: ${escapeHtml(argsStr)}\n\nHasil:\n${escapeHtml(outStr)}</pre>
+            </details>
+        `;
+        logsEl.appendChild(entry);
+    }
+
+    if (approvalSlot) {
+        if (approvalEvent) {
+            const isAdmin = approvalEvent.risk === 'admin';
+            const argsPretty = JSON.stringify(approvalEvent.args || {}, null, 2);
+            const adminNotice = isAdmin
+                ? '<span class="ag-risk-badge risk-admin">ADMIN / UAC</span>'
+                : `<span class="ag-risk-badge risk-${escapeHtml(approvalEvent.risk || 'exec')}">${escapeHtml(approvalEvent.risk || 'exec')}</span>`;
+            const approveAllLabel = isAdmin ? 'Izinkan Admin (Sesi Ini)' : 'Setujui Semua (Sesi Ini)';
+            const approveAllDecision = isAdmin ? 'approve_admin' : 'approve_all';
+
+            approvalSlot.innerHTML = `
+                <div class="ag-approval-box ${isAdmin ? 'is-admin' : ''}">
+                    <div class="ag-approval-head">
+                        <span><i class="ph ph-shield-warning"></i> Konfirmasi Diperlukan: <code>${escapeHtml(approvalEvent.tool)}</code></span>
+                        ${adminNotice}
+                    </div>
+                    <div style="font-size:0.82rem;opacity:0.9;">${escapeHtml(approvalEvent.reason || '')}</div>
+                    <pre class="ag-approval-preview">${escapeHtml(argsPretty)}</pre>
+                    <div class="ag-approval-actions">
+                        <button type="button" class="btn-primary btn-sm" onclick="approveAgentTask('${escapeHtml(taskId)}', 'approve', this)">
+                            <i class="ph ph-check"></i> Setujui &amp; Jalankan
+                        </button>
+                        <button type="button" class="btn-secondary btn-sm" onclick="approveAgentTask('${escapeHtml(taskId)}', '${approveAllDecision}', this)">
+                            <i class="ph ph-checks"></i> ${approveAllLabel}
+                        </button>
+                        <button type="button" class="btn-secondary btn-sm" onclick="approveAgentTask('${escapeHtml(taskId)}', 'reject', this)">
+                            <i class="ph ph-x"></i> Tolak
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else if (overrideStatus === 'completed' || overrideStatus === 'rejected') {
+            approvalSlot.innerHTML = '';
+        }
+    }
+
+    scrollToBottom(false);
+    return card;
+}
+
+async function approveAgentTask(taskId, decision, triggerBtn) {
+    if (!taskId || !decision) return;
+    const card = document.getElementById(`ag-card-${taskId}`);
+    if (card) {
+        card.querySelectorAll('.ag-approval-actions button').forEach((btn) => {
+            btn.disabled = true;
+        });
+        const slot = card.querySelector('.ag-approval-slot');
+        if (slot) {
+            slot.innerHTML = `<div style="font-size:0.83rem;opacity:0.85;margin-top:8px;"><i class="ph ph-spinner"></i> Memproses keputusan (${escapeHtml(decision)})...</div>`;
+        }
+    } else if (triggerBtn) {
+        triggerBtn.disabled = true;
+    }
+
+    showTyping(true, 'Melanjutkan eksekusi Agen PC...');
+    status.textContent = 'Melanjutkan eksekusi Agen PC...';
+
+    try {
+        const res = await fetch('/api/agent/approve', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream, application/json'
+            },
+            body: JSON.stringify({ task_id: taskId, decision: decision, stream: true })
+        });
+
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('text/event-stream')) {
+            const data = await res.json();
+            showTyping(false);
+            if (data.status === 'awaiting_approval' && data.pending_action) {
+                createOrUpdateAgentWorkspaceCard(taskId, data.plan, null, data.pending_action);
+                status.textContent = 'Menunggu persetujuan Anda...';
+            } else {
+                createOrUpdateAgentWorkspaceCard(taskId, data.plan, null, null, data.status || 'completed');
+                if (data.reply) {
+                    addMessage('assistant', data.reply, null, null, null, null, null, data.agent_action || null, data.assistant_message_id || null, false);
+                }
+                status.textContent = t('status_ready');
+            }
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let finalReply = '';
+        let finalData = null;
+        let finalAction = null;
+        let nextApproval = false;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith('data:')) continue;
+                const jsonStr = trimmed.slice(5).trim();
+                if (!jsonStr) continue;
+                try {
+                    const ev = JSON.parse(jsonStr);
+                    if (ev.type === 'status') {
+                        status.textContent = ev.status || '';
+                        updateTypingStatus(ev.status || '');
+                    } else if (ev.type === 'agent_step') {
+                        createOrUpdateAgentWorkspaceCard(taskId, ev.plan, ev, null);
+                    } else if (ev.type === 'approval_required') {
+                        nextApproval = true;
+                        createOrUpdateAgentWorkspaceCard(taskId, ev.plan, null, ev.pending_action);
+                        status.textContent = 'Menunggu persetujuan Anda...';
+                    } else if (ev.type === 'agent_action') {
+                        finalAction = ev.agent_action;
+                    } else if (ev.type === 'token') {
+                        finalReply += ev.token || '';
+                    } else if (ev.type === 'error') {
+                        showToast('Error Agent: ' + (ev.error || 'Unknown'));
+                    } else if (ev.type === 'done') {
+                        finalData = ev;
+                        if (ev.reply) finalReply = ev.reply;
+                        if (ev.agent_action) finalAction = ev.agent_action;
+                    }
+                } catch (_) {}
+            }
+        }
+
+        showTyping(false);
+        if (nextApproval && !finalData) {
+            scrollToBottom(true);
+            return;
+        }
+
+        if (finalData) {
+            createOrUpdateAgentWorkspaceCard(taskId, finalData.plan, null, null, finalData.status || 'completed');
+        }
+        if (finalReply) {
+            addMessage(
+                'assistant',
+                finalReply,
+                null,
+                null,
+                null,
+                null,
+                null,
+                finalAction,
+                finalData ? finalData.assistant_message_id : null,
+                false
+            );
+        }
+        updateMemoryCount();
+        await loadSessions();
+        status.textContent = t('status_ready');
+    } catch (err) {
+        showTyping(false);
+        showToast('Gagal melanjutkan tugas Agent: ' + err.message);
+        status.textContent = t('status_ready');
+    }
+}

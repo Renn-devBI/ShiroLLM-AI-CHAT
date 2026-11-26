@@ -9,6 +9,7 @@ from shiro.routes.openai import openai_bp
 from shiro.routes.documents import documents_bp
 from shiro.routes.sessions import sessions_bp
 from shiro.routes.admin import admin_bp
+from shiro.routes.agent import agent_bp
 
 __all__ = [
     "views_bp",
@@ -16,5 +17,6 @@ __all__ = [
     "openai_bp",
     "documents_bp",
     "sessions_bp",
-    "admin_bp"
+    "admin_bp",
+    "agent_bp"
 ]

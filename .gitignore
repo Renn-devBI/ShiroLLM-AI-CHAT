@@ -8,6 +8,7 @@ __pycache__/
 *.tmp
 .cache/
 api_key.json
+agent_settings.json
 backup/
 
 # Large model binaries (Do NOT upload to GitHub, download in Colab)
