@@ -7,16 +7,29 @@ Modular Flask application orchestrating UI, REST, and OpenAI API endpoints.
 import os
 import sys
 import logging
+import faulthandler
 from flask import Flask, jsonify
 
-# Pre-configuration & UTF-8 Encoding
+# Aktifkan faulthandler agar traceback native crash selalu terekam di log
+try:
+    faulthandler.enable()
+except Exception:
+    pass
+
+# Pre-configuration & UTF-8 Encoding + line buffering agar log langsung tertulis real-time
 if hasattr(sys.stdout, 'reconfigure'):
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', line_buffering=True)
     except Exception:
         pass
 
 os.environ['PYTHONIOENCODING'] = 'utf-8'
+os.environ['PYTHONUNBUFFERED'] = '1'
 
 # Base Configuration & State
 from shiro.config import CONTEXT_SIZE, MODEL_DIR

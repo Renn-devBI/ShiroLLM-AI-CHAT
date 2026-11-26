@@ -5,6 +5,7 @@ Holds singleton references to LLM instance, Vision Chat Handler, Memory Manager,
 and Web Reader to decouple routes and inference modules from web.py.
 """
 
+import threading
 from typing import Optional, Any
 from shiro.config import MEMORY_FILE, WORLD_FILE
 
@@ -15,6 +16,13 @@ class ServerRuntimeState:
         self.memory: Optional[Any] = None
         self.web_reader: Optional[Any] = None
         self.serial_questions: int = 0
+        # Global lock untuk menserialisasi seluruh operasi llama.cpp (inferensi, vision, switch model)
+        # Mencegah race condition C++ (GGML_ASSERT / SIGABRT) akibat akses paralel ke llama_context
+        self.llm_lock = threading.Lock()
+
+    def is_llm_busy(self) -> bool:
+        """Memeriksa apakah instance LLM sedang digunakan untuk inferensi atau perpindahan model"""
+        return self.llm_lock.locked()
 
     def init_memory(self):
         """Inisialisasi AdvancedMemoryManager jika belum dimuat"""

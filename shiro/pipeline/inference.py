@@ -9,9 +9,14 @@ import os
 import re
 import json
 import time
+import queue
 import base64
+import threading
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple, Union, Generator
+
+# Interval heartbeat SSE (detik) saat menunggu lock / prompt prefill agar Cloudflare Tunnel tidak timeout (batas 100s)
+SSE_HEARTBEAT_INTERVAL = float(os.environ.get("SHIRO_SSE_PING_INTERVAL", "5.0"))
 
 from shiro.config import CONTEXT_SIZE
 from shiro.server_state import state
@@ -28,24 +33,38 @@ from shiro.llm.cleaner import clean_response, clean_vtuber_response
 from shiro.pipeline.trace import global_pipeline_manager
 
 def calculate_messages_tokens(messages: List[Dict[str, Any]], llm_instance: Any) -> int:
-    """Menghitung perkiraan jumlah token dari daftar pesan"""
+    """Menghitung perkiraan jumlah token dari daftar pesan secara thread-safe"""
     if not llm_instance:
         return sum(len(str(m.get('content', '')).split()) for m in messages)
+    # Gunakan non-blocking lock agar tidak pernah balapan dengan llama_decode / llm.close()
+    acquired = False
     try:
         if hasattr(llm_instance, 'tokenize'):
-            total = 0
-            for m in messages:
-                c = m.get('content', '')
-                if isinstance(c, list):
-                    for p in c:
-                        if isinstance(p, dict) and p.get('type') == 'text':
-                            total += len(llm_instance.tokenize(p.get('text', '').encode('utf-8')))
-                elif isinstance(c, str):
-                    total += len(llm_instance.tokenize(c.encode('utf-8')))
-            return total
+            acquired = state.llm_lock.acquire(blocking=False)
+            if acquired:
+                total = 0
+                for m in messages:
+                    c = m.get('content', '')
+                    if isinstance(c, list):
+                        for p in c:
+                            if isinstance(p, dict) and p.get('type') == 'text':
+                                total += len(llm_instance.tokenize(p.get('text', '').encode('utf-8')))
+                    elif isinstance(c, str):
+                        total += len(llm_instance.tokenize(c.encode('utf-8')))
+                return total
     except Exception:
         pass
-    return sum(len(str(m.get('content', '')).split()) for m in messages)
+    finally:
+        if acquired:
+            try:
+                state.llm_lock.release()
+            except RuntimeError:
+                pass
+    total_est = 0
+    for m in messages:
+        s = str(m.get('content', ''))
+        total_est += max(len(s.split()), len(s) // 3)
+    return total_est
 
 def _prepare_inference_payload(
     user_input: str,
@@ -963,61 +982,62 @@ def get_shiro_reply(
             raise RuntimeError("Model LLM belum dimuat di memori server.")
 
         t0 = time.perf_counter()
-        try:
-            if tools:
-                try:
-                    res = llm.create_chat_completion(
-                        messages=msgs,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        **call_kwargs
-                    )
-                except (TypeError, Exception):
-                    res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-            else:
-                res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-        except Exception as inf_err:
-            err_str = str(inf_err).lower()
-            if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
-                emergency_msgs = [{"role": "system", "content": system_prompt[:1200]}]
-                emergency_msgs.append(user_turn_msg)
-                res = llm.create_chat_completion(messages=emergency_msgs, **call_kwargs)
-            elif has_image and any(k in err_str for k in ["image", "list", "content", "dict", "str", "iterable"]):
-                from shiro.vision.bridge import extract_local_image_text_and_info
-                local_obs = extract_local_image_text_and_info(all_images) or "Gambar visual terlampir"
-                text_user = f"[Pengamatan Gambar Visual: {local_obs}]\n{raw_user_typed}"
-                msgs[-1] = {"role": "user", "content": text_user}
-                res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-            else:
-                raise inf_err
-
-        raw_reply = res['choices'][0]['message'].get('content', '') or ''
-        raw_reply = raw_reply.strip()
-
-        grounding_info = {"checked": False, "ungrounded": [], "regenerated": False}
-        if has_image and raw_reply:
-            from shiro.memory.gating import find_ungrounded_domains
-            grounding_info["checked"] = True
-            ungrounded = find_ungrounded_domains(raw_reply, [raw_user_typed, visual_evidence_text, web_prompt_addon])
-            grounding_info["ungrounded"] = ungrounded
-            if ungrounded:
-                correction = (
-                    f"\n\n[KOREKSI]: Jawaban sebelumnya menyebut {', '.join(ungrounded)} yang TIDAK ada di gambar maupun pesan Kakak. "
-                    "Jawab ulang hanya berdasarkan isi gambar ini."
-                )
-                fixed_turn = dict(user_turn_msg)
-                if isinstance(fixed_turn.get("content"), list):
-                    fixed_turn["content"] = list(fixed_turn["content"]) + [{"type": "text", "text": correction}]
+        with state.llm_lock:
+            try:
+                if tools:
+                    try:
+                        res = llm.create_chat_completion(
+                            messages=msgs,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            **call_kwargs
+                        )
+                    except (TypeError, Exception):
+                        res = llm.create_chat_completion(messages=msgs, **call_kwargs)
                 else:
-                    fixed_turn["content"] = str(fixed_turn.get("content", "")) + correction
-                try:
-                    res_retry = llm.create_chat_completion(messages=msgs[:-1] + [fixed_turn], **call_kwargs)
-                    retry_reply = (res_retry['choices'][0]['message'].get('content', '') or '').strip()
-                    if retry_reply:
-                        res, raw_reply = res_retry, retry_reply
-                        grounding_info["regenerated"] = True
-                except Exception as e_retry:
-                    print(f"[Grounding Verifier] Regenerasi gagal: {e_retry}")
+                    res = llm.create_chat_completion(messages=msgs, **call_kwargs)
+            except Exception as inf_err:
+                err_str = str(inf_err).lower()
+                if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
+                    emergency_msgs = [{"role": "system", "content": system_prompt[:1200]}]
+                    emergency_msgs.append(user_turn_msg)
+                    res = llm.create_chat_completion(messages=emergency_msgs, **call_kwargs)
+                elif has_image and any(k in err_str for k in ["image", "list", "content", "dict", "str", "iterable"]):
+                    from shiro.vision.bridge import extract_local_image_text_and_info
+                    local_obs = extract_local_image_text_and_info(all_images) or "Gambar visual terlampir"
+                    text_user = f"[Pengamatan Gambar Visual: {local_obs}]\n{raw_user_typed}"
+                    msgs[-1] = {"role": "user", "content": text_user}
+                    res = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                else:
+                    raise inf_err
+
+            raw_reply = res['choices'][0]['message'].get('content', '') or ''
+            raw_reply = raw_reply.strip()
+
+            grounding_info = {"checked": False, "ungrounded": [], "regenerated": False}
+            if has_image and raw_reply:
+                from shiro.memory.gating import find_ungrounded_domains
+                grounding_info["checked"] = True
+                ungrounded = find_ungrounded_domains(raw_reply, [raw_user_typed, visual_evidence_text, web_prompt_addon])
+                grounding_info["ungrounded"] = ungrounded
+                if ungrounded:
+                    correction = (
+                        f"\n\n[KOREKSI]: Jawaban sebelumnya menyebut {', '.join(ungrounded)} yang TIDAK ada di gambar maupun pesan Kakak. "
+                        "Jawab ulang hanya berdasarkan isi gambar ini."
+                    )
+                    fixed_turn = dict(user_turn_msg)
+                    if isinstance(fixed_turn.get("content"), list):
+                        fixed_turn["content"] = list(fixed_turn["content"]) + [{"type": "text", "text": correction}]
+                    else:
+                        fixed_turn["content"] = str(fixed_turn.get("content", "")) + correction
+                    try:
+                        res_retry = llm.create_chat_completion(messages=msgs[:-1] + [fixed_turn], **call_kwargs)
+                        retry_reply = (res_retry['choices'][0]['message'].get('content', '') or '').strip()
+                        if retry_reply:
+                            res, raw_reply = res_retry, retry_reply
+                            grounding_info["regenerated"] = True
+                    except Exception as e_retry:
+                        print(f"[Grounding Verifier] Regenerasi gagal: {e_retry}")
 
         t_llm_dur = (time.perf_counter() - t0) * 1000
         delivery_reply, trace, details = _finalize_inference_output(
@@ -1161,29 +1181,97 @@ def stream_shiro_reply(
 
         t0 = time.perf_counter()
         raw_reply = ""
+        ping_interval = max(0.05, float(SSE_HEARTBEAT_INTERVAL))
         last_ping_time = time.perf_counter()
 
-        # Kirim heartbeat ping sebelum llama.cpp memulai evaluasi prompt agar tunnel tidak timeout
+        # Kirim heartbeat ping awal agar Cloudflare Tunnel tetap hidup
         yield {"type": "ping"}
 
-        # Coba streaming native llama-cpp
-        stream_success = False
-        try:
-            stream_kwargs = dict(call_kwargs)
-            stream_kwargs["stream"] = True
+        # Serialisasi akses ke llama_context via global lock (mencegah GGML_ASSERT / SIGABRT paralel)
+        # Sambil menunggu lock, terus kirim heartbeat ping berkala agar koneksi tunnel tidak terputus
+        lock_acquired = state.llm_lock.acquire(blocking=False)
+        if not lock_acquired:
+            yield {"type": "status", "status": "Shiro sedang menyelesaikan proses sebelumnya, mohon tunggu sebentar..."}
+            wait_last_ping = time.perf_counter()
+            while not lock_acquired:
+                lock_acquired = state.llm_lock.acquire(timeout=min(0.5, ping_interval))
+                if not lock_acquired:
+                    now_wait = time.perf_counter()
+                    if now_wait - wait_last_ping >= ping_interval:
+                        yield {"type": "ping"}
+                        wait_last_ping = now_wait
 
-            if tools:
+        # Jalankan inferensi llama.cpp pada worker thread terpisah agar generator SSE bisa terus
+        # memancarkan ': ping' setiap beberapa detik selama prompt prefill (mencegah timeout 100s Cloudflare)
+        chunk_queue: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
+        cancel_event = threading.Event()
+        worker_started = False
+
+        def _llm_stream_worker():
+            stream_iter = None
+            try:
+                stream_kwargs = dict(call_kwargs)
+                stream_kwargs["stream"] = True
                 try:
-                    stream_iter = llm.create_chat_completion(
-                        messages=msgs,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        **stream_kwargs
-                    )
-                except (TypeError, Exception):
-                    stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
-            else:
-                stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
+                    if tools:
+                        try:
+                            stream_iter = llm.create_chat_completion(
+                                messages=msgs,
+                                tools=tools,
+                                tool_choice=tool_choice,
+                                **stream_kwargs
+                            )
+                        except (TypeError, Exception):
+                            stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
+                    else:
+                        stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
+
+                    for ch in stream_iter:
+                        if cancel_event.is_set():
+                            break
+                        chunk_queue.put(("chunk", ch))
+                except Exception as e_stream_inner:
+                    if cancel_event.is_set():
+                        return
+                    print(f"[Inference Stream Fallback]: {e_stream_inner}")
+                    # Fallback jika model/wrapper tidak mendukung generator stream=True
+                    if tools:
+                        try:
+                            res_sync = llm.create_chat_completion(
+                                messages=msgs,
+                                tools=tools,
+                                tool_choice=tool_choice,
+                                **call_kwargs
+                            )
+                        except (TypeError, Exception):
+                            res_sync = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                    else:
+                        res_sync = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                    if not cancel_event.is_set():
+                        chunk_queue.put(("sync_result", res_sync))
+            except Exception as e_worker:
+                if not cancel_event.is_set():
+                    chunk_queue.put(("error", e_worker))
+            finally:
+                if stream_iter is not None and hasattr(stream_iter, "close"):
+                    try:
+                        stream_iter.close()
+                    except Exception:
+                        pass
+                try:
+                    state.llm_lock.release()
+                except RuntimeError:
+                    pass
+                chunk_queue.put(("end", None))
+
+        try:
+            worker_thread = threading.Thread(
+                target=_llm_stream_worker,
+                name="shiro-llm-stream-worker",
+                daemon=True
+            )
+            worker_thread.start()
+            worker_started = True
 
             from shiro.llm.cleaner import is_user_input_foreign_or_english, contains_english_segments, translate_to_indonesian_fast
             should_guard_id = bool(raw_user_typed and not is_user_input_foreign_or_english(raw_user_typed) and api_version != "v3")
@@ -1202,8 +1290,31 @@ def stream_shiro_reply(
                 return seg
 
             in_think = False
-            for chunk in stream_iter:
-                choices = chunk.get("choices", [])
+            while True:
+                try:
+                    ev_kind, ev_val = chunk_queue.get(timeout=ping_interval)
+                except queue.Empty:
+                    yield {"type": "ping"}
+                    last_ping_time = time.perf_counter()
+                    continue
+
+                if ev_kind == "end":
+                    break
+                elif ev_kind == "error":
+                    raise ev_val
+                elif ev_kind == "sync_result":
+                    res_sync = ev_val
+                    sync_text = ""
+                    if isinstance(res_sync, dict) and res_sync.get("choices"):
+                        sync_text = res_sync["choices"][0].get("message", {}).get("content", "") or ""
+                    if sync_text:
+                        raw_reply = sync_text
+                        streamed_reply_acc = sync_text
+                        yield {"type": "token", "token": sync_text}
+                    continue
+
+                chunk = ev_val
+                choices = chunk.get("choices", []) if isinstance(chunk, dict) else []
                 if not choices:
                     continue
                 delta = choices[0].get("delta", {})
@@ -1214,7 +1325,7 @@ def stream_shiro_reply(
                         if "<think>" in token or ("<think>" in raw_reply and "</think>" not in raw_reply):
                             in_think = True
                             now = time.perf_counter()
-                            if now - last_ping_time > 8.0:
+                            if now - last_ping_time > ping_interval:
                                 yield {"type": "ping"}
                                 last_ping_time = now
                             continue
@@ -1258,7 +1369,7 @@ def stream_shiro_reply(
                                     last_ping_time = time.perf_counter()
 
                 now = time.perf_counter()
-                if now - last_ping_time > 8.0:
+                if now - last_ping_time > ping_interval:
                     yield {"type": "ping"}
                     last_ping_time = now
 
@@ -1269,25 +1380,13 @@ def stream_shiro_reply(
                 clause_buf = ""
             if should_guard_id and streamed_reply_acc.strip():
                 raw_reply = streamed_reply_acc
-
-            stream_success = True
-
-        except Exception as e_stream:
-            print(f"[Inference Stream Fallback]: {e_stream}")
-            # Fallback jika model/wrapper tidak mendukung generator stream=True
-            try:
-                if tools:
-                    try:
-                        res = llm.create_chat_completion(messages=msgs, tools=tools, tool_choice=tool_choice, **call_kwargs)
-                    except (TypeError, Exception):
-                        res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                else:
-                    res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                raw_reply = res['choices'][0]['message'].get('content', '') or ''
-                if raw_reply:
-                    yield {"type": "token", "token": raw_reply}
-            except Exception as e_sync:
-                raise e_sync
+        finally:
+            cancel_event.set()
+            if lock_acquired and not worker_started:
+                try:
+                    state.llm_lock.release()
+                except RuntimeError:
+                    pass
 
         t_llm_dur = (time.perf_counter() - t0) * 1000
         delivery_reply, trace, details = _finalize_inference_output(

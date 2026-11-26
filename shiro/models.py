@@ -41,9 +41,10 @@ KNOWN_SUPPORTED_ARCHITECTURES = {
     "baichuan", "internlm2", "minicpm", "deepseek2", "bloom"
 }
 
-# Konfigurasi Extended Context khusus Qwen3.8-27B-Uncensored (262K bawaan -> 500K via YaRN)
+# Konfigurasi Extended Context khusus Qwen3.8-27B-Uncensored (262K bawaan -> 500K via YaRN di GPU)
 QWEN38_27B_NATIVE_CTX = 262144
 QWEN38_27B_EXTENDED_CTX = int(os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE", "500000"))
+QWEN38_27B_CPU_SAFE_CTX = int(os.environ.get("SHIRO_QWEN38_27B_CPU_CONTEXT_SIZE", "32768"))
 QWEN38_27B_MAX_OUTPUT = 16384
 
 
@@ -67,12 +68,49 @@ def get_model_native_context_length(model_path: str, default: int = QWEN38_27B_N
     return default
 
 
+def _has_cuda_gpu() -> bool:
+    """Mendeteksi keberadaan GPU CUDA nyata (via torch.cuda atau nvidia-smi)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return True
+    except Exception:
+        pass
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["nvidia-smi", "-L"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=3
+        )
+        if res.returncode == 0 and b"GPU" in res.stdout:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _get_gpu_vram_gb() -> Optional[float]:
     """Mengambil kapasitas VRAM GPU pertama dalam GB jika CUDA tersedia."""
     try:
         import torch
         if torch.cuda.is_available():
             return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    except Exception:
+        pass
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=3
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            first_line = res.stdout.strip().splitlines()[0].strip()
+            return float(first_line) / 1024.0
     except Exception:
         pass
     return None
@@ -82,11 +120,14 @@ def build_qwen38_500k_llama_kwargs(
     model_path: str,
     chosen_ctx: int,
     llama_cpp_mod: Any = None,
-    kv_cache_override: Optional[str] = None
+    kv_cache_override: Optional[str] = None,
+    use_gpu: bool = True
 ) -> Dict[str, Any]:
     """
     Menyusun parameter YaRN RoPE scaling, Flash Attention, dan kuantisasi KV cache
-    khusus untuk model Qwen3.8-27B-Uncensored agar context dapat mencapai 500K.
+    khusus untuk model Qwen3.8-27B-Uncensored agar context dapat mencapai 500K di GPU.
+    Di mode CPU (use_gpu=False), flash_attn dan kuantisasi KV Q4_0 dinonaktifkan
+    untuk mencegah crash GGML_ASSERT pada backend ggml-cpu.
     """
     if not is_qwen38_27b_uncensored(model_path):
         return {}
@@ -104,7 +145,7 @@ def build_qwen38_500k_llama_kwargs(
         extra["yarn_beta_fast"] = 32.0
         extra["yarn_beta_slow"] = 1.0
 
-    if chosen_ctx > 65536:
+    if use_gpu and chosen_ctx > 65536:
         extra["flash_attn"] = True
         kv_mode = (kv_cache_override or os.environ.get("SHIRO_KV_CACHE_TYPE", "")).strip().lower()
         if not kv_mode:
@@ -126,6 +167,23 @@ def build_qwen38_500k_llama_kwargs(
     return extra
 
 
+def get_optimal_n_threads(gpu_layers: int) -> int:
+    """Menentukan jumlah CPU threads optimal agar inferensi CPU/GPU responsif."""
+    env_threads = os.environ.get("SHIRO_N_THREADS")
+    if env_threads:
+        try:
+            val = int(env_threads)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    cpu_cnt = os.cpu_count() or 4
+    if gpu_layers == 0:
+        # Mode CPU: gunakan sebagian besar core (maks 16) agar prefill tidak bottleneck di 4 thread
+        return max(4, min(cpu_cnt, 16))
+    # Mode GPU: cukup 4-8 thread CPU untuk orkestrasi tokenisasi & prompt prep
+    return max(4, min(cpu_cnt // 2 or 4, 8))
+
 
 # Deteksi GPU CUDA
 def get_gpu_layers() -> int:
@@ -136,33 +194,47 @@ def get_gpu_layers() -> int:
         except ValueError:
             pass
 
-    try:
-        import torch
-        if torch.cuda.is_available():
-            return -1  # Offload semua layer ke GPU
-    except Exception:
-        pass
+    if _has_cuda_gpu():
+        n_gpu_env = os.environ.get("N_GPU_LAYERS")
+        if n_gpu_env is not None:
+            try:
+                return int(n_gpu_env)
+            except ValueError:
+                pass
+        return -1  # Offload semua layer ke GPU
     return 0
 
 def get_optimal_model_tokens(model_path: str) -> Tuple[int, int]:
     """
     Menentukan batas context window (n_ctx) dan max output tokens secara dinamis
     menyesuaikan ukuran dan arsitektur model yang terdeteksi:
-    - Model Besar (27B - 32B+ / A100): n_ctx 16384 s/d 32768, output hingga 8192 token
-    - Model Sedang (7B - 14B / VL): n_ctx 8192 s/d 16384, output hingga 4096 token
+    - Qwen3.8-27B-Uncensored (GPU): 500K via YaRN (fallback aman 32K di mode CPU tanpa GPU)
+    - Model Besar (27B - 32B+ / A100): n_ctx 16384 s/d 32768, output hingga 16384 token
+    - Model Sedang (7B - 14B / VL): n_ctx 8192 s/d 16384, output hingga 8192 token
     - Model Ringan (3B - 4B / T4): n_ctx 4096 s/d 8192, output hingga 2048 token
     """
     if not model_path:
         return (CONTEXT_SIZE, DEFAULT_MAX_TOKENS)
 
-    # 0. Khusus Qwen3.8-27B-Uncensored: Extended Context 500K (dari 262K bawaan via YaRN)
-    if is_qwen38_27b_uncensored(model_path):
-        target_ctx = int(os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE", str(QWEN38_27B_EXTENDED_CTX)))
-        return (target_ctx, QWEN38_27B_MAX_OUTPUT)
-
-    name = os.path.basename(model_path).lower()
     gpu_layers = get_gpu_layers()
     is_gpu = gpu_layers != 0
+
+    # 0. Khusus Qwen3.8-27B-Uncensored: Extended Context 500K di GPU (aman 32K di CPU agar ggml-cpu tidak crash/OOM)
+    if is_qwen38_27b_uncensored(model_path):
+        explicit_ctx = os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE")
+        if explicit_ctx:
+            try:
+                target_ctx = int(explicit_ctx)
+            except ValueError:
+                target_ctx = QWEN38_27B_EXTENDED_CTX if is_gpu else QWEN38_27B_CPU_SAFE_CTX
+        elif is_gpu:
+            target_ctx = QWEN38_27B_EXTENDED_CTX
+        else:
+            target_ctx = QWEN38_27B_CPU_SAFE_CTX
+        max_out = QWEN38_27B_MAX_OUTPUT if is_gpu else 8192
+        return (target_ctx, max_out)
+
+    name = os.path.basename(model_path).lower()
 
     # 1. Model Besar: 27B, 32B, 70B, dll.
     if any(k in name for k in ["27b", "32b", "70b", "34b"]):
@@ -652,10 +724,11 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
     vision_handler = init_vision_handler(model_path)
 
     is_qwen38_unc = is_qwen38_27b_uncensored(model_path)
+    is_gpu = gpu_layers != 0
     optimal_ctx, optimal_out = get_optimal_model_tokens(model_path)
     env_ctx = os.environ.get("SHIRO_CONTEXT_SIZE")
     if is_qwen38_unc:
-        if env_ctx:
+        if is_gpu and env_ctx:
             try:
                 chosen_ctx = max(int(env_ctx), optimal_ctx)
             except Exception:
@@ -670,22 +743,35 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
     else:
         chosen_ctx = optimal_ctx
 
+    n_threads = get_optimal_n_threads(gpu_layers)
     llama_kwargs = {
         "model_path": model_path,
         "n_ctx": chosen_ctx,
-        "n_threads": 4,
+        "n_threads": n_threads,
         "n_gpu_layers": gpu_layers,
         "verbose": False,
     }
     orig_ctx = QWEN38_27B_NATIVE_CTX
     if is_qwen38_unc:
-        qwen_extra = build_qwen38_500k_llama_kwargs(model_path, chosen_ctx, llama_cpp_mod=llama_cpp)
+        qwen_extra = build_qwen38_500k_llama_kwargs(
+            model_path,
+            chosen_ctx,
+            llama_cpp_mod=llama_cpp,
+            use_gpu=is_gpu
+        )
         orig_ctx = qwen_extra.get("yarn_orig_ctx", get_model_native_context_length(model_path, default=QWEN38_27B_NATIVE_CTX))
         llama_kwargs.update(qwen_extra)
-        safe_print(
-            f"🚀 [Qwen3.8-27B-Uncensored] Extended Context aktif: {chosen_ctx:,} tokens "
-            f"(YaRN dari {orig_ctx:,}, flash_attn={qwen_extra.get('flash_attn', False)})"
-        )
+        if is_gpu and chosen_ctx > orig_ctx:
+            safe_print(
+                f"🚀 [Qwen3.8-27B-Uncensored] Extended Context aktif: {chosen_ctx:,} tokens "
+                f"(YaRN dari {orig_ctx:,}, flash_attn={qwen_extra.get('flash_attn', False)})"
+            )
+        elif not is_gpu:
+            safe_print(
+                f"⚠️ [Qwen3.8-27B-Uncensored] Mode CPU terdeteksi (n_threads={n_threads}): "
+                f"Context diamankan ke {chosen_ctx:,} tokens untuk mencegah crash GGML/OOM di CPU. "
+                f"Aktifkan GPU (A100/L4/T4) untuk 500K Extended Context & kecepatan penuh!"
+            )
 
     if vision_handler:
         llama_kwargs["chat_handler"] = vision_handler

@@ -376,6 +376,8 @@ def chat():
             agent_action = None
             agent_plan = None
             agent_status = None
+            client_disconnected = False
+            active_stream_gen = None
 
             # Kirim metadata awal segera agar UI mendapatkan user_msg_id
             init_payload = {
@@ -390,11 +392,12 @@ def chat():
             try:
                 if agent_route.get("route"):
                     from shiro.agent.autonomous_runner import autonomous_runner
-                    for event in autonomous_runner.run_task_stream(
+                    active_stream_gen = autonomous_runner.run_task_stream(
                         agent_route["task"],
                         state.llm,
                         session_id=active_sess_id,
-                    ):
+                    )
+                    for event in active_stream_gen:
                         ev_type = event.get("type")
                         if ev_type == "token":
                             token = event.get("token", "")
@@ -421,12 +424,13 @@ def chat():
                             agent_plan = event.get("plan", agent_plan)
                             agent_status = event.get("status", agent_status)
                 else:
-                    for event in stream_shiro_reply(
+                    active_stream_gen = stream_shiro_reply(
                         user_message,
                         image_base64=image_base64,
                         document_info=document_info,
                         max_tokens=user_max_tokens
-                    ):
+                    )
+                    for event in active_stream_gen:
                         ev_type = event.get("type")
                         if ev_type == "ping":
                             yield ": ping\n\n"
@@ -453,14 +457,27 @@ def chat():
                             if trace and isinstance(trace.get("agent_action"), dict):
                                 assistant_img_url = trace["agent_action"].get("image_url")
             except (GeneratorExit, BrokenPipeError, ConnectionResetError):
+                client_disconnected = True
                 print("[Stream] Client disconnected or aborted by user.")
+                if active_stream_gen is not None:
+                    try:
+                        active_stream_gen.close()
+                    except Exception:
+                        pass
             except Exception as e_stream:
                 print(f"[Stream Error]: {e_stream}")
                 if not full_reply:
                     full_reply = f"*menatap cemas* Maaf Kakak, ada kendala: {str(e_stream)[:60]}"
-                yield f"data: {py_json.dumps({'type': 'error', 'error': str(e_stream)})}\n\n"
+                if not client_disconnected:
+                    yield f"data: {py_json.dumps({'type': 'error', 'error': str(e_stream)})}\n\n"
             finally:
+                if active_stream_gen is not None:
+                    try:
+                        active_stream_gen.close()
+                    except Exception:
+                        pass
                 # Simpan jawaban ke memori bahkan jika koneksi terputus di tengah jalan
+                done_payload = None
                 try:
                     if full_reply and full_reply.strip():
                         with memory.lock:
@@ -500,9 +517,13 @@ def chat():
                                 "count": memory.system_metadata["total_turns"],
                                 "mood": memory.agent_persona.get("current_mood", "Neutral")
                             }
-                            yield f"data: {py_json.dumps(done_payload)}\n\n"
                 except Exception as e_fin:
                     print(f"[Stream Finalize Error]: {e_fin}")
+                if done_payload is not None and not client_disconnected:
+                    try:
+                        yield f"data: {py_json.dumps(done_payload)}\n\n"
+                    except (GeneratorExit, BrokenPipeError, ConnectionResetError):
+                        pass
 
         stream_resp = Response(generate_chat_stream(), mimetype="text/event-stream")
         stream_resp.headers["Cache-Control"] = "no-cache"

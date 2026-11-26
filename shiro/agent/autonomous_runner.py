@@ -164,12 +164,14 @@ class AutonomousAgentRunner:
         max_tokens: int = 2048,
         temperature: float = 0.2
     ) -> Tuple[str, Optional[Dict[str, Any]]]:
-        res = llm.create_chat_completion(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.9,
-        )
+        from shiro.server_state import state as server_state
+        with server_state.llm_lock:
+            res = llm.create_chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,
+            )
         raw = ""
         if isinstance(res, dict) and res.get("choices"):
             raw = res["choices"][0].get("message", {}).get("content", "") or ""

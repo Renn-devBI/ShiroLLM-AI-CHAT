@@ -21,10 +21,26 @@ from shiro.models import (
     is_running_in_colab,
     instantiate_llama_model,
     instantiate_llama_model_with_autodetect,
-    get_active_model_ctx
+    get_active_model_ctx,
+    get_gpu_layers
 )
 
 admin_bp = Blueprint("admin_bp", __name__)
+
+@admin_bp.route('/api/health', methods=['GET'])
+def health_check():
+    """Lightweight health check endpoint untuk watchdog Colab & monitoring server"""
+    model_path = getattr(state.llm, 'model_path', '') if state.llm else ''
+    return jsonify({
+        "status": "ok" if state.llm is not None else "degraded",
+        "model_loaded": state.llm is not None,
+        "model_name": os.path.basename(model_path) if model_path else None,
+        "busy": state.is_llm_busy(),
+        "gpu_layers": get_gpu_layers(),
+        "active_context_window": get_active_model_ctx(state.llm) if state.llm is not None else 0,
+        "is_colab": is_running_in_colab(),
+        "timestamp": datetime.now().isoformat()
+    })
 
 @admin_bp.route('/api/key', methods=['GET'])
 def get_api_key_info():
@@ -264,39 +280,40 @@ def switch_model():
 
         # Opsi Auto-Detect: Pilih dan aktifkan model terbaik secara otomatis
         if model_path.lower() in ("auto", "autodetect", "auto-detect"):
-            old_llm = state.llm
-            try:
-                if state.llm is not None:
-                    try:
-                        if hasattr(state.llm, 'close'):
-                            state.llm.close()
-                    except Exception as e_close:
-                        print(f"Warning closing previous LLM: {e_close}")
-                    state.llm = None
-                    gc.collect()
+            with state.llm_lock:
+                old_llm = state.llm
+                try:
+                    if state.llm is not None:
+                        try:
+                            if hasattr(state.llm, 'close'):
+                                state.llm.close()
+                        except Exception as e_close:
+                            print(f"Warning closing previous LLM: {e_close}")
+                        state.llm = None
+                        gc.collect()
 
-                new_llm, vision_handler, active_path = instantiate_llama_model_with_autodetect(None)
-                state.set_llm(new_llm, vision_handler)
+                    new_llm, vision_handler, active_path = instantiate_llama_model_with_autodetect(None)
+                    state.set_llm(new_llm, vision_handler)
 
-                config["current_model"] = active_path
-                config["auto_detect"] = True
-                save_model_config(config)
+                    config["current_model"] = active_path
+                    config["auto_detect"] = True
+                    save_model_config(config)
 
-                model_name = os.path.basename(active_path)
-                active_ctx = get_active_model_ctx(new_llm)
-                print(f"[Admin] Autodetect berhasil beralih ke: {model_name} (Context Window: {active_ctx:,} tokens)")
-                return jsonify({
-                    "success": True,
-                    "message": f"Model switched to {model_name} (Auto-detected)",
-                    "current_model": active_path,
-                    "active_context_window": active_ctx,
-                    "has_vision": bool(vision_handler is not None)
-                })
-            except Exception as load_error:
-                print(f"[Admin] Error in autodetect switch: {load_error}")
-                if state.llm is None and old_llm is not None:
-                    state.llm = old_llm
-                return jsonify({"error": f"Gagal autodetect model: {str(load_error)[:120]}"}), 500
+                    model_name = os.path.basename(active_path)
+                    active_ctx = get_active_model_ctx(new_llm)
+                    print(f"[Admin] Autodetect berhasil beralih ke: {model_name} (Context Window: {active_ctx:,} tokens)")
+                    return jsonify({
+                        "success": True,
+                        "message": f"Model switched to {model_name} (Auto-detected)",
+                        "current_model": active_path,
+                        "active_context_window": active_ctx,
+                        "has_vision": bool(vision_handler is not None)
+                    })
+                except Exception as load_error:
+                    print(f"[Admin] Error in autodetect switch: {load_error}")
+                    if state.llm is None and old_llm is not None:
+                        state.llm = old_llm
+                    return jsonify({"error": f"Gagal autodetect model: {str(load_error)[:120]}"}), 500
 
         target_path = None
         target_lora_ver = None
@@ -332,38 +349,39 @@ def switch_model():
         if file_size_gb < 0.1:
             return jsonify({"error": f"File model '{model_name}' rusak atau belum selesai diunduh"}), 400
 
-        old_llm = state.llm
-        try:
-            if state.llm is not None:
-                try:
-                    if hasattr(state.llm, 'close'):
-                        state.llm.close()
-                except Exception as e_close:
-                    print(f"Warning closing previous LLM: {e_close}")
-                state.llm = None
-                gc.collect()
+        with state.llm_lock:
+            old_llm = state.llm
+            try:
+                if state.llm is not None:
+                    try:
+                        if hasattr(state.llm, 'close'):
+                            state.llm.close()
+                    except Exception as e_close:
+                        print(f"Warning closing previous LLM: {e_close}")
+                    state.llm = None
+                    gc.collect()
 
-            new_llm, vision_handler = instantiate_llama_model(model_path, lora_version=target_lora_ver)
-            state.set_llm(new_llm, vision_handler)
+                new_llm, vision_handler = instantiate_llama_model(model_path, lora_version=target_lora_ver)
+                state.set_llm(new_llm, vision_handler)
 
-            config["current_model"] = model_path
-            save_model_config(config)
+                config["current_model"] = model_path
+                save_model_config(config)
 
-            active_ctx = get_active_model_ctx(new_llm)
-            print(f"[Admin] Berhasil beralih ke model: {model_name} (Context Window: {active_ctx:,} tokens)")
-            return jsonify({
-                "success": True,
-                "message": f"Model switched to {model_name}",
-                "current_model": model_path,
-                "active_context_window": active_ctx,
-                "has_vision": bool(vision_handler is not None)
-            })
+                active_ctx = get_active_model_ctx(new_llm)
+                print(f"[Admin] Berhasil beralih ke model: {model_name} (Context Window: {active_ctx:,} tokens)")
+                return jsonify({
+                    "success": True,
+                    "message": f"Model switched to {model_name}",
+                    "current_model": model_path,
+                    "active_context_window": active_ctx,
+                    "has_vision": bool(vision_handler is not None)
+                })
 
-        except Exception as load_error:
-            print(f"[Admin] Error loading model: {load_error}")
-            if state.llm is None and old_llm is not None:
-                state.llm = old_llm
-            return jsonify({"error": f"Gagal load model: {str(load_error)[:120]}"}), 500
+            except Exception as load_error:
+                print(f"[Admin] Error loading model: {load_error}")
+                if state.llm is None and old_llm is not None:
+                    state.llm = old_llm
+                return jsonify({"error": f"Gagal load model: {str(load_error)[:120]}"}), 500
 
     except Exception as e:
         print(f"[Admin] Error in switch_model: {e}")
