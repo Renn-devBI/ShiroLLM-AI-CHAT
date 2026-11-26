@@ -362,6 +362,48 @@ class TestServerStability(unittest.TestCase):
             self.assertIn("pip", pip_calls[0])
             self.assertIn("https://example.com/cuda-cp313.whl", pip_calls[0])
 
+    def test_detect_cuda_tag_ignores_cu13x_when_runtime_is_cuda12(self):
+        """Jika nvidia-smi melaporkan driver 13.0 tetapi libcudart terpasang adalah 12.x, cu13x disaring keluar."""
+        fake_smi_130 = MagicMock(returncode=0, stdout="| NVIDIA-SMI 580.65  CUDA Version: 13.0 |", stderr="")
+        with patch("shiro.colab_watchdog.subprocess.run", return_value=fake_smi_130), \
+             patch("shiro.colab_watchdog._detect_installed_cuda_runtime_major", return_value=12):
+            tags = detect_cuda_tag()
+            self.assertFalse(any(t.startswith("cu13") for t in tags))
+            self.assertEqual(tags[:3], ["cu128", "cu126", "cu124"])
+
+    def test_wait_for_server_ready_streams_log_progress(self):
+        """wait_for_server_ready mencetak baris progres baru dari log_path dan mengembalikan True saat /api/health 200."""
+        import io
+        import tempfile
+        from contextlib import redirect_stdout
+        from shiro.colab_watchdog import wait_for_server_ready
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tf:
+            tmp_log = tf.name
+            tf.write("llama_model_loader: loaded meta data\n")
+            tf.write("✓ Model loaded: ShiroHaru-Lyra-Agent\n")
+
+        try:
+            proc = MagicMock()
+            proc.poll.return_value = None
+            resp_ok = MagicMock(status=200)
+            cm_ok = MagicMock()
+            cm_ok.__enter__.return_value = resp_ok
+
+            buf = io.StringIO()
+            with patch("shiro.colab_watchdog.urllib.request.urlopen", return_value=cm_ok), \
+                 redirect_stdout(buf):
+                ok = wait_for_server_ready(proc, timeout_sec=10, port=7474, log_path=tmp_log)
+            self.assertTrue(ok)
+            out = buf.getvalue()
+            self.assertIn("Model loaded: ShiroHaru-Lyra-Agent", out)
+            self.assertNotIn("llama_model_loader", out)
+        finally:
+            try:
+                os.remove(tmp_log)
+            except OSError:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

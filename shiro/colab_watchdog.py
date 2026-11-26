@@ -105,12 +105,44 @@ def refresh_cuda_ldconfig() -> str:
     return os.environ.get("LD_LIBRARY_PATH", "")
 
 
+def _detect_installed_cuda_runtime_major() -> Optional[int]:
+    """Mendeteksi versi mayor libcudart.so yang terpasang di disk (misal 12 atau 13)."""
+    search_dirs: List[str] = [x for x in os.environ.get("LD_LIBRARY_PATH", "").split(":") if x]
+    candidate_globs = [
+        "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+        "/usr/lib/python*/dist-packages/nvidia/*/lib",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12*/lib64",
+        "/usr/local/cuda-13*/lib64",
+        "/usr/lib/x86_64-linux-gnu",
+    ]
+    for pattern in candidate_globs:
+        for p in glob.glob(pattern):
+            if os.path.isdir(p) and p not in search_dirs:
+                search_dirs.append(p)
+
+    has_12 = False
+    has_13 = False
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        if glob.glob(os.path.join(d, "libcudart.so.12*")):
+            has_12 = True
+        if glob.glob(os.path.join(d, "libcudart.so.13*")):
+            has_13 = True
+    if has_13 and not has_12:
+        return 13
+    if has_12 and not has_13:
+        return 12
+    return None
+
+
 def detect_cuda_tag() -> List[str]:
-    """Mendeteksi versi CUDA driver/runtime terpasang lalu mengembalikan urutan tag wheel paling kompatibel."""
+    """Mendeteksi versi CUDA runtime/driver terpasang lalu mengembalikan urutan tag wheel paling kompatibel."""
     ver: Optional[Tuple[int, int]] = None
     for cmd, pattern in [
-        (["nvidia-smi"], r"CUDA Version:\s*(\d+)\.(\d+)"),
         (["nvcc", "--version"], r"release\s+(\d+)\.(\d+)"),
+        (["nvidia-smi"], r"CUDA Version:\s*(\d+)\.(\d+)"),
     ]:
         try:
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=4)
@@ -133,18 +165,26 @@ def detect_cuda_tag() -> List[str]:
             pass
 
     if ver is None:
-        return ["cu124", "cu126", "cu128"]
-    if ver >= (13, 2):
-        return ["cu132", "cu131", "cu130", "cu128", "cu126", "cu124"]
-    if ver >= (13, 1):
-        return ["cu131", "cu130", "cu128", "cu126", "cu124"]
-    if ver >= (13, 0):
-        return ["cu130", "cu128", "cu126", "cu124"]
-    if ver >= (12, 8):
-        return ["cu128", "cu126", "cu124"]
-    if ver >= (12, 6):
-        return ["cu126", "cu124"]
-    return ["cu124", "cu126", "cu128"]
+        tags = ["cu128", "cu126", "cu124"]
+    elif ver >= (13, 2):
+        tags = ["cu132", "cu131", "cu130", "cu128", "cu126", "cu124"]
+    elif ver >= (13, 1):
+        tags = ["cu131", "cu130", "cu128", "cu126", "cu124"]
+    elif ver >= (13, 0):
+        tags = ["cu130", "cu128", "cu126", "cu124"]
+    elif ver >= (12, 8):
+        tags = ["cu128", "cu126", "cu124"]
+    elif ver >= (12, 6):
+        tags = ["cu126", "cu124"]
+    else:
+        tags = ["cu124", "cu126", "cu128"]
+
+    # Driver nvidia-smi kadang melaporkan 13.0 sementara libcudart di container hanya CUDA 12.x
+    installed_major = _detect_installed_cuda_runtime_major()
+    if installed_major == 12:
+        filtered = [t for t in tags if not t.startswith("cu13")]
+        tags = filtered or ["cu128", "cu126", "cu124"]
+    return tags
 
 
 def check_cuda_offload_subprocess() -> bool:
@@ -183,7 +223,7 @@ def find_prebuilt_cuda_wheel_url(
             "https://api.github.com/repos/JamePeng/llama-cpp-python/releases?per_page=25",
             headers={"User-Agent": "Shiro-LLMA"},
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             releases = json.loads(resp.read().decode("utf-8", errors="ignore"))
         if isinstance(releases, list):
             for rel in releases:
@@ -246,8 +286,8 @@ def ensure_cuda_llama_cpp(force: bool = False) -> bool:
     print("=" * 62, flush=True)
 
     wheel_urls = find_prebuilt_cuda_wheel_url(py_tag=py_tag)
-    for whl_url in wheel_urls[:4]:
-        print(f"📦 Mencoba wheel CUDA pra-kompilasi: {os.path.basename(whl_url)}", flush=True)
+    for whl_url in wheel_urls[:2]:
+        print(f"📦 Memasang wheel CUDA pra-kompilasi: {os.path.basename(whl_url)} ...", flush=True)
         try:
             res = subprocess.run(
                 [
@@ -270,10 +310,26 @@ def ensure_cuda_llama_cpp(force: bool = False) -> bool:
                 if check_cuda_offload_subprocess():
                     print("✅ Akselerasi CUDA GPU (llama_supports_gpu_offload=True) BERHASIL DIAKTIFKAN!", flush=True)
                     return True
+                try:
+                    diag = subprocess.run(
+                        [sys.executable, "-c", "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=dict(os.environ),
+                        timeout=15,
+                    )
+                    reason = (diag.stderr or diag.stdout or "llama_supports_gpu_offload=False").strip()[-350:]
+                except Exception as diag_err:
+                    reason = str(diag_err)
+                print(f"⚠️ Wheel terpasang tetapi CUDA offload masih False ({reason})", flush=True)
+            else:
+                err_tail = (res.stderr or res.stdout or f"exit={res.returncode}").strip()[-350:]
+                print(f"⚠️ pip gagal memasang wheel ({os.path.basename(whl_url)}): {err_tail}", flush=True)
         except Exception as e_whl:
             print(f"⚠️ Gagal memasang wheel ({os.path.basename(whl_url)}): {e_whl}", flush=True)
 
-    print("🛠️ Wheel pra-kompilasi tidak cocok, mengompilasi ulang llama-cpp-python dengan CUDA...", flush=True)
+    print("🛠️ Wheel pra-kompilasi belum aktif, mengompilasi llama-cpp-python dengan CUDA (mungkin perlu beberapa menit)...", flush=True)
     build_env = dict(os.environ)
     build_env["CMAKE_ARGS"] = "-DGGML_CUDA=on -DGGML_CUDA_FA_ALL_QUANTS=on -DCMAKE_CUDA_ARCHITECTURES=native"
     build_env["CMAKE_BUILD_PARALLEL_LEVEL"] = str(max(2, os.cpu_count() or 4))
@@ -324,13 +380,55 @@ def wait_for_server_ready(
     server_proc: subprocess.Popen,
     timeout_sec: int = 180,
     port: int = 7474,
+    log_path: Optional[str] = None,
 ) -> bool:
-    """Menunggu hingga Flask server merespons 200 di /api/health atau /api/key."""
+    """Menunggu hingga Flask server merespons 200 di /api/health atau /api/key sambil menampilkan progres log."""
     urls = [f"http://127.0.0.1:{port}/api/health", f"http://127.0.0.1:{port}/api/key"]
-    deadline = time.monotonic() + timeout_sec
+    active_log = log_path
+    if active_log is None and os.path.exists("/content/shiro_server.log"):
+        active_log = "/content/shiro_server.log"
+
+    last_pos = 0
+    start_at = time.monotonic()
+    last_output_at = start_at
+    deadline = start_at + timeout_sec
+
+    def _is_noisy_ggml_line(line: str) -> bool:
+        low = line.lower()
+        noisy_prefixes = (
+            "llama_model_loader:",
+            "llm_load_tensors:",
+            "llm_load_print_meta:",
+            "llama_kv_cache_init:",
+            "llama_new_context_with_model:",
+            "ggml_cuda_init:",
+            "clip_model_loader:",
+        )
+        return low.startswith(noisy_prefixes)
+
     while time.monotonic() < deadline:
         if server_proc.poll() is not None:
             return False
+
+        if active_log and os.path.exists(active_log):
+            try:
+                with open(active_log, "r", encoding="utf-8", errors="ignore") as lf:
+                    lf.seek(last_pos)
+                    chunk = lf.read()
+                    last_pos = lf.tell()
+                if chunk:
+                    meaningful: List[str] = []
+                    for raw_line in chunk.splitlines():
+                        s = raw_line.strip()
+                        if not s or _is_noisy_ggml_line(s):
+                            continue
+                        meaningful.append(s)
+                    for msg in meaningful[:6]:
+                        print(f"   {msg}", flush=True)
+                        last_output_at = time.monotonic()
+            except Exception:
+                pass
+
         for url in urls:
             try:
                 with urllib.request.urlopen(url, timeout=1.5) as resp:
@@ -338,6 +436,11 @@ def wait_for_server_ready(
                         return True
             except Exception:
                 pass
+
+        now = time.monotonic()
+        if (now - last_output_at) >= 15.0:
+            print(f"⏳ Masih memuat model Shiro... ({int(now - start_at)}d)", flush=True)
+            last_output_at = now
         time.sleep(1.0)
     return False
 

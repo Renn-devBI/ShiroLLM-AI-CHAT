@@ -306,14 +306,17 @@ def build_colab_max_gpu_kwargs(
     cpu_cnt = os.cpu_count() or 8
 
     if vram is not None and vram >= 70.0:
-        n_batch = 8192
-        n_ubatch = 2048
-    elif vram is not None and vram >= 35.0:
         n_batch = 4096
-        n_ubatch = 1024
+        n_ubatch = 512
+    elif vram is not None and vram >= 35.0:
+        n_batch = 2048
+        n_ubatch = 512
     else:
         n_batch = 2048
         n_ubatch = 512
+
+    force_mlock = os.environ.get("SHIRO_FORCE_MLOCK", "").strip().lower() in ("1", "true", "yes")
+    use_mlock = bool(force_mlock and ram is not None and ram >= 40.0)
 
     max_kwargs: Dict[str, Any] = {
         "n_gpu_layers": -1,
@@ -323,13 +326,9 @@ def build_colab_max_gpu_kwargs(
         "n_ubatch": n_ubatch,
         "n_threads": max(4, min(cpu_cnt, 12)),
         "n_threads_batch": max(4, min(cpu_cnt, 16)),
+        "use_mmap": True,
+        "use_mlock": use_mlock,
     }
-    if ram is not None and ram >= 40.0:
-        max_kwargs["use_mmap"] = False
-        max_kwargs["use_mlock"] = True
-    else:
-        max_kwargs["use_mmap"] = True
-        max_kwargs["use_mlock"] = False
     return max_kwargs
 
 
@@ -369,12 +368,8 @@ def build_qwen38_500k_llama_kwargs(
         if not kv_mode:
             vram_gb = _get_gpu_vram_gb()
             if vram_gb is not None and vram_gb >= 70.0:
-                if is_running_in_colab():
-                    # Colab A100 80GB / H100: native F16 penuh hingga 1M (~75-80% VRAM, 0 penalti dekuantisasi KV)
-                    kv_mode = "f16"
-                else:
-                    # PC Lokal 80GB+: native F16 hingga 700K, Q8_0 untuk 1M
-                    kv_mode = "f16" if chosen_ctx <= 700000 else "q8_0"
+                # A100 80GB / H100 (Colab & PC Lokal): native F16 penuh hingga 700K (~81% VRAM), Q8_0 untuk 1M (~55 GB tanpa OOM retry)
+                kv_mode = "f16" if chosen_ctx <= 700000 else "q8_0"
             elif vram_gb is not None and vram_gb >= 35.0:
                 # A100 40GB: native F16 untuk Low (190K), Medium (262K), High (500K); Q8_0 untuk 700K; Q4_0 untuk 1M
                 if chosen_ctx <= 500000:

@@ -636,17 +636,20 @@ class TestLyraAliasAndTiers(unittest.TestCase):
              patch("shiro.models.get_gpu_layers", return_value=-1), \
              patch("shiro.models._get_gpu_vram_gb", return_value=80.0), \
              patch("shiro.models._get_system_ram_gb", return_value=167.0):
-            llm_80g, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=1000000)
+            llm_700k, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=700000)
             kw80 = calls[-1]
             self.assertEqual(kw80["n_gpu_layers"], -1)
             self.assertTrue(kw80["offload_kqv"])
             self.assertTrue(kw80["flash_attn"])
-            self.assertEqual(kw80["n_batch"], 8192)
-            self.assertEqual(kw80["n_ubatch"], 2048)
-            self.assertFalse(kw80["use_mmap"])
-            self.assertTrue(kw80["use_mlock"])
-            self.assertEqual(kw80["type_k"], 1)  # Colab A100 80GB: F16 penuh hingga 1M
-            self.assertTrue(llm_80g._shiro_colab_max_gpu)
+            self.assertEqual(kw80["n_batch"], 4096)
+            self.assertEqual(kw80["n_ubatch"], 512)
+            self.assertTrue(kw80["use_mmap"])
+            self.assertFalse(kw80["use_mlock"])
+            self.assertEqual(kw80["type_k"], 1)  # Colab A100 80GB: F16 penuh hingga 700K
+            self.assertTrue(llm_700k._shiro_colab_max_gpu)
+
+            llm_1m, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=1000000)
+            self.assertEqual(calls[-1]["type_k"], 8)  # 1M di 80GB langsung Q8_0 tanpa OOM retry
 
         with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
              patch("shiro.models.is_running_in_colab", return_value=True), \
@@ -657,11 +660,11 @@ class TestLyraAliasAndTiers(unittest.TestCase):
              patch("shiro.models._get_system_ram_gb", return_value=83.0):
             llm_40g, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=190000)
             kw40 = calls[-1]
-            self.assertEqual(kw40["n_batch"], 4096)
-            self.assertEqual(kw40["n_ubatch"], 1024)
+            self.assertEqual(kw40["n_batch"], 2048)
+            self.assertEqual(kw40["n_ubatch"], 512)
             self.assertTrue(kw40["offload_kqv"])
-            self.assertFalse(kw40["use_mmap"])
-            self.assertTrue(kw40["use_mlock"])
+            self.assertTrue(kw40["use_mmap"])
+            self.assertFalse(kw40["use_mlock"])
             self.assertTrue(llm_40g._shiro_colab_max_gpu)
 
     def test_local_pc_stays_adaptive_and_does_not_enable_colab_max_gpu(self):
@@ -716,6 +719,7 @@ class TestLyraAliasAndTiers(unittest.TestCase):
         fake_mod.GGML_TYPE_Q4_0 = 2
 
         with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch.dict(os.environ, {"SHIRO_FORCE_MLOCK": "1"}, clear=False), \
              patch("shiro.models.is_running_in_colab", return_value=True), \
              patch("shiro.models.init_vision_handler", return_value=None), \
              patch("shiro.models.find_active_lora_path", return_value=None), \
