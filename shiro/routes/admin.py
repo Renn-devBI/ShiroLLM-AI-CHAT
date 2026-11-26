@@ -13,12 +13,20 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 
 from shiro.config import PROFILE_DIR, MODEL_DIR
-from shiro.auth import get_active_api_key, get_or_create_api_key
+from shiro.auth import get_active_api_key, get_or_create_api_key, verify_api_key
 from shiro.server_state import state
 from shiro.models import (
+    LYRA_DISPLAY_NAME,
+    LYRA_CONTEXT_TIERS,
     load_model_config,
     save_model_config,
     is_running_in_colab,
+    is_qwen38_27b_uncensored,
+    get_model_display_name,
+    is_valid_lyra_tier,
+    resolve_lyra_tier,
+    get_saved_lyra_tier,
+    save_lyra_tier,
     instantiate_llama_model,
     instantiate_llama_model_with_autodetect,
     get_active_model_ctx,
@@ -31,10 +39,14 @@ admin_bp = Blueprint("admin_bp", __name__)
 def health_check():
     """Lightweight health check endpoint untuk watchdog Colab & monitoring server"""
     model_path = getattr(state.llm, 'model_path', '') if state.llm else ''
+    is_lyra = is_qwen38_27b_uncensored(model_path)
     return jsonify({
         "status": "ok" if state.llm is not None else "degraded",
         "model_loaded": state.llm is not None,
         "model_name": os.path.basename(model_path) if model_path else None,
+        "model_display_name": get_model_display_name(model_path) if model_path else None,
+        "is_lyra_active": is_lyra,
+        "lyra_tier": get_saved_lyra_tier() if is_lyra else None,
         "busy": state.is_llm_busy(),
         "gpu_layers": get_gpu_layers(),
         "active_context_window": get_active_model_ctx(state.llm) if state.llm is not None else 0,
@@ -255,14 +267,118 @@ def upload_profile():
 @admin_bp.route('/api/models', methods=['GET'])
 def get_models():
     config = load_model_config()
+    current_model = config.get("current_model") or ""
+    active_path = (getattr(state.llm, "model_path", "") if state.llm else "") or current_model
+    is_lyra = is_qwen38_27b_uncensored(active_path)
     return jsonify({
-        "current_model": config.get("current_model"),
+        "current_model": current_model,
+        "current_model_display_name": get_model_display_name(active_path),
+        "is_lyra_active": is_lyra,
+        "lyra_tier": get_saved_lyra_tier(),
+        "lyra_tiers": LYRA_CONTEXT_TIERS,
         "auto_detect": config.get("auto_detect", True),
         "available_models": config.get("available_models", []),
         "model_info": config.get("model_info", {}),
         "active_context_window": get_active_model_ctx(state.llm),
         "is_colab": is_running_in_colab()
     })
+
+@admin_bp.route('/api/models/context-tier', methods=['POST'])
+@admin_bp.route('/v1/models/context-tier', methods=['POST'])
+def set_lyra_context_tier():
+    """Ubah tingkat panjang token (Low 190K / Medium 262K / High 500K / Extra High 700K / Ultra High 1M) khusus ShiroHaru-Lyra-Agent."""
+    if not verify_api_key(allow_web_ui=True):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        data = request.json or {}
+        req_tier = data.get("tier") or data.get("lyra_tier")
+        if not is_valid_lyra_tier(req_tier):
+            valid_ids = [t["id"] for t in LYRA_CONTEXT_TIERS]
+            return jsonify({"error": f"Tier tidak valid. Pilihan: {', '.join(valid_ids)}"}), 400
+
+        config = load_model_config()
+        active_path = (getattr(state.llm, "model_path", "") if state.llm else "") or config.get("current_model", "")
+        if not is_qwen38_27b_uncensored(active_path):
+            return jsonify({"error": f"Pilihan tingkat token ini khusus untuk model {LYRA_DISPLAY_NAME}."}), 400
+
+        tier_info = resolve_lyra_tier(req_tier)
+        tier_id = tier_info["id"]
+        tier_label = tier_info["label"]
+        target_tokens = tier_info["tokens"]
+
+        save_lyra_tier(tier_id)
+        os.environ.pop("SHIRO_QWEN38_27B_CONTEXT_SIZE", None)
+
+        with state.llm_lock:
+            gpu_layers = get_gpu_layers()
+            if gpu_layers == 0:
+                actual_ctx = get_active_model_ctx(state.llm)
+                return jsonify({
+                    "success": True,
+                    "lyra_tier": tier_id,
+                    "tier_label": tier_label,
+                    "display_name": LYRA_DISPLAY_NAME,
+                    "requested_tokens": target_tokens,
+                    "active_context_window": actual_ctx,
+                    "reloaded": False,
+                    "cpu_capped": True,
+                    "fallback_applied": True,
+                    "message": f"{tier_label} disimpan. Mode CPU membatasi konteks agar stabil; aktifkan GPU untuk kapasitas penuh."
+                })
+
+            if state.llm is not None and abs(get_active_model_ctx(state.llm) - target_tokens) <= 1024:
+                actual_ctx = get_active_model_ctx(state.llm)
+                return jsonify({
+                    "success": True,
+                    "lyra_tier": tier_id,
+                    "tier_label": tier_label,
+                    "display_name": LYRA_DISPLAY_NAME,
+                    "requested_tokens": target_tokens,
+                    "active_context_window": actual_ctx,
+                    "reloaded": False,
+                    "cpu_capped": False,
+                    "fallback_applied": False,
+                    "message": f"{tier_label} sudah aktif ({actual_ctx:,} tokens)."
+                })
+
+            old_llm = state.llm
+            old_vis = state.vision_chat_handler
+            try:
+                if state.llm is not None:
+                    try:
+                        if hasattr(state.llm, 'close'):
+                            state.llm.close()
+                    except Exception as e_close:
+                        print(f"Warning closing previous LLM: {e_close}")
+                    state.llm = None
+                    gc.collect()
+
+                new_llm, new_vis = instantiate_llama_model(active_path, target_ctx_override=target_tokens)
+                state.set_llm(new_llm, new_vis)
+                actual_ctx = get_active_model_ctx(new_llm)
+                fallback_applied = abs(actual_ctx - target_tokens) > 2048
+                return jsonify({
+                    "success": True,
+                    "lyra_tier": tier_id,
+                    "tier_label": tier_label,
+                    "display_name": LYRA_DISPLAY_NAME,
+                    "requested_tokens": target_tokens,
+                    "active_context_window": actual_ctx,
+                    "reloaded": True,
+                    "cpu_capped": False,
+                    "fallback_applied": fallback_applied,
+                    "has_vision": bool(new_vis is not None),
+                    "message": f"{tier_label} aktif ({actual_ctx:,} tokens)."
+                })
+            except Exception as load_error:
+                print(f"[Admin] Error switching context tier to {tier_label}: {load_error}")
+                if state.llm is None and old_llm is not None:
+                    state.set_llm(old_llm, old_vis)
+                return jsonify({"error": f"Gagal menerapkan {tier_label}: {str(load_error)[:120]}"}), 500
+    except Exception as e:
+        print(f"[Admin] Error in set_lyra_context_tier: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @admin_bp.route('/api/models/switch', methods=['POST'])
 @admin_bp.route('/v1/models/switch', methods=['POST'])
@@ -272,6 +388,7 @@ def switch_model():
     try:
         data = request.json or {}
         model_path = data.get('model')
+        req_tier = data.get('tier') or data.get('lyra_tier')
         if not model_path:
             return jsonify({"error": "Parameter 'model' harus disertakan"}), 400
 
@@ -299,13 +416,17 @@ def switch_model():
                     config["auto_detect"] = True
                     save_model_config(config)
 
-                    model_name = os.path.basename(active_path)
+                    display_name = get_model_display_name(active_path)
                     active_ctx = get_active_model_ctx(new_llm)
-                    print(f"[Admin] Autodetect berhasil beralih ke: {model_name} (Context Window: {active_ctx:,} tokens)")
+                    is_lyra = is_qwen38_27b_uncensored(active_path)
+                    print(f"[Admin] Autodetect berhasil beralih ke: {display_name} (Context Window: {active_ctx:,} tokens)")
                     return jsonify({
                         "success": True,
-                        "message": f"Model switched to {model_name} (Auto-detected)",
+                        "message": f"Model switched to {display_name} (Auto-detected)",
                         "current_model": active_path,
+                        "display_name": display_name,
+                        "is_lyra_active": is_lyra,
+                        "lyra_tier": get_saved_lyra_tier() if is_lyra else None,
                         "active_context_window": active_ctx,
                         "has_vision": bool(vision_handler is not None)
                     })
@@ -320,6 +441,11 @@ def switch_model():
 
         if os.path.exists(model_path):
             target_path = model_path
+        elif model_path.lower() == LYRA_DISPLAY_NAME.lower():
+            for cand in available:
+                if is_qwen38_27b_uncensored(cand):
+                    target_path = cand
+                    break
         elif os.path.exists(os.path.join(MODEL_DIR, f"{model_path}.gguf")):
             target_path = os.path.join(MODEL_DIR, f"{model_path}.gguf").replace("\\", "/")
         elif os.path.exists(os.path.join(MODEL_DIR, model_path)):
@@ -342,12 +468,18 @@ def switch_model():
             return jsonify({"error": f"Model '{model_path}' tidak ditemukan di disk atau daftar model"}), 400
 
         model_path = target_path
-        model_name = os.path.basename(model_path)
+        display_name = get_model_display_name(model_path)
+        is_lyra = is_qwen38_27b_uncensored(model_path)
         file_size_gb = os.path.getsize(model_path) / (1024 * 1024 * 1024)
-        print(f"\n[Admin] Switching model ke: {model_name} ({file_size_gb:.2f} GB)")
+        print(f"\n[Admin] Switching model ke: {display_name} ({file_size_gb:.2f} GB)")
         
         if file_size_gb < 0.1:
-            return jsonify({"error": f"File model '{model_name}' rusak atau belum selesai diunduh"}), 400
+            return jsonify({"error": f"File model '{display_name}' rusak atau belum selesai diunduh"}), 400
+
+        target_ctx_override = None
+        if is_lyra and is_valid_lyra_tier(req_tier):
+            tier_info = save_lyra_tier(req_tier)
+            target_ctx_override = tier_info["tokens"]
 
         with state.llm_lock:
             old_llm = state.llm
@@ -361,18 +493,25 @@ def switch_model():
                     state.llm = None
                     gc.collect()
 
-                new_llm, vision_handler = instantiate_llama_model(model_path, lora_version=target_lora_ver)
+                new_llm, vision_handler = instantiate_llama_model(
+                    model_path,
+                    lora_version=target_lora_ver,
+                    target_ctx_override=target_ctx_override,
+                )
                 state.set_llm(new_llm, vision_handler)
 
                 config["current_model"] = model_path
                 save_model_config(config)
 
                 active_ctx = get_active_model_ctx(new_llm)
-                print(f"[Admin] Berhasil beralih ke model: {model_name} (Context Window: {active_ctx:,} tokens)")
+                print(f"[Admin] Berhasil beralih ke model: {display_name} (Context Window: {active_ctx:,} tokens)")
                 return jsonify({
                     "success": True,
-                    "message": f"Model switched to {model_name}",
+                    "message": f"Model switched to {display_name}",
                     "current_model": model_path,
+                    "display_name": display_name,
+                    "is_lyra_active": is_lyra,
+                    "lyra_tier": get_saved_lyra_tier() if is_lyra else None,
                     "active_context_window": active_ctx,
                     "has_vision": bool(vision_handler is not None)
                 })

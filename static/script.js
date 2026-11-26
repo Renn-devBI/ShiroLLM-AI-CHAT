@@ -68,6 +68,38 @@ let enableTrainingLogging = true;
 let currentLang = localStorage.getItem('shiro_lang') || 'id';
 let currentUILang = currentLang;
 
+// State Mode Konteks Antigravity khusus ShiroHaru-Lyra-Agent
+const LYRA_DISPLAY_NAME = 'ShiroHaru-Lyra-Agent';
+const LYRA_TIER_LABELS = {
+    low: 'ShiroHaru-Lyra Low',
+    medium: 'ShiroHaru-Lyra Medium',
+    high: 'ShiroHaru-Lyra High',
+    extra_high: 'ShiroHaru-Lyra Extra High',
+    ultra_high: 'ShiroHaru-Lyra Ultra High'
+};
+let activeLyraTier = 'high';
+let isLyraActive = false;
+let isSwitchingLyraTier = false;
+
+function isQwen38UncensoredPath(path) {
+    if (!path) return false;
+    const base = String(path).split('/').pop().split('\\').pop().toLowerCase();
+    const hasQwen38 = base.includes('qwen3.8') || base.includes('qwen3_8') || base.includes('qwen38') || base.includes('qwen-3.8');
+    const has27b = base.includes('27b');
+    const hasUnc = base.includes('uncensored') || base.includes('hauhaucs') || base.includes('abliterated');
+    return hasQwen38 && has27b && hasUnc;
+}
+
+function getModelDisplayName(path, modelInfoMap = null) {
+    if (!path) return '';
+    if (path === 'auto') return 'Auto-Detect';
+    if (isQwen38UncensoredPath(path)) return LYRA_DISPLAY_NAME;
+    if (modelInfoMap && modelInfoMap[path] && modelInfoMap[path].name) {
+        return modelInfoMap[path].name;
+    }
+    return String(path).split('/').pop().split('\\').pop().replace('.gguf', '');
+}
+
 // Kamus Bahasa UI (ID & EN)
 const SHIRO_I18N = {
     id: {
@@ -1723,6 +1755,9 @@ async function sendMessage() {
             message: message,
             stream: true 
         };
+        if (isLyraActive && activeLyraTier) {
+            payload.lyra_tier = activeLyraTier;
+        }
         if (currentImgUrl) {
             payload.image = currentImgUrl;
         }
@@ -3978,20 +4013,146 @@ if (capturePhotoBtn && cameraVideo && cameraCanvas) {
     });
 }
 
+function syncLyraTierUI(enabled, tierId = null) {
+    isLyraActive = Boolean(enabled);
+    if (tierId && LYRA_TIER_LABELS[tierId]) {
+        activeLyraTier = tierId;
+    }
+
+    const picker = document.getElementById('lyra-tier-picker');
+    const labelEl = document.getElementById('lyra-tier-current-label');
+    if (picker) {
+        picker.classList.toggle('hidden', !isLyraActive);
+    }
+    if (labelEl) {
+        labelEl.textContent = LYRA_TIER_LABELS[activeLyraTier] || LYRA_TIER_LABELS.high;
+    }
+    document.querySelectorAll('#lyra-tier-menu .lyra-tier-option').forEach((opt) => {
+        const isSel = opt.dataset.tier === activeLyraTier;
+        opt.classList.toggle('active', isSel);
+        opt.setAttribute('aria-selected', isSel ? 'true' : 'false');
+    });
+    if (!isLyraActive) {
+        toggleLyraTierMenu(false);
+    }
+}
+
+function toggleLyraTierMenu(forceState = null) {
+    const menu = document.getElementById('lyra-tier-menu');
+    const btn = document.getElementById('lyra-tier-btn');
+    if (!menu || !btn) return;
+    const isCurrentlyOpen = !menu.classList.contains('hidden');
+    const shouldOpen = typeof forceState === 'boolean' ? forceState : !isCurrentlyOpen;
+    menu.classList.toggle('hidden', !shouldOpen);
+    btn.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+}
+
+async function selectLyraTier(tierId) {
+    if (!tierId || !LYRA_TIER_LABELS[tierId]) return;
+    if (isGenerating) {
+        showToast(currentLang === 'en' ? 'Wait until the current response finishes' : 'Tunggu hingga respons saat ini selesai');
+        toggleLyraTierMenu(false);
+        return;
+    }
+    if (isSwitchingLyraTier) return;
+
+    const prevTier = activeLyraTier;
+    toggleLyraTierMenu(false);
+
+    if (tierId === activeLyraTier && isLyraActive) {
+        return;
+    }
+
+    isSwitchingLyraTier = true;
+    const btn = document.getElementById('lyra-tier-btn');
+    const statusEl = document.getElementById('status');
+    syncLyraTierUI(true, tierId);
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('is-loading');
+    }
+    if (statusEl) {
+        statusEl.textContent = `Menyesuaikan ${LYRA_TIER_LABELS[tierId]}...`;
+    }
+
+    try {
+        const res = await fetch('/api/models/context-tier', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tier: tierId })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            const finalTier = data.lyra_tier || tierId;
+            syncLyraTierUI(true, finalTier);
+            if (data.cpu_capped) {
+                showToast(`${data.tier_label || LYRA_TIER_LABELS[finalTier]} disimpan (Mode CPU membatasi konteks agar stabil)`);
+            } else if (data.fallback_applied) {
+                showToast(`${data.tier_label || LYRA_TIER_LABELS[finalTier]} disesuaikan ke kapasitas VRAM GPU`);
+            } else {
+                showToast(`Mode aktif: ${data.tier_label || LYRA_TIER_LABELS[finalTier]}`);
+            }
+        } else {
+            syncLyraTierUI(isLyraActive, prevTier);
+            showToast(`Gagal mengubah mode: ${data.error || 'Server error'}`);
+        }
+    } catch (e) {
+        syncLyraTierUI(isLyraActive, prevTier);
+        showToast(`Error: ${e.message}`);
+    } finally {
+        isSwitchingLyraTier = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+        }
+        if (statusEl) {
+            statusEl.textContent = t('status_ready');
+        }
+    }
+}
+
+function initLyraTierPicker() {
+    const picker = document.getElementById('lyra-tier-picker');
+    const btn = document.getElementById('lyra-tier-btn');
+    if (!picker || !btn || picker.dataset.bound === '1') return;
+    picker.dataset.bound = '1';
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (btn.disabled) return;
+        toggleLyraTierMenu();
+    });
+
+    picker.querySelectorAll('.lyra-tier-option').forEach((opt) => {
+        opt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectLyraTier(opt.dataset.tier);
+        });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#lyra-tier-picker')) {
+            toggleLyraTierMenu(false);
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            toggleLyraTierMenu(false);
+        }
+    });
+}
+
 // Load models for dropdown
 async function loadModels() {
     try {
         const response = await fetch('/api/models');
         const data = await response.json();
         
-        const getModelName = (path) => {
-            return path.split('/').pop().replace('.gguf', '');
-        };
-        
         const badge = document.getElementById('current-model-badge');
         const navPill = document.querySelector('.model-pill');
         if (data.current_model) {
-            const modelName = getModelName(data.current_model);
+            const modelName = data.current_model_display_name || getModelDisplayName(data.current_model, data.model_info);
             if (badge) badge.textContent = modelName;
             if (navPill) navPill.textContent = modelName;
         }
@@ -4024,7 +4185,7 @@ async function loadModels() {
                     const option = document.createElement('option');
                     option.value = model;
                     const info = data.model_info?.[model] || {};
-                    const displayName = info.name || getModelName(model);
+                    const displayName = getModelDisplayName(model, data.model_info);
                     const sizeStr = info.size ? ` (${info.size})` : '';
                     option.textContent = `${displayName}${sizeStr}`;
                     
@@ -4048,10 +4209,16 @@ async function loadModels() {
                 }
                 const info = data.model_info?.[sel] || {};
                 if (modelDescText) {
-                    modelDescText.textContent = info.description || `Model terpilih: ${getModelName(sel)}`;
+                    modelDescText.textContent = info.description || `Model terpilih: ${getModelDisplayName(sel, data.model_info)}`;
                 }
             };
         }
+
+        const lyraEnabled = typeof data.is_lyra_active === 'boolean'
+            ? data.is_lyra_active
+            : isQwen38UncensoredPath(data.current_model);
+        syncLyraTierUI(lyraEnabled, data.lyra_tier || activeLyraTier);
+
         loadMoeSettings();
     } catch (error) {
         console.error('Error loading models:', error);
@@ -4114,11 +4281,7 @@ async function switchModel() {
         return;
     }
     
-    const getModelName = (path) => {
-        return path.split('/').pop().replace('.gguf', '');
-    };
-    
-    const modelName = getModelName(selectedModel);
+    const modelName = getModelDisplayName(selectedModel);
     const status = document.getElementById('status');
     status.textContent = 'Sedang memuat model...';
     
@@ -4134,8 +4297,9 @@ async function switchModel() {
         const data = await response.json();
         
         if (data.success) {
+            const shownName = data.display_name || modelName;
             const visionTag = data.has_vision ? ' (Vision Aktif)' : '';
-            showToast(`Model berhasil dialihkan ke ${modelName}${visionTag}`);
+            showToast(`Model berhasil dialihkan ke ${shownName}${visionTag}`);
             status.textContent = 'Model berhasil dialihkan';
             
             setTimeout(() => {
@@ -4577,6 +4741,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         initModalTabsScroll();
     } catch (e) {
         console.error('modal tabs scroll error:', e);
+    }
+    try {
+        initLyraTierPicker();
+    } catch (e) {
+        console.error('lyra tier picker error:', e);
     }
 
     // 1. Muat profil, privasi, dan model terlebih dahulu agar avatar & nama sudah siap saat chat di-render

@@ -207,10 +207,49 @@ def chat():
                 )
             return jsonify({"reply": reply, "system_command": True, "agent_status": st})
         
-        # Fleksibel mendukung teks panjang / kode pemrograman hingga 120.000 karakter (atau 1.200.000 khusus Qwen3.8-27B-Uncensored 500K)
-        from shiro.models import is_qwen38_27b_uncensored
+        # Fleksibel mendukung teks panjang / kode pemrograman hingga 120.000 karakter (atau dinamis hingga 3.000.000 khusus ShiroHaru-Lyra-Agent 190K-1M)
+        from shiro.models import (
+            is_qwen38_27b_uncensored,
+            get_active_model_ctx,
+            is_valid_lyra_tier,
+            resolve_lyra_tier,
+            save_lyra_tier,
+            get_gpu_layers,
+            instantiate_llama_model,
+        )
         active_model_path = getattr(state.llm, 'model_path', '') if state.llm else ''
-        max_msg_chars = 1_200_000 if is_qwen38_27b_uncensored(active_model_path) else 120_000
+        req_lyra_tier = data.get('lyra_tier')
+        if (
+            req_lyra_tier
+            and state.llm is not None
+            and is_qwen38_27b_uncensored(active_model_path)
+            and is_valid_lyra_tier(req_lyra_tier)
+        ):
+            tier_info = resolve_lyra_tier(req_lyra_tier)
+            target_ctx = tier_info["tokens"]
+            if get_gpu_layers() != 0 and abs(get_active_model_ctx(state.llm) - target_ctx) > 1024:
+                with state.llm_lock:
+                    old_llm = state.llm
+                    old_vis = state.vision_chat_handler
+                    try:
+                        import gc
+                        if hasattr(old_llm, 'close'):
+                            old_llm.close()
+                        state.llm = None
+                        gc.collect()
+                        new_llm, new_vis = instantiate_llama_model(active_model_path, target_ctx_override=target_ctx)
+                        state.set_llm(new_llm, new_vis)
+                        save_lyra_tier(tier_info["id"])
+                    except Exception as e_tier:
+                        print(f"[Chat] Warning reloading Lyra tier {tier_info['id']}: {e_tier}")
+                        if state.llm is None and old_llm is not None:
+                            state.set_llm(old_llm, old_vis)
+
+        if is_qwen38_27b_uncensored(active_model_path):
+            active_ctx_chars = get_active_model_ctx(state.llm) * 3 if state.llm else 1_500_000
+            max_msg_chars = max(500_000, min(3_000_000, active_ctx_chars))
+        else:
+            max_msg_chars = 120_000
         if len(user_message) > max_msg_chars:
             return jsonify({
                 "error": f"Pesan terlalu panjang (Maksimal {max_msg_chars:,} karakter)",

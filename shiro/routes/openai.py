@@ -14,7 +14,13 @@ from flask import Blueprint, request, jsonify
 
 from shiro.auth import verify_api_key
 from shiro.server_state import state
-from shiro.models import load_model_config, get_optimal_model_tokens
+from shiro.models import (
+    load_model_config,
+    get_optimal_model_tokens,
+    get_model_display_name,
+    get_active_model_ctx,
+    LYRA_DISPLAY_NAME,
+)
 from shiro.memory.optimization import compress_old_messages
 from shiro.pipeline.inference import get_shiro_reply
 
@@ -39,7 +45,7 @@ def handle_openai_chat_completions(api_version="v1"):
     try:
         data = request.json or {}
         messages = data.get("messages", [])
-        model_name = data.get("model", "Qwen3.8-27B-Uncensored")
+        model_name = data.get("model", LYRA_DISPLAY_NAME)
         
         if not messages:
             return jsonify({
@@ -231,7 +237,7 @@ def openai_models():
     """List available models for OpenAI SDK compatibility"""
     config = load_model_config()
     current = config.get("current_model", "")
-    current_name = os.path.basename(current).replace(".gguf", "") if current else ""
+    current_name = get_model_display_name(current) if current else ""
     raw_models = config.get("available_models", [])
     
     try:
@@ -241,13 +247,16 @@ def openai_models():
         trained_versions = []
 
     model_ids = []
+    model_path_by_id = {}
     if current_name and current_name not in model_ids:
         model_ids.append(current_name)
+        model_path_by_id[current_name] = current
 
     for m_path in raw_models:
-        m_name = os.path.basename(m_path).replace(".gguf", "")
+        m_name = get_model_display_name(m_path)
         if m_name and m_name not in model_ids:
             model_ids.append(m_name)
+            model_path_by_id[m_name] = m_path
 
     for v in trained_versions:
         v_str = f"{float(v):.1f}" if isinstance(v, (int, float)) else str(v)
@@ -256,22 +265,29 @@ def openai_models():
             model_ids.append(t_name)
 
     if not model_ids:
-        model_ids = ["Qwen3.8-27B-Uncensored", "Qwen3-32B", "Qwen2.5-VL-7B"]
+        model_ids = [LYRA_DISPLAY_NAME, "Qwen3-32B", "Qwen2.5-VL-7B"]
 
     data = []
     now_ts = int(time.time())
     for mid in model_ids:
+        ref_path = model_path_by_id.get(mid, mid)
+        is_cur = (mid == current_name)
+        ctx_win = (
+            get_active_model_ctx(state.llm)
+            if (is_cur and state.llm is not None)
+            else get_optimal_model_tokens(ref_path)[0]
+        )
         data.append({
             "id": mid,
             "name": mid,
             "object": "model",
             "created": now_ts,
             "owned_by": "shiro",
-            "is_current": (mid == current_name),
-            "context_window": get_optimal_model_tokens(mid)[0]
+            "is_current": is_cur,
+            "context_window": ctx_win
         })
 
-    active_model = current_name or (model_ids[0] if model_ids else "Qwen3.8-27B-Uncensored")
+    active_model = current_name or (model_ids[0] if model_ids else LYRA_DISPLAY_NAME)
     return jsonify({
         "object": "list",
         "data": data,

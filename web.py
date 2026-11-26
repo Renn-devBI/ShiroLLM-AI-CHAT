@@ -43,7 +43,10 @@ from shiro.models import (
     find_active_lora_path,
     get_gpu_layers,
     get_active_model_ctx,
-    is_qwen38_27b_uncensored
+    is_qwen38_27b_uncensored,
+    get_model_display_name,
+    get_saved_lyra_tier,
+    resolve_lyra_tier
 )
 from shiro.auth import (
     get_active_api_key,
@@ -151,9 +154,13 @@ if __name__ == '__main__':
         llm = active_llm
         current_model_path = loaded_model_path
 
-        model_name = os.path.basename(current_model_path)
+        model_name = get_model_display_name(current_model_path)
         active_ctx = get_active_model_ctx(active_llm)
-        ctx_suffix = " (Extended 500K via YaRN dari 262K)" if (is_qwen38_27b_uncensored(current_model_path) and active_ctx > 262144) else ""
+        if is_qwen38_27b_uncensored(current_model_path):
+            tier_lbl = resolve_lyra_tier(get_saved_lyra_tier())["label"]
+            ctx_suffix = f" ({tier_lbl} · YaRN dari 262K)" if active_ctx > 262144 else f" ({tier_lbl})"
+        else:
+            ctx_suffix = ""
         print(f"✓ Model loaded: {model_name}")
         print(f"✓ Context Window: {active_ctx:,} tokens{ctx_suffix}")
         if active_vision:

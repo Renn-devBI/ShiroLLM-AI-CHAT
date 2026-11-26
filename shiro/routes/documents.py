@@ -41,11 +41,12 @@ def upload_document():
             }), 400
 
         from shiro.server_state import state
-        from shiro.models import is_qwen38_27b_uncensored
+        from shiro.models import is_qwen38_27b_uncensored, get_active_model_ctx
         active_model_path = getattr(state.llm, 'model_path', '') if state.llm else ''
         doc_max_chars = None
         if not os.environ.get("SHIRO_MAX_DOC_CHARS") and is_qwen38_27b_uncensored(active_model_path):
-            doc_max_chars = 1_200_000
+            active_ctx_chars = get_active_model_ctx(state.llm) * 3 if state.llm else 1_500_000
+            doc_max_chars = max(500_000, min(3_000_000, active_ctx_chars))
 
         res = extract_text_from_file(save_path, filename=f.filename, max_chars=doc_max_chars)
         if not res.get("success"):

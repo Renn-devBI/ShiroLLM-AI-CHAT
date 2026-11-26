@@ -20,7 +20,12 @@ SSE_HEARTBEAT_INTERVAL = float(os.environ.get("SHIRO_SSE_PING_INTERVAL", "5.0"))
 
 from shiro.config import CONTEXT_SIZE
 from shiro.server_state import state
-from shiro.models import get_active_model_ctx, get_optimal_model_tokens, is_qwen38_27b_uncensored
+from shiro.models import (
+    get_active_model_ctx,
+    get_optimal_model_tokens,
+    is_qwen38_27b_uncensored,
+    get_model_display_name,
+)
 from shiro.persona import (
     build_system_prompt,
     build_vtuber_system_prompt,
@@ -93,7 +98,11 @@ def _prepare_inference_payload(
     web_reader = state.init_web_reader()
 
     raw_user_typed = (user_input or "").strip()
-    active_model_name = os.path.basename(getattr(llm, 'model_path', '')).lower() if hasattr(llm, 'model_path') else ""
+    active_model_path = getattr(llm, 'model_path', '') if hasattr(llm, 'model_path') else ""
+    active_model_name = get_model_display_name(
+        active_model_path,
+        raw_fallback=os.path.basename(active_model_path).lower() if active_model_path else ""
+    )
     has_vision = bool(getattr(llm, 'chat_handler', None) is not None or vision_chat_handler is not None)
 
     # -------------------------------------------------------------
@@ -414,7 +423,7 @@ def _prepare_inference_payload(
         from shiro.document.reader import build_document_prompt
         if is_qwen38_27b_uncensored(active_model_path or active_model_name) and active_ctx > 65536:
             doc_token_budget = max(20000, active_ctx - reserved_budget - 4096)
-            max_doc_chars = min(1_200_000, doc_token_budget * 3)
+            max_doc_chars = min(3_000_000, doc_token_budget * 3)
         else:
             max_doc_chars = max(10000, min(60000, (active_ctx - 2000) * 3))
         doc_full_text = document_info.get("text", "")

@@ -9,10 +9,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.0.0">
+    <link rel="stylesheet" href="/static/style.css?v=3.1.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
-    <script src="/static/theme.js?v=3.0.0"></script>
+    <script src="/static/theme.js?v=3.1.0"></script>
 </head>
 <body>
     <div class="app-layout">
@@ -242,6 +242,42 @@
                             <input type="file" id="image-file-input" accept="image/*" class="hidden">
                         </div>
                         <div class="input-actions">
+                            <div id="lyra-tier-picker" class="lyra-tier-picker hidden">
+                                <button
+                                    type="button"
+                                    id="lyra-tier-btn"
+                                    class="lyra-tier-btn"
+                                    aria-haspopup="listbox"
+                                    aria-expanded="false"
+                                    aria-label="Pilih mode kapasitas konteks ShiroHaru-Lyra-Agent"
+                                    title="Pilih mode kapasitas konteks"
+                                >
+                                    <span class="lyra-tier-label" id="lyra-tier-current-label">ShiroHaru-Lyra High</span>
+                                    <i class="ph ph-caret-up lyra-tier-caret" aria-hidden="true"></i>
+                                </button>
+                                <div id="lyra-tier-menu" class="lyra-tier-menu hidden" role="listbox" aria-label="Mode ShiroHaru-Lyra-Agent">
+                                    <button type="button" class="lyra-tier-option" data-tier="low" role="option" aria-selected="false">
+                                        <span class="lyra-opt-label">ShiroHaru-Lyra Low</span>
+                                        <i class="ph ph-check lyra-opt-check" aria-hidden="true"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option" data-tier="medium" role="option" aria-selected="false">
+                                        <span class="lyra-opt-label">ShiroHaru-Lyra Medium</span>
+                                        <i class="ph ph-check lyra-opt-check" aria-hidden="true"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option active" data-tier="high" role="option" aria-selected="true">
+                                        <span class="lyra-opt-label">ShiroHaru-Lyra High</span>
+                                        <i class="ph ph-check lyra-opt-check" aria-hidden="true"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option" data-tier="extra_high" role="option" aria-selected="false">
+                                        <span class="lyra-opt-label">ShiroHaru-Lyra Extra High</span>
+                                        <i class="ph ph-check lyra-opt-check" aria-hidden="true"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option" data-tier="ultra_high" role="option" aria-selected="false">
+                                        <span class="lyra-opt-label">ShiroHaru-Lyra Ultra High</span>
+                                        <i class="ph ph-check lyra-opt-check" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
                             <button id="send-btn" class="btn-send" title="Kirim pesan (Enter)" data-i18n-title="send_msg_tooltip" aria-label="Kirim pesan" type="button">
                                 <i class="ph ph-arrow-up"></i>
                             </button>
@@ -899,6 +935,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
-    <script src="/static/script.js?v=3.0.0"></script>
+    <script src="/static/script.js?v=3.1.0"></script>
 </body>
 </html>

@@ -41,7 +41,18 @@ KNOWN_SUPPORTED_ARCHITECTURES = {
     "baichuan", "internlm2", "minicpm", "deepseek2", "bloom"
 }
 
-# Konfigurasi Extended Context khusus Qwen3.8-27B-Uncensored (262K bawaan -> 500K via YaRN di GPU)
+# Konfigurasi Extended Context & Alias khusus Qwen3.8-27B-Uncensored -> ShiroHaru-Lyra-Agent
+LYRA_DISPLAY_NAME = "ShiroHaru-Lyra-Agent"
+DEFAULT_LYRA_TIER = "high"
+LYRA_CONTEXT_TIERS = [
+    {"id": "low", "label": "ShiroHaru-Lyra Low", "tokens": 190000},
+    {"id": "medium", "label": "ShiroHaru-Lyra Medium", "tokens": 262144},
+    {"id": "high", "label": "ShiroHaru-Lyra High", "tokens": 500000},
+    {"id": "extra_high", "label": "ShiroHaru-Lyra Extra High", "tokens": 700000},
+    {"id": "ultra_high", "label": "ShiroHaru-Lyra Ultra High", "tokens": 1000000},
+]
+LYRA_TIER_MAP = {t["id"]: t for t in LYRA_CONTEXT_TIERS}
+
 QWEN38_27B_NATIVE_CTX = 262144
 QWEN38_27B_EXTENDED_CTX = int(os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE", "500000"))
 QWEN38_27B_CPU_SAFE_CTX = int(os.environ.get("SHIRO_QWEN38_27B_CPU_CONTEXT_SIZE", "32768"))
@@ -57,6 +68,73 @@ def is_qwen38_27b_uncensored(model_path: str) -> bool:
     has_27b = "27b" in name
     has_uncensored = any(k in name for k in ("uncensored", "hauhaucs", "abliterated"))
     return has_qwen38 and has_27b and has_uncensored
+
+
+def get_model_display_name(model_path: str, raw_fallback: Optional[str] = None) -> str:
+    """Mengembalikan nama tampilan model (menyamarkan Qwen3.8-27B-Uncensored sebagai ShiroHaru-Lyra-Agent)."""
+    if is_qwen38_27b_uncensored(model_path):
+        return LYRA_DISPLAY_NAME
+    if raw_fallback and str(raw_fallback).strip():
+        return str(raw_fallback).strip()
+    if not model_path:
+        return ""
+    return os.path.basename(model_path).replace(".gguf", "")
+
+
+def _normalize_lyra_tier_key(tier_id: Optional[str]) -> Optional[str]:
+    if not tier_id:
+        return None
+    norm = str(tier_id).strip().lower().replace("-", "_").replace(" ", "_")
+    if norm in LYRA_TIER_MAP:
+        return norm
+    for t in LYRA_CONTEXT_TIERS:
+        lbl_norm = t["label"].lower().replace("-", "_").replace(" ", "_")
+        if norm == lbl_norm or norm == lbl_norm.replace("shiroharu_lyra_", ""):
+            return t["id"]
+    return None
+
+
+def is_valid_lyra_tier(tier_id: Optional[str]) -> bool:
+    """Memeriksa apakah id atau label tier ShiroHaru-Lyra valid."""
+    return _normalize_lyra_tier_key(tier_id) is not None
+
+
+def resolve_lyra_tier(tier_id: Optional[str] = None) -> Dict[str, Any]:
+    """Mengembalikan info tier konteks ShiroHaru-Lyra yang valid (default: High / 500K)."""
+    key = _normalize_lyra_tier_key(tier_id) or DEFAULT_LYRA_TIER
+    return dict(LYRA_TIER_MAP[key])
+
+
+def infer_lyra_tier_from_ctx(ctx: int) -> str:
+    """Mencocokkan panjang n_ctx aktif ke tier ShiroHaru-Lyra terdekat."""
+    if not ctx or ctx <= 0:
+        return DEFAULT_LYRA_TIER
+    best = min(LYRA_CONTEXT_TIERS, key=lambda t: abs(t["tokens"] - int(ctx)))
+    return best["id"]
+
+
+def get_saved_lyra_tier() -> str:
+    """Membaca tier ShiroHaru-Lyra tersimpan dari model_config.json (default: high)."""
+    if os.path.exists(MODEL_CONFIG_FILE):
+        try:
+            with open(MODEL_CONFIG_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                if isinstance(saved, dict):
+                    raw_tier = saved.get("lyra_tier")
+                    if is_valid_lyra_tier(raw_tier):
+                        return resolve_lyra_tier(raw_tier)["id"]
+        except Exception:
+            pass
+    return DEFAULT_LYRA_TIER
+
+
+def save_lyra_tier(tier_id: str) -> Dict[str, Any]:
+    """Menyimpan pilihan tier konteks ShiroHaru-Lyra ke model_config.json."""
+    tier = resolve_lyra_tier(tier_id)
+    cfg = load_model_config()
+    cfg["lyra_tier"] = tier["id"]
+    save_model_config(cfg)
+    return tier
 
 
 def get_model_native_context_length(model_path: str, default: int = QWEN38_27B_NATIVE_CTX) -> int:
@@ -125,7 +203,8 @@ def build_qwen38_500k_llama_kwargs(
 ) -> Dict[str, Any]:
     """
     Menyusun parameter YaRN RoPE scaling, Flash Attention, dan kuantisasi KV cache
-    khusus untuk model Qwen3.8-27B-Uncensored agar context dapat mencapai 500K di GPU.
+    khusus untuk model Qwen3.8-27B-Uncensored (ShiroHaru-Lyra-Agent) untuk tier
+    190K / 262K / 500K / 700K / 1M di GPU.
     Di mode CPU (use_gpu=False), flash_attn dan kuantisasi KV Q4_0 dinonaktifkan
     untuk mencegah crash GGML_ASSERT pada backend ggml-cpu.
     """
@@ -149,11 +228,14 @@ def build_qwen38_500k_llama_kwargs(
         extra["flash_attn"] = True
         kv_mode = (kv_cache_override or os.environ.get("SHIRO_KV_CACHE_TYPE", "")).strip().lower()
         if not kv_mode:
-            vram_gb = _get_gpu_vram_gb()
-            if vram_gb is not None and vram_gb >= 70.0:
-                kv_mode = "q8_0"
-            else:
+            if chosen_ctx > 500000:
                 kv_mode = "q4_0"
+            else:
+                vram_gb = _get_gpu_vram_gb()
+                if vram_gb is not None and vram_gb >= 70.0:
+                    kv_mode = "q8_0"
+                else:
+                    kv_mode = "q4_0"
 
         if kv_mode == "q8_0":
             kv_val = getattr(llama_cpp_mod, "GGML_TYPE_Q8_0", 8)
@@ -204,11 +286,11 @@ def get_gpu_layers() -> int:
         return -1  # Offload semua layer ke GPU
     return 0
 
-def get_optimal_model_tokens(model_path: str) -> Tuple[int, int]:
+def get_optimal_model_tokens(model_path: str, tier_override: Optional[str] = None) -> Tuple[int, int]:
     """
     Menentukan batas context window (n_ctx) dan max output tokens secara dinamis
     menyesuaikan ukuran dan arsitektur model yang terdeteksi:
-    - Qwen3.8-27B-Uncensored (GPU): 500K via YaRN (fallback aman 32K di mode CPU tanpa GPU)
+    - ShiroHaru-Lyra-Agent (Qwen3.8-27B-Uncensored GPU): 190K / 262K / 500K / 700K / 1M (fallback aman 32K di mode CPU)
     - Model Besar (27B - 32B+ / A100): n_ctx 16384 s/d 32768, output hingga 16384 token
     - Model Sedang (7B - 14B / VL): n_ctx 8192 s/d 16384, output hingga 8192 token
     - Model Ringan (3B - 4B / T4): n_ctx 4096 s/d 8192, output hingga 2048 token
@@ -219,18 +301,28 @@ def get_optimal_model_tokens(model_path: str) -> Tuple[int, int]:
     gpu_layers = get_gpu_layers()
     is_gpu = gpu_layers != 0
 
-    # 0. Khusus Qwen3.8-27B-Uncensored: Extended Context 500K di GPU (aman 32K di CPU agar ggml-cpu tidak crash/OOM)
+    # 0. Khusus Qwen3.8-27B-Uncensored (ShiroHaru-Lyra-Agent):
+    # GPU mendukung 5 tingkat konteks (Low 190K, Medium 262K, High 500K, Extra High 700K, Ultra High 1M)
     if is_qwen38_27b_uncensored(model_path):
         explicit_ctx = os.environ.get("SHIRO_QWEN38_27B_CONTEXT_SIZE")
-        if explicit_ctx:
-            try:
-                target_ctx = int(explicit_ctx)
-            except ValueError:
-                target_ctx = QWEN38_27B_EXTENDED_CTX if is_gpu else QWEN38_27B_CPU_SAFE_CTX
-        elif is_gpu:
-            target_ctx = QWEN38_27B_EXTENDED_CTX
+        if is_gpu:
+            if tier_override and is_valid_lyra_tier(tier_override):
+                target_ctx = resolve_lyra_tier(tier_override)["tokens"]
+            elif explicit_ctx:
+                try:
+                    target_ctx = int(explicit_ctx)
+                except ValueError:
+                    target_ctx = resolve_lyra_tier(get_saved_lyra_tier())["tokens"]
+            else:
+                target_ctx = resolve_lyra_tier(get_saved_lyra_tier())["tokens"]
         else:
-            target_ctx = QWEN38_27B_CPU_SAFE_CTX
+            if explicit_ctx:
+                try:
+                    target_ctx = int(explicit_ctx)
+                except ValueError:
+                    target_ctx = QWEN38_27B_CPU_SAFE_CTX
+            else:
+                target_ctx = QWEN38_27B_CPU_SAFE_CTX
         max_out = QWEN38_27B_MAX_OUTPUT if is_gpu else 8192
         return (target_ctx, max_out)
 
@@ -630,6 +722,8 @@ def load_model_config() -> Dict[str, Any]:
 
     config["available_models"] = detected_models
 
+    config["lyra_tier"] = resolve_lyra_tier(config.get("lyra_tier"))["id"]
+
     # Filter dan susun model_info secara dinamis menggunakan metadata GGUF
     filtered_info = {}
     saved_info = config.get("model_info", {})
@@ -637,7 +731,24 @@ def load_model_config() -> Dict[str, Any]:
         saved_info = {}
 
     for m in detected_models:
-        if m in saved_info and isinstance(saved_info[m], dict) and saved_info[m].get("name"):
+        if is_qwen38_27b_uncensored(m):
+            size_gb = os.path.getsize(m) / (1024 * 1024 * 1024) if os.path.exists(m) else 0
+            existing_entry = saved_info.get(m) if isinstance(saved_info.get(m), dict) else {}
+            size_str = existing_entry.get("size") or (f"~{size_gb:.1f} GB" if size_gb > 0 else "GGUF")
+            desc_old = str(existing_entry.get("description") or "")
+            desc = (
+                desc_old
+                if (desc_old and "qwen3.8" not in desc_old.lower() and "qwen38" not in desc_old.lower())
+                else f"Model Agen Utama: {LYRA_DISPLAY_NAME} ({size_str}) • Mendukung pilihan konteks Low hingga Ultra High (190K–1M token)"
+            )
+            filtered_info[m] = {
+                "name": LYRA_DISPLAY_NAME,
+                "size": size_str,
+                "quantization": existing_entry.get("quantization") or "Multimodal · Agentic",
+                "description": desc,
+                "is_lyra": True,
+            }
+        elif m in saved_info and isinstance(saved_info[m], dict) and saved_info[m].get("name"):
             filtered_info[m] = saved_info[m]
         else:
             meta = read_gguf_metadata(m)
@@ -713,7 +824,11 @@ def detect_chat_format(model_path: str) -> str:
     else:
         return "chatml"
 
-def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None) -> Tuple[Any, Any]:
+def instantiate_llama_model(
+    model_path: str,
+    lora_version: Optional[int] = None,
+    target_ctx_override: Optional[int] = None
+) -> Tuple[Any, Any]:
     """
     Instantiate Llama model instance dan vision handler.
     Mengembalikan (llm_instance, vision_handler).
@@ -728,7 +843,9 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
     optimal_ctx, optimal_out = get_optimal_model_tokens(model_path)
     env_ctx = os.environ.get("SHIRO_CONTEXT_SIZE")
     if is_qwen38_unc:
-        if is_gpu and env_ctx:
+        if is_gpu and target_ctx_override is not None:
+            chosen_ctx = int(target_ctx_override)
+        elif is_gpu and env_ctx:
             try:
                 chosen_ctx = max(int(env_ctx), optimal_ctx)
             except Exception:
@@ -763,14 +880,19 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
         llama_kwargs.update(qwen_extra)
         if is_gpu and chosen_ctx > orig_ctx:
             safe_print(
-                f"🚀 [Qwen3.8-27B-Uncensored] Extended Context aktif: {chosen_ctx:,} tokens "
+                f"🚀 [{LYRA_DISPLAY_NAME}] Extended Context aktif: {chosen_ctx:,} tokens "
                 f"(YaRN dari {orig_ctx:,}, flash_attn={qwen_extra.get('flash_attn', False)})"
+            )
+        elif is_gpu:
+            safe_print(
+                f"🚀 [{LYRA_DISPLAY_NAME}] Context aktif: {chosen_ctx:,} tokens "
+                f"(flash_attn={qwen_extra.get('flash_attn', False)})"
             )
         elif not is_gpu:
             safe_print(
-                f"⚠️ [Qwen3.8-27B-Uncensored] Mode CPU terdeteksi (n_threads={n_threads}): "
+                f"⚠️ [{LYRA_DISPLAY_NAME}] Mode CPU terdeteksi (n_threads={n_threads}): "
                 f"Context diamankan ke {chosen_ctx:,} tokens untuk mencegah crash GGML/OOM di CPU. "
-                f"Aktifkan GPU (A100/L4/T4) untuk 500K Extended Context & kecepatan penuh!"
+                f"Aktifkan GPU (A100/L4/T4) untuk konteks 190K-1M & kecepatan penuh!"
             )
 
     if vision_handler:
@@ -826,7 +948,7 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
         q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
         q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
         if llama_kwargs.get("type_k") == q8_val:
-            safe_print(f"⚠️ [Qwen3.8-27B-Uncensored] Gagal memuat 500K dengan KV Q8_0 ({load_err}), mencoba KV Q4_0...")
+            safe_print(f"⚠️ [{LYRA_DISPLAY_NAME}] Gagal memuat {chosen_ctx:,} dengan KV Q8_0 ({load_err}), mencoba KV Q4_0...")
             q4_kwargs = dict(llama_kwargs)
             q4_kwargs["type_k"] = q4_val
             q4_kwargs["type_v"] = q4_val
@@ -839,17 +961,18 @@ def instantiate_llama_model(model_path: str, lora_version: Optional[int] = None)
                 "rope_scaling_type", "yarn_orig_ctx", "rope_freq_scale",
                 "yarn_ext_factor", "yarn_attn_factor", "yarn_beta_fast", "yarn_beta_slow"
             )
-            for step_ctx in [262144, 131072, 65536, 32768]:
+            for step_ctx in [700000, 500000, 262144, 190000, 131072, 65536, 32768]:
                 if step_ctx >= chosen_ctx:
                     continue
-                safe_print(f"⚠️ [Qwen3.8-27B-Uncensored] Gagal memuat context {chosen_ctx:,} ({load_err}), fallback ke {step_ctx:,} tokens...")
+                safe_print(f"⚠️ [{LYRA_DISPLAY_NAME}] Gagal memuat context {chosen_ctx:,} ({load_err}), fallback ke {step_ctx:,} tokens...")
                 step_kwargs = dict(llama_kwargs)
                 step_kwargs["n_ctx"] = step_ctx
                 if step_ctx <= orig_ctx:
                     for yk in yarn_keys:
                         step_kwargs.pop(yk, None)
+                    step_kwargs.update(build_qwen38_500k_llama_kwargs(model_path, step_ctx, llama_cpp_mod=llama_cpp, kv_cache_override="q4_0", use_gpu=is_gpu))
                 else:
-                    step_kwargs.update(build_qwen38_500k_llama_kwargs(model_path, step_ctx, llama_cpp_mod=llama_cpp, kv_cache_override="q4_0"))
+                    step_kwargs.update(build_qwen38_500k_llama_kwargs(model_path, step_ctx, llama_cpp_mod=llama_cpp, kv_cache_override="q4_0", use_gpu=is_gpu))
                 llm, load_err = _load_with_lora_and_vision_fallback(step_kwargs)
                 if llm is not None:
                     break

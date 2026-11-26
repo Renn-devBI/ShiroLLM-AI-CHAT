@@ -324,6 +324,32 @@
             color: var(--text-secondary); font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
         }
         .btn-composer-tool:hover { background: var(--bg-elevated); color: var(--text-primary); }
+        .composer-right-actions { display: flex; align-items: center; gap: 6px; }
+        .lyra-tier-picker { position: relative; display: inline-flex; align-items: center; }
+        .lyra-tier-btn {
+            height: 30px; padding: 0 10px; border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle); background: var(--bg-elevated);
+            color: var(--text-secondary); font-size: 12px; font-weight: 500;
+            display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;
+        }
+        .lyra-tier-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
+        .lyra-tier-caret { font-size: 11px; color: var(--text-muted); transition: transform 0.15s ease; }
+        .lyra-tier-btn[aria-expanded="true"] .lyra-tier-caret { transform: rotate(180deg); }
+        .lyra-tier-menu {
+            position: absolute; bottom: calc(100% + 8px); right: 0; min-width: 220px;
+            background: var(--bg-surface); border: 1px solid var(--border-default);
+            border-radius: var(--radius-md); padding: 5px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
+            z-index: 120; display: flex; flex-direction: column; gap: 2px;
+        }
+        .lyra-tier-option {
+            width: 100%; padding: 7px 10px; border: none; border-radius: var(--radius-sm);
+            background: transparent; color: var(--text-secondary); font-size: 12.5px; font-weight: 500;
+            display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; text-align: left;
+        }
+        .lyra-tier-option:hover, .lyra-tier-option.active { background: var(--bg-elevated); color: var(--text-primary); }
+        .lyra-tier-option.active { font-weight: 600; }
+        .lyra-opt-check { font-size: 13px; opacity: 0; }
+        .lyra-tier-option.active .lyra-opt-check { opacity: 1; }
         .btn-send {
             width: 30px; height: 30px; border-radius: var(--radius-sm); background: var(--text-primary); color: var(--bg-base);
             border: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 15px;
@@ -510,7 +536,7 @@
                         <span class="brand-title">Shiro</span>
                         <span class="brand-sep"></span>
                         <button type="button" class="model-pill-badge" onclick="openSettingsModal('model')" title="Klik untuk melihat detail model aktif">
-                            <span>Qwen3.8-27B · 500K</span>
+                            <span>ShiroHaru-Lyra-Agent</span>
                         </button>
                     </div>
                 </div>
@@ -699,9 +725,39 @@
                                 <span>Gambar</span>
                             </button>
                         </div>
-                        <button type="button" class="btn-send" id="btn-send" onclick="handleSendDemoMessage()" title="Kirim Pesan">
-                            <i class="ph ph-arrow-up" id="send-icon"></i>
-                        </button>
+                        <div class="composer-right-actions">
+                            <div id="lyra-tier-picker" class="lyra-tier-picker">
+                                <button type="button" id="lyra-tier-btn" class="lyra-tier-btn" onclick="toggleDemoLyraMenu(event)" aria-haspopup="listbox" aria-expanded="false">
+                                    <span id="lyra-tier-current-label">ShiroHaru-Lyra High</span>
+                                    <i class="ph ph-caret-up lyra-tier-caret"></i>
+                                </button>
+                                <div id="lyra-tier-menu" class="lyra-tier-menu hidden" role="listbox">
+                                    <button type="button" class="lyra-tier-option" data-tier="low" onclick="selectDemoLyraTier(this, 'ShiroHaru-Lyra Low', '190,000 Tokens (190K)')">
+                                        <span>ShiroHaru-Lyra Low</span>
+                                        <i class="ph ph-check lyra-opt-check"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option" data-tier="medium" onclick="selectDemoLyraTier(this, 'ShiroHaru-Lyra Medium', '262,144 Tokens (262K)')">
+                                        <span>ShiroHaru-Lyra Medium</span>
+                                        <i class="ph ph-check lyra-opt-check"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option active" data-tier="high" onclick="selectDemoLyraTier(this, 'ShiroHaru-Lyra High', '500,000 Tokens (500K)')">
+                                        <span>ShiroHaru-Lyra High</span>
+                                        <i class="ph ph-check lyra-opt-check"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option" data-tier="extra_high" onclick="selectDemoLyraTier(this, 'ShiroHaru-Lyra Extra High', '700,000 Tokens (700K)')">
+                                        <span>ShiroHaru-Lyra Extra High</span>
+                                        <i class="ph ph-check lyra-opt-check"></i>
+                                    </button>
+                                    <button type="button" class="lyra-tier-option" data-tier="ultra_high" onclick="selectDemoLyraTier(this, 'ShiroHaru-Lyra Ultra High', '1,000,000 Tokens (1M)')">
+                                        <span>ShiroHaru-Lyra Ultra High</span>
+                                        <i class="ph ph-check lyra-opt-check"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <button type="button" class="btn-send" id="btn-send" onclick="handleSendDemoMessage()" title="Kirim Pesan">
+                                <i class="ph ph-arrow-up" id="send-icon"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </footer>
@@ -730,16 +786,16 @@
                                 <i class="ph ph-check-circle"></i>
                                 <span>Model Utama Aktif</span>
                             </div>
-                            <span class="model-chip-tag">GGUF · 500K Konteks</span>
+                            <span class="model-chip-tag">GGUF · 190K–1M Konteks</span>
                         </div>
-                        <div class="model-name-title">Qwen3.8-27B-Uncensored</div>
+                        <div class="model-name-title">ShiroHaru-Lyra-Agent</div>
                         <p class="model-desc-text">
-                            Model utama dengan dukungan jendela konteks hingga 500.000 token (YaRN + KV Q8_0), pencarian web real-time, serta mode Agent otonom pada PC lokal.
+                            Model utama dengan pilihan jendela konteks 190K hingga 1M token (Low / Medium / High / Extra High / Ultra High), pencarian web real-time, serta mode Agent otonom pada PC lokal.
                         </p>
                         <div class="model-specs-grid">
                             <div class="model-spec-item">
                                 <span class="k">Kapasitas Konteks</span>
-                                <span class="v">500,000 Tokens (500K)</span>
+                                <span class="v" id="demo-model-ctx-val">500,000 Tokens (500K)</span>
                             </div>
                             <div class="model-spec-item">
                                 <span class="k">Orkestrasi Vision</span>
@@ -1231,6 +1287,36 @@ function runAgentTask(command) {
         function simulateAttachFile(type) {
             showToast(type === 'document' ? 'Dokumen disematkan (mode demo)' : 'Gambar dipilih (mode demo)');
         }
+
+        function toggleDemoLyraMenu(e) {
+            if (e) e.stopPropagation();
+            const menu = document.getElementById('lyra-tier-menu');
+            const btn = document.getElementById('lyra-tier-btn');
+            if (!menu || !btn) return;
+            const open = menu.classList.contains('hidden');
+            menu.classList.toggle('hidden', !open);
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        function selectDemoLyraTier(btnEl, label, ctxVal) {
+            document.querySelectorAll('#lyra-tier-menu .lyra-tier-option').forEach(o => o.classList.remove('active'));
+            btnEl.classList.add('active');
+            document.getElementById('lyra-tier-current-label').textContent = label;
+            const ctxSpec = document.getElementById('demo-model-ctx-val');
+            if (ctxSpec) ctxSpec.textContent = ctxVal;
+            document.getElementById('lyra-tier-menu').classList.add('hidden');
+            document.getElementById('lyra-tier-btn').setAttribute('aria-expanded', 'false');
+            showToast(`Mode aktif: ${label}`);
+        }
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#lyra-tier-picker')) {
+                const m = document.getElementById('lyra-tier-menu');
+                const b = document.getElementById('lyra-tier-btn');
+                if (m) m.classList.add('hidden');
+                if (b) b.setAttribute('aria-expanded', 'false');
+            }
+        });
 
         function showToast(text) {
             const container = document.getElementById('toast-container');
