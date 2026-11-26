@@ -46,7 +46,10 @@ from shiro.models import (
     is_qwen38_27b_uncensored,
     get_model_display_name,
     get_saved_lyra_tier,
-    resolve_lyra_tier
+    resolve_lyra_tier,
+    is_running_in_colab,
+    check_llama_cpp_gpu_offload,
+    _get_gpu_vram_gb
 )
 from shiro.auth import (
     get_active_api_key,
@@ -143,6 +146,24 @@ if __name__ == '__main__':
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
 
+    # Auto-heal jika di Google Colab GPU (misal A100 80GB) tetapi llama-cpp-python masih CPU-only (GPU RAM 0 GB)
+    if (
+        is_running_in_colab()
+        and get_gpu_layers() != 0
+        and os.environ.get("SHIRO_CUDA_AUTOFIX_DONE") != "1"
+        and os.environ.get("SHIRO_SKIP_CUDA_AUTOFIX") != "1"
+    ):
+        if check_llama_cpp_gpu_offload() is False:
+            print("⚠️ [AUTO-HEAL CUDA] GPU NVIDIA terdeteksi di Colab tetapi llama-cpp-python berjalan CPU-ONLY (GPU RAM 0 GB)!", flush=True)
+            print("🔧 [AUTO-HEAL CUDA] Memasang wheel CUDA otomatis untuk Python runtime saat ini...", flush=True)
+            try:
+                from shiro.colab_watchdog import ensure_cuda_llama_cpp
+                if ensure_cuda_llama_cpp(force=True):
+                    os.environ["SHIRO_CUDA_AUTOFIX_DONE"] = "1"
+                    os.execv(sys.executable, [sys.executable, "-u", os.path.abspath(__file__)])
+            except Exception as e_cuda_fix:
+                print(f"⚠️ [AUTO-HEAL CUDA] Gagal auto-fix CUDA: {e_cuda_fix}", flush=True)
+
     config = load_model_config()
     current_model_path = config.get("current_model")
     if not current_model_path or current_model_path.lower() == "auto" or not os.path.exists(current_model_path):
@@ -174,7 +195,9 @@ if __name__ == '__main__':
                 print("💡 Jalankan ulang Langkah 3 di Colab (install dengan CMAKE_ARGS='-DGGML_CUDA=on') agar respons kilat di GPU.")
             else:
                 kv_info = f", KV={kv_type}" if kv_type else ""
-                print(f"🚀 Akselerasi GPU AKTIF (Layers: {gpu_layers}{kv_info}, CUDA offload={offload_ok if offload_ok is not None else 'auto'})")
+                vram_gb = _get_gpu_vram_gb()
+                vram_info = f", VRAM={vram_gb:.1f}GB" if vram_gb else ""
+                print(f"🚀 Akselerasi GPU AKTIF (Layers: {gpu_layers}{kv_info}{vram_info}, CUDA offload={offload_ok if offload_ok is not None else 'auto'})")
         else:
             print("⚠️ Mode: CPU (Di Colab pastikan Runtime -> Change runtime type -> T4/A100 GPU)")
     except Exception as e:

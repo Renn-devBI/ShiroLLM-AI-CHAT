@@ -26,7 +26,13 @@ from shiro.models import (
     QWEN38_27B_EXTENDED_CTX,
     QWEN38_27B_CPU_SAFE_CTX,
 )
-from shiro.colab_watchdog import _next_stepdown_ctx, run_shiro_supervisor
+from shiro.colab_watchdog import (
+    _next_stepdown_ctx,
+    run_shiro_supervisor,
+    detect_cuda_tag,
+    find_prebuilt_cuda_wheel_url,
+    ensure_cuda_llama_cpp,
+)
 
 
 class TestServerStability(unittest.TestCase):
@@ -288,6 +294,73 @@ class TestServerStability(unittest.TestCase):
                 ]
                 compile("\n".join(clean_lines), "<colab_cell>", "exec")
         self.assertGreaterEqual(found_watchdog_ref, 3, "Semua 3 cell server Colab harus memakai run_shiro_supervisor!")
+
+    def test_detect_cuda_tag_and_prebuilt_wheel_selection(self):
+        """Deteksi versi CUDA & pencarian wheel Linux pra-kompilasi Python 3.12/3.13 bekerja akurat (API & offline fallback)."""
+        fake_smi_128 = MagicMock(returncode=0, stdout="| NVIDIA-SMI 570.124  CUDA Version: 12.8 |", stderr="")
+        with patch("shiro.colab_watchdog.subprocess.run", return_value=fake_smi_128):
+            tags = detect_cuda_tag()
+            self.assertEqual(tags[:3], ["cu128", "cu126", "cu124"])
+
+        fake_smi_130 = MagicMock(returncode=0, stdout="| NVIDIA-SMI 580.65  CUDA Version: 13.0 |", stderr="")
+        with patch("shiro.colab_watchdog.subprocess.run", return_value=fake_smi_130):
+            tags_130 = detect_cuda_tag()
+            self.assertEqual(tags_130[0], "cu130")
+            self.assertIn("cu128", tags_130)
+
+        api_payload = json.dumps([
+            {
+                "tag_name": "v0.4.8-cu128-linux-20261122",
+                "assets": [
+                    {
+                        "name": "llama_cpp_python-0.4.8+cu128-cp313-cp313-linux_x86_64.whl",
+                        "browser_download_url": "https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.8-cu128-linux-20261122/llama_cpp_python-0.4.8+cu128-cp313-cp313-linux_x86_64.whl",
+                    },
+                    {
+                        "name": "llama_cpp_python-0.4.8+cu128-cp312-cp312-linux_x86_64.whl",
+                        "browser_download_url": "https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.8-cu128-linux-20261122/llama_cpp_python-0.4.8+cu128-cp312-cp312-linux_x86_64.whl",
+                    },
+                ],
+            }
+        ]).encode("utf-8")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = api_payload
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_resp
+
+        with patch("shiro.colab_watchdog.urllib.request.urlopen", return_value=mock_cm):
+            urls = find_prebuilt_cuda_wheel_url(py_tag="cp313", preferred_cu_tags=["cu128", "cu124"])
+            self.assertTrue(urls[0].endswith("llama_cpp_python-0.4.8+cu128-cp313-cp313-linux_x86_64.whl"))
+
+        # Offline fallback jika API diblokir / rate-limit
+        with patch("shiro.colab_watchdog.urllib.request.urlopen", side_effect=RuntimeError("rate limit")):
+            offline_urls = find_prebuilt_cuda_wheel_url(py_tag="cp313", preferred_cu_tags=["cu128", "cu124"])
+            self.assertTrue(len(offline_urls) >= 2)
+            self.assertIn("cp313-cp313-linux_x86_64.whl", offline_urls[0])
+
+    def test_ensure_cuda_llama_cpp_skips_when_already_active_and_repairs_when_cpu_only(self):
+        """ensure_cuda_llama_cpp langsung True jika CUDA aktif, atau memasang wheel CUDA jika terdeteksi CPU-only."""
+        with patch("shiro.colab_watchdog.detect_colab_gpu", return_value=(True, "NVIDIA A100-SXM4-80GB, 81920 MiB")), \
+             patch("shiro.colab_watchdog.refresh_cuda_ldconfig", return_value=""), \
+             patch("shiro.colab_watchdog.check_cuda_offload_subprocess", return_value=True), \
+             patch("shiro.colab_watchdog.subprocess.run") as mock_pip:
+            self.assertTrue(ensure_cuda_llama_cpp(force=False))
+            mock_pip.assert_not_called()
+
+        pip_calls = []
+        def fake_pip_run(cmd, **kwargs):
+            pip_calls.append(cmd)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("shiro.colab_watchdog.detect_colab_gpu", return_value=(True, "NVIDIA A100-SXM4-80GB, 81920 MiB")), \
+             patch("shiro.colab_watchdog.refresh_cuda_ldconfig", return_value=""), \
+             patch("shiro.colab_watchdog.check_cuda_offload_subprocess", side_effect=[False, True]), \
+             patch("shiro.colab_watchdog.find_prebuilt_cuda_wheel_url", return_value=["https://example.com/cuda-cp313.whl"]), \
+             patch("shiro.colab_watchdog.subprocess.run", side_effect=fake_pip_run):
+            self.assertTrue(ensure_cuda_llama_cpp(force=False))
+            self.assertEqual(len(pip_calls), 1)
+            self.assertIn("pip", pip_calls[0])
+            self.assertIn("https://example.com/cuda-cp313.whl", pip_calls[0])
 
 
 if __name__ == "__main__":

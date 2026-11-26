@@ -12,8 +12,11 @@ Menjaga server web.py dan tunnel Cloudflare/Ngrok tetap hidup:
 import os
 import re
 import sys
+import glob
+import json
 import time
 import shutil
+import platform
 import subprocess
 import urllib.request
 from datetime import datetime
@@ -57,6 +60,242 @@ def configure_runtime_env() -> Tuple[bool, str]:
         os.environ["SHIRO_GPU_LAYERS"] = "0"
         os.environ["N_GPU_LAYERS"] = "0"
     return has_gpu, gpu_info
+
+
+def refresh_cuda_ldconfig() -> str:
+    """Memastikan jalur library CUDA/cuBLAS aktif di LD_LIBRARY_PATH dan ldconfig (Linux)."""
+    candidate_globs = [
+        "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+        "/usr/lib/python*/dist-packages/nvidia/*/lib",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12*/lib64",
+        "/usr/local/cuda-13*/lib64",
+    ]
+    valid_dirs: List[str] = []
+    for pattern in candidate_globs:
+        for p in glob.glob(pattern):
+            if os.path.isdir(p) and p not in valid_dirs:
+                valid_dirs.append(p)
+
+    existing_ld = [x for x in os.environ.get("LD_LIBRARY_PATH", "").split(":") if x]
+    merged_ld: List[str] = []
+    for d in valid_dirs + existing_ld:
+        if d and d not in merged_ld:
+            merged_ld.append(d)
+    if merged_ld:
+        os.environ["LD_LIBRARY_PATH"] = ":".join(merged_ld)
+
+    if platform.system() == "Linux" and os.path.isdir("/usr/lib/x86_64-linux-gnu"):
+        try:
+            for d in valid_dirs:
+                for so_path in glob.glob(os.path.join(d, "*.so*")):
+                    target_link = os.path.join("/usr/lib/x86_64-linux-gnu", os.path.basename(so_path))
+                    if not os.path.exists(target_link):
+                        try:
+                            os.symlink(so_path, target_link)
+                        except OSError:
+                            pass
+            subprocess.run(["ldconfig"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        except Exception:
+            pass
+    return os.environ.get("LD_LIBRARY_PATH", "")
+
+
+def detect_cuda_tag() -> List[str]:
+    """Mendeteksi versi CUDA driver/runtime terpasang lalu mengembalikan urutan tag wheel paling kompatibel."""
+    ver: Optional[Tuple[int, int]] = None
+    for cmd, pattern in [
+        (["nvidia-smi"], r"CUDA Version:\s*(\d+)\.(\d+)"),
+        (["nvcc", "--version"], r"release\s+(\d+)\.(\d+)"),
+    ]:
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=4)
+            if res.returncode == 0 and res.stdout:
+                m = re.search(pattern, res.stdout)
+                if m:
+                    ver = (int(m.group(1)), int(m.group(2)))
+                    break
+        except Exception:
+            pass
+
+    if ver is None:
+        try:
+            import torch
+            tcuda = getattr(torch.version, "cuda", None)
+            if tcuda:
+                parts = str(tcuda).split(".")
+                ver = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+        except Exception:
+            pass
+
+    if ver is None:
+        return ["cu124", "cu126", "cu128"]
+    if ver >= (13, 2):
+        return ["cu132", "cu131", "cu130", "cu128", "cu126", "cu124"]
+    if ver >= (13, 1):
+        return ["cu131", "cu130", "cu128", "cu126", "cu124"]
+    if ver >= (13, 0):
+        return ["cu130", "cu128", "cu126", "cu124"]
+    if ver >= (12, 8):
+        return ["cu128", "cu126", "cu124"]
+    if ver >= (12, 6):
+        return ["cu126", "cu124"]
+    return ["cu124", "cu126", "cu128"]
+
+
+def check_cuda_offload_subprocess() -> bool:
+    """Memeriksa di subprocess baru apakah llama-cpp-python terpasang mendukung offload GPU CUDA."""
+    try:
+        res = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import llama_cpp; print('SHIRO_GPU_OFFLOAD=' + str(bool(llama_cpp.llama_supports_gpu_offload())))",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=dict(os.environ),
+            timeout=20,
+        )
+        return res.returncode == 0 and "SHIRO_GPU_OFFLOAD=True" in (res.stdout or "")
+    except Exception:
+        return False
+
+
+def find_prebuilt_cuda_wheel_url(
+    py_tag: Optional[str] = None,
+    preferred_cu_tags: Optional[List[str]] = None,
+) -> List[str]:
+    """Mencari URL wheel CUDA Linux pra-kompilasi (termasuk Python 3.12 & 3.13) dari JamePeng releases."""
+    py_tag = py_tag or f"cp{sys.version_info.major}{sys.version_info.minor}"
+    cu_tags = preferred_cu_tags or detect_cuda_tag()
+    expected_suffix = f"-{py_tag}-{py_tag}-linux_x86_64.whl"
+
+    candidates_by_cu: dict = {cu: [] for cu in cu_tags}
+    other_matches: List[str] = []
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/JamePeng/llama-cpp-python/releases?per_page=25",
+            headers={"User-Agent": "Shiro-LLMA"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            releases = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        if isinstance(releases, list):
+            for rel in releases:
+                assets = rel.get("assets") or []
+                for asset in assets:
+                    name = asset.get("name", "")
+                    dl_url = asset.get("browser_download_url", "")
+                    if not (name.endswith(expected_suffix) and "+cu" in name and dl_url):
+                        continue
+                    matched = False
+                    for cu in cu_tags:
+                        if f"+{cu}-" in name:
+                            candidates_by_cu[cu].append(dl_url)
+                            matched = True
+                            break
+                    if not matched:
+                        other_matches.append(dl_url)
+    except Exception:
+        pass
+
+    ordered: List[str] = []
+    for cu in cu_tags:
+        for u in candidates_by_cu.get(cu, []):
+            if u not in ordered:
+                ordered.append(u)
+    for u in other_matches:
+        if u not in ordered:
+            ordered.append(u)
+
+    # Static fallback URLs jika GitHub API terkena rate-limit
+    for cu in cu_tags:
+        static_url = (
+            f"https://github.com/JamePeng/llama-cpp-python/releases/download/"
+            f"v0.4.8-{cu}-linux-20261122/"
+            f"llama_cpp_python-0.4.8+{cu}-{py_tag}-{py_tag}-linux_x86_64.whl"
+        )
+        if static_url not in ordered:
+            ordered.append(static_url)
+    return ordered
+
+
+def ensure_cuda_llama_cpp(force: bool = False) -> bool:
+    """
+    Memastikan llama-cpp-python aktif dengan akselerasi CUDA di GPU Colab (termasuk Python 3.13).
+    Jika saat ini terpasang versi CPU-only (menyebabkan GPU RAM 0.0 GB), otomatis mengunduh
+    wheel CUDA pra-kompilasi (~15 detik) atau build CUDA sebagai fallback terakhir.
+    """
+    has_gpu, gpu_info = detect_colab_gpu()
+    if not has_gpu:
+        return False
+
+    refresh_cuda_ldconfig()
+    if not force and check_cuda_offload_subprocess():
+        return True
+
+    py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    print("=" * 62, flush=True)
+    print(f"🔧 [CUDA SETUP] GPU terdeteksi ({gpu_info}), Python {py_tag}.", flush=True)
+    print("   Memastikan llama-cpp-python terpasang dengan akselerasi CUDA penuh...", flush=True)
+    print("=" * 62, flush=True)
+
+    wheel_urls = find_prebuilt_cuda_wheel_url(py_tag=py_tag)
+    for whl_url in wheel_urls[:4]:
+        print(f"📦 Mencoba wheel CUDA pra-kompilasi: {os.path.basename(whl_url)}", flush=True)
+        try:
+            res = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--force-reinstall",
+                    "--no-deps",
+                    "--no-cache-dir",
+                    whl_url,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=180,
+            )
+            if res.returncode == 0:
+                refresh_cuda_ldconfig()
+                if check_cuda_offload_subprocess():
+                    print("✅ Akselerasi CUDA GPU (llama_supports_gpu_offload=True) BERHASIL DIAKTIFKAN!", flush=True)
+                    return True
+        except Exception as e_whl:
+            print(f"⚠️ Gagal memasang wheel ({os.path.basename(whl_url)}): {e_whl}", flush=True)
+
+    print("🛠️ Wheel pra-kompilasi tidak cocok, mengompilasi ulang llama-cpp-python dengan CUDA...", flush=True)
+    build_env = dict(os.environ)
+    build_env["CMAKE_ARGS"] = "-DGGML_CUDA=on -DGGML_CUDA_FA_ALL_QUANTS=on -DCMAKE_CUDA_ARCHITECTURES=native"
+    build_env["CMAKE_BUILD_PARALLEL_LEVEL"] = str(max(2, os.cpu_count() or 4))
+    build_env["FORCE_CMAKE"] = "1"
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-cache-dir",
+                "--force-reinstall",
+                "llama-cpp-python",
+            ],
+            env=build_env,
+            timeout=600,
+        )
+        refresh_cuda_ldconfig()
+        if check_cuda_offload_subprocess():
+            print("✅ Kompilasi CUDA GPU berhasil (llama_supports_gpu_offload=True)!", flush=True)
+            return True
+    except Exception as e_src:
+        print(f"⚠️ Gagal kompilasi CUDA dari source: {e_src}", flush=True)
+
+    return check_cuda_offload_subprocess()
 
 
 def backup_memory_to_drive(drive_dir: Optional[str] = None) -> bool:
