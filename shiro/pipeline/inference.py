@@ -1130,15 +1130,35 @@ def get_shiro_reply(
         with state.llm_lock:
             res = None
             if use_fast_text:
+                prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
+                comp_kwargs = _build_completion_kwargs(call_kwargs, stream=False)
                 try:
                     if state.last_turn_had_image and hasattr(llm, "reset"):
                         llm.reset()
                         state.last_turn_had_image = False
-                    prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
-                    comp_res = llm.create_completion(
-                        prompt=prompt_str,
-                        **_build_completion_kwargs(call_kwargs, stream=False)
-                    )
+                    comp_res = llm.create_completion(prompt=prompt_str, **comp_kwargs)
+                except Exception as e_fast_first:
+                    comp_res = None
+                    err_fast_str = str(e_fast_first).lower()
+                    if "exceed" in err_fast_str and ("context" in err_fast_str or "token" in err_fast_str or "window" in err_fast_str):
+                        try:
+                            em_prompt = _format_chatml_prompt(
+                                [{"role": "system", "content": system_prompt[:1200]}, user_turn_msg],
+                                disable_thinking=disable_thinking
+                            )
+                            comp_res = llm.create_completion(prompt=em_prompt, **comp_kwargs)
+                        except Exception:
+                            comp_res = None
+                    elif hasattr(llm, "reset"):
+                        try:
+                            llm.reset()
+                            comp_res = llm.create_completion(prompt=prompt_str, **comp_kwargs)
+                        except Exception:
+                            comp_res = None
+                    if comp_res is None:
+                        print(f"[Inference Fast-Path Fallback]: {e_fast_first}")
+
+                if comp_res is not None:
                     comp_choice = (comp_res.get("choices") or [{}])[0] if isinstance(comp_res, dict) else {}
                     res = {
                         "choices": [{
@@ -1147,30 +1167,6 @@ def get_shiro_reply(
                         }],
                         "usage": comp_res.get("usage", {}) if isinstance(comp_res, dict) else {},
                     }
-                except Exception as e_fast:
-                    err_fast_str = str(e_fast).lower()
-                    if "exceed" in err_fast_str and ("context" in err_fast_str or "token" in err_fast_str or "window" in err_fast_str):
-                        try:
-                            em_prompt = _format_chatml_prompt(
-                                [{"role": "system", "content": system_prompt[:1200]}, user_turn_msg],
-                                disable_thinking=disable_thinking
-                            )
-                            comp_res = llm.create_completion(
-                                prompt=em_prompt,
-                                **_build_completion_kwargs(call_kwargs, stream=False)
-                            )
-                            comp_choice = (comp_res.get("choices") or [{}])[0] if isinstance(comp_res, dict) else {}
-                            res = {
-                                "choices": [{
-                                    "message": {"content": comp_choice.get("text", "") or ""},
-                                    "finish_reason": comp_choice.get("finish_reason", "stop"),
-                                }],
-                                "usage": comp_res.get("usage", {}) if isinstance(comp_res, dict) else {},
-                            }
-                        except Exception:
-                            res = None
-                    if res is None:
-                        print(f"[Inference Fast-Path Fallback]: {e_fast}")
 
             if res is None:
                 try:
@@ -1424,33 +1420,56 @@ def stream_shiro_reply(
             try:
                 fast_succeeded = False
                 if use_fast_text:
+                    prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
+                    stream_comp_kwargs = _build_completion_kwargs(call_kwargs, stream=True)
+                    emitted_fast = False
                     try:
                         if state.last_turn_had_image and hasattr(llm, "reset"):
                             llm.reset()
                             state.last_turn_had_image = False
-                        prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
-                        stream_iter = llm.create_completion(
-                            prompt=prompt_str,
-                            **_build_completion_kwargs(call_kwargs, stream=True)
-                        )
+                        stream_iter = llm.create_completion(prompt=prompt_str, **stream_comp_kwargs)
                         for ch in stream_iter:
                             if cancel_event.is_set():
                                 break
                             txt = ((ch.get("choices") or [{}])[0].get("text", "") or "") if isinstance(ch, dict) else ""
                             if txt:
+                                emitted_fast = True
                                 chunk_queue.put(("chunk", {"choices": [{"delta": {"content": txt}}]}))
                         fast_succeeded = True
                     except Exception as e_fast_stream:
                         if cancel_event.is_set():
                             return
-                        print(f"[Inference Fast-Path Fallback]: {e_fast_stream}")
-                        path_used = "chat_handler"
                         if stream_iter is not None and hasattr(stream_iter, "close"):
                             try:
                                 stream_iter.close()
                             except Exception:
                                 pass
                         stream_iter = None
+                        if not emitted_fast and hasattr(llm, "reset"):
+                            try:
+                                llm.reset()
+                                stream_iter = llm.create_completion(prompt=prompt_str, **stream_comp_kwargs)
+                                for ch in stream_iter:
+                                    if cancel_event.is_set():
+                                        break
+                                    txt = ((ch.get("choices") or [{}])[0].get("text", "") or "") if isinstance(ch, dict) else ""
+                                    if txt:
+                                        chunk_queue.put(("chunk", {"choices": [{"delta": {"content": txt}}]}))
+                                fast_succeeded = True
+                            except Exception as e_fast_retry:
+                                if cancel_event.is_set():
+                                    return
+                                print(f"[Inference Fast-Path Fallback]: {e_fast_retry}")
+                        else:
+                            print(f"[Inference Fast-Path Fallback]: {e_fast_stream}")
+                        if not fast_succeeded:
+                            path_used = "chat_handler"
+                            if stream_iter is not None and hasattr(stream_iter, "close"):
+                                try:
+                                    stream_iter.close()
+                                except Exception:
+                                    pass
+                            stream_iter = None
 
                 if not fast_succeeded:
                     stream_kwargs = dict(call_kwargs)

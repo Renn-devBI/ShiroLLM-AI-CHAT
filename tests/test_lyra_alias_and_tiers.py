@@ -93,15 +93,16 @@ class TestLyraAliasAndTiers(unittest.TestCase):
         fake_mod = types.ModuleType("llama_cpp")
         fake_mod.Llama = fake_llama
         fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
         fake_mod.GGML_TYPE_Q8_0 = 8
         fake_mod.GGML_TYPE_Q4_0 = 2
 
         expected = [
-            ("low", 190000, False, 8),       # native <= 262K, VRAM >= 70 -> q8_0
-            ("medium", 262144, False, 8),    # native 262K, no YaRN
-            ("high", 500000, True, 8),       # YaRN, VRAM >= 70 -> q8_0
-            ("extra_high", 700000, True, 2), # YaRN + >500K -> q4_0
-            ("ultra_high", 1000000, True, 2) # YaRN + 1M -> q4_0
+            ("low", 190000, False, 1),       # native <= 262K, VRAM >= 70 -> F16
+            ("medium", 262144, False, 1),    # native 262K, F16
+            ("high", 500000, True, 1),       # YaRN, VRAM >= 70 -> F16
+            ("extra_high", 700000, True, 1), # YaRN, VRAM >= 70 -> F16
+            ("ultra_high", 1000000, True, 8) # YaRN + 1M, VRAM >= 70 -> Q8_0
         ]
 
         with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
@@ -141,6 +142,7 @@ class TestLyraAliasAndTiers(unittest.TestCase):
         fake_mod = types.ModuleType("llama_cpp")
         fake_mod.Llama = fake_llama_oom
         fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
         fake_mod.GGML_TYPE_Q8_0 = 8
         fake_mod.GGML_TYPE_Q4_0 = 2
 
@@ -151,7 +153,8 @@ class TestLyraAliasAndTiers(unittest.TestCase):
              patch("shiro.models._get_gpu_vram_gb", return_value=80.0):
             llm, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=1000000)
             self.assertEqual(llm.n_ctx(), 500000)
-            self.assertEqual(attempted, [1000000, 700000, 500000])
+            # Di 80GB VRAM, 1M mencoba KV Q8_0 dulu, lalu KV Q4_0, kemudian step-down ke 700K -> 500K
+            self.assertEqual(attempted, [1000000, 1000000, 700000, 500000])
 
     def test_api_models_and_context_tier_endpoint(self):
         """GET /api/models & POST /api/models/context-tier bekerja end-to-end dengan aman."""
@@ -392,7 +395,7 @@ class TestLyraAliasAndTiers(unittest.TestCase):
         self.assertTrue(token_events[0].strip(), f"Token pertama tidak boleh hanya spasi kosong: {token_events!r}")
 
     def test_a100_40gb_uses_fast_q8_kv_cache_and_tuned_batch(self):
-        """Pada A100 40GB, tier Low/Medium/High memakai KV Q8_0 (bukan Q4_0 yang lambat) serta n_batch=2048 & n_ubatch=512."""
+        """Pada A100 40GB, tier Low/Medium/High memakai KV F16 native agar FlashAttention head_dim=256 berjalan penuh di GPU."""
         calls = []
 
         def fake_llama(**kwargs):
@@ -404,29 +407,30 @@ class TestLyraAliasAndTiers(unittest.TestCase):
         fake_mod = types.ModuleType("llama_cpp")
         fake_mod.Llama = fake_llama
         fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
         fake_mod.GGML_TYPE_Q8_0 = 8
         fake_mod.GGML_TYPE_Q4_0 = 2
 
         expected_a100 = [
-            ("low", 190000, 8),
-            ("medium", 262144, 8),
-            ("high", 500000, 8),
-            ("extra_high", 700000, 2),
-            ("ultra_high", 1000000, 2),
+            ("low", 190000, 1, "f16"),
+            ("medium", 262144, 1, "f16"),
+            ("high", 500000, 1, "f16"),
+            ("extra_high", 700000, 8, "q8_0"),
+            ("ultra_high", 1000000, 2, "q4_0"),
         ]
         with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
              patch("shiro.models.init_vision_handler", return_value=None), \
              patch("shiro.models.find_active_lora_path", return_value=None), \
              patch("shiro.models.get_gpu_layers", return_value=-1), \
              patch("shiro.models._get_gpu_vram_gb", return_value=40.0):
-            for tier_id, expected_ctx, expected_kv in expected_a100:
+            for tier_id, expected_ctx, expected_kv, expected_lbl in expected_a100:
                 llm, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=expected_ctx)
                 kw = calls[-1]
                 self.assertEqual(kw["type_k"], expected_kv)
                 self.assertEqual(kw["type_v"], expected_kv)
-                self.assertEqual(kw["n_batch"], 2048)
-                self.assertEqual(kw["n_ubatch"], 512)
-                self.assertEqual(llm._shiro_kv_type, "q8_0" if expected_kv == 8 else "q4_0")
+                self.assertEqual(kw["n_batch"], 1024)
+                self.assertEqual(kw["n_ubatch"], 256)
+                self.assertEqual(llm._shiro_kv_type, expected_lbl)
 
     def test_fast_chatml_prompt_and_zero_think_prefill(self):
         """_format_chatml_prompt menutup <think> kosong secara eksplisit saat disable_thinking=True."""
@@ -506,20 +510,84 @@ class TestLyraAliasAndTiers(unittest.TestCase):
             self.assertFalse(state.last_turn_had_image)
 
     def test_needs_lyra_ctx_reload_avoids_downscale_stall(self):
-        """Beralih dari High (500K Q8_0) ke Low (190K) TIDAK me-reload model 16.8 GB saat kirim pesan."""
-        fake_cur = MagicMock()
-        fake_cur.model_path = LYRA_REAL_PATH
-        fake_cur.n_ctx = lambda: 500000
-        fake_cur._shiro_kv_type = "q8_0"
-        state.llm = fake_cur
+        """Di VRAM luas (80GB) dengan F16 aktif, beralih ke Low tidak me-reload; di A100 40GB, turun dari 500K Q4_0 ke Low me-reload ke native 190K F16."""
+        fake_80g = MagicMock()
+        fake_80g.model_path = LYRA_REAL_PATH
+        fake_80g.n_ctx = lambda: 500000
+        fake_80g._shiro_kv_type = "f16"
+        state.llm = fake_80g
 
         with patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=80.0), \
              patch("shiro.models.instantiate_llama_model") as mock_inst, \
              patch("shiro.routes.chat.stream_shiro_reply", return_value=iter([{"type": "done", "reply": "Siap Kakak!"}])):
             resp = self.client.post("/api/chat", json={"message": "halo", "lyra_tier": "low", "stream": True})
             self.assertEqual(resp.status_code, 200)
             _ = resp.data
             mock_inst.assert_not_called()
+
+        # Jika sebelumnya berjalan dengan q4_0 di A100 40GB, pindah ke Low me-reload ke 190K F16 cepat
+        fake_40g_q4 = MagicMock()
+        fake_40g_q4.model_path = LYRA_REAL_PATH
+        fake_40g_q4.n_ctx = lambda: 500000
+        fake_40g_q4._shiro_kv_type = "q4_0"
+        state.llm = fake_40g_q4
+
+        fake_190k_f16 = MagicMock()
+        fake_190k_f16.model_path = LYRA_REAL_PATH
+        fake_190k_f16.n_ctx = lambda: 190000
+        fake_190k_f16._shiro_kv_type = "f16"
+        with patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=40.0), \
+             patch("shiro.models.instantiate_llama_model", return_value=(fake_190k_f16, None)) as mock_inst_up, \
+             patch("shiro.routes.chat.stream_shiro_reply", return_value=iter([{"type": "done", "reply": "Siap cepat!"}])):
+            resp2 = self.client.post("/api/chat", json={"message": "halo", "lyra_tier": "low", "stream": True})
+            self.assertEqual(resp2.status_code, 200)
+            _ = resp2.data
+            mock_inst_up.assert_called_once_with(LYRA_REAL_PATH, target_ctx_override=190000)
+
+    def test_fast_text_path_resets_and_retries_before_chat_handler_fallback(self):
+        """Jika create_completion gagal karena state DeltaNet/KV perlu reset, ia reset() lalu retry create_completion tanpa fallback ke Qwen25VLChatHandler."""
+        from shiro.pipeline.inference import stream_shiro_reply
+
+        class RetryFastLLM:
+            model_path = LYRA_REAL_PATH
+            _shiro_fast_chatml = True
+
+            def __init__(self):
+                self.attempts = 0
+                self.reset_count = 0
+                self.chat_calls = 0
+
+            def n_ctx(self):
+                return 190000
+
+            def reset(self):
+                self.reset_count += 1
+
+            def create_completion(self, prompt, stream=False, **kwargs):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RuntimeError("llama_decode returned -1 (recurrent cache mismatch)")
+                def _gen():
+                    yield {"choices": [{"text": "Berhasil cepat setelah reset!"}]}
+                return _gen() if stream else {"choices": [{"text": "Berhasil cepat setelah reset!", "finish_reason": "stop"}]}
+
+            def create_chat_completion(self, messages, stream=False, **kwargs):
+                self.chat_calls += 1
+                raise AssertionError("Tidak boleh fallback ke create_chat_completion ketika retry create_completion berhasil!")
+
+        sim = RetryFastLLM()
+        state.set_llm(sim, MagicMock())
+        with patch("shiro.models.get_gpu_layers", return_value=-1):
+            events = list(stream_shiro_reply("buat website", lyra_tier="low"))
+
+        self.assertEqual(sim.attempts, 2)
+        self.assertEqual(sim.reset_count, 1)
+        self.assertEqual(sim.chat_calls, 0)
+        done_ev = [e for e in events if e.get("type") == "done"]
+        self.assertTrue(done_ev)
+        self.assertIn("Berhasil cepat", done_ev[-1]["reply"])
 
     def test_cpu_only_llama_cpp_wheel_guard(self):
         """Jika llama_supports_gpu_offload() False meski GPU terdeteksi, fallback aman ke mode CPU 32K tanpa crash."""

@@ -299,11 +299,19 @@ def chat():
         def _needs_lyra_ctx_reload(llm_inst, target_ctx: int) -> bool:
             if llm_inst is None:
                 return False
+            from shiro.models import _get_gpu_vram_gb
             active_ctx = get_active_model_ctx(llm_inst)
+            kv_type = getattr(llm_inst, "_shiro_kv_type", None)
             if active_ctx + 1024 < target_ctx:
                 return True
-            if active_ctx > 524288 and target_ctx <= 500000 and getattr(llm_inst, "_shiro_kv_type", None) == "q4_0":
-                return True
+            if target_ctx <= 500000 and kv_type in ("q4_0", "q8_0"):
+                vram_gb = _get_gpu_vram_gb()
+                if vram_gb is None or vram_gb >= 35.0:
+                    return True
+            if active_ctx > 262144 and target_ctx <= 262144:
+                vram_gb = _get_gpu_vram_gb()
+                if vram_gb is not None and vram_gb < 50.0:
+                    return True
             return False
 
         def _ensure_lyra_tier_loaded():

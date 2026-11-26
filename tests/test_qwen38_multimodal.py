@@ -79,6 +79,7 @@ class TestQwen38NativeMultimodal(unittest.TestCase):
         """Pastikan YaRN RoPE scaling + FlashAttn + KV Cache hanya dibuat untuk Qwen3.8-27B-Uncensored"""
         fake_mod = types.SimpleNamespace(
             LLAMA_ROPE_SCALING_TYPE_YARN=2,
+            GGML_TYPE_F16=1,
             GGML_TYPE_Q8_0=8,
             GGML_TYPE_Q4_0=2
         )
@@ -111,6 +112,7 @@ class TestQwen38NativeMultimodal(unittest.TestCase):
         fake_mod = types.ModuleType("llama_cpp")
         fake_mod.Llama = fake_llama
         fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
         fake_mod.GGML_TYPE_Q8_0 = 8
         fake_mod.GGML_TYPE_Q4_0 = 2
 
@@ -150,6 +152,7 @@ class TestQwen38NativeMultimodal(unittest.TestCase):
         fake_mod = types.ModuleType("llama_cpp")
         fake_mod.Llama = fake_llama_oom
         fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
         fake_mod.GGML_TYPE_Q8_0 = 8
         fake_mod.GGML_TYPE_Q4_0 = 2
 
@@ -160,8 +163,8 @@ class TestQwen38NativeMultimodal(unittest.TestCase):
              patch("shiro.models._get_gpu_vram_gb", return_value=40.0):
             llm, _ = instantiate_llama_model("model/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf")
             self.assertEqual(llm.n_ctx(), 262144)
-            # Di A100 40GB, sistem mencoba 500K Q8_0 dulu, lalu 500K Q4_0, lalu step-down ke 262K tanpa YaRN
-            self.assertEqual(attempted_ctx, [(500000, True), (500000, True), (262144, False)])
+            # Di A100 40GB, sistem mencoba 500K F16 -> 500K Q8_0 -> 500K Q4_0 -> step-down ke 262K tanpa YaRN
+            self.assertEqual(attempted_ctx, [(500000, True), (500000, True), (500000, True), (262144, False)])
 
         attempted_ctx_16g = []
         def fake_llama_oom_16g(**kwargs):

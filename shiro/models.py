@@ -285,18 +285,28 @@ def build_qwen38_500k_llama_kwargs(
         extra["flash_attn"] = True
         kv_mode = (kv_cache_override or os.environ.get("SHIRO_KV_CACHE_TYPE", "")).strip().lower()
         if not kv_mode:
-            if chosen_ctx > 500000:
-                kv_mode = "q4_0"
-            else:
-                vram_gb = _get_gpu_vram_gb()
-                if vram_gb is not None and vram_gb >= 35.0:
-                    kv_mode = "q8_0"
-                elif vram_gb is not None and vram_gb >= 22.0 and chosen_ctx <= 262144:
+            vram_gb = _get_gpu_vram_gb()
+            if vram_gb is not None and vram_gb >= 70.0:
+                # A100 80GB / H100: native F16 hingga 700K agar FlashAttention CUDA penuh, Q8_0 untuk 1M
+                kv_mode = "f16" if chosen_ctx <= 700000 else "q8_0"
+            elif vram_gb is not None and vram_gb >= 35.0:
+                # A100 40GB: native F16 untuk Low (190K), Medium (262K), High (500K); Q8_0 untuk 700K; Q4_0 untuk 1M
+                if chosen_ctx <= 500000:
+                    kv_mode = "f16"
+                elif chosen_ctx <= 700000:
                     kv_mode = "q8_0"
                 else:
                     kv_mode = "q4_0"
+            elif vram_gb is not None and vram_gb >= 22.0 and chosen_ctx <= 262144:
+                kv_mode = "q8_0"
+            else:
+                kv_mode = "q4_0"
 
-        if kv_mode == "q8_0":
+        if kv_mode == "f16":
+            kv_val = getattr(llama_cpp_mod, "GGML_TYPE_F16", 1)
+            extra["type_k"] = kv_val
+            extra["type_v"] = kv_val
+        elif kv_mode == "q8_0":
             kv_val = getattr(llama_cpp_mod, "GGML_TYPE_Q8_0", 8)
             extra["type_k"] = kv_val
             extra["type_v"] = kv_val
@@ -942,16 +952,20 @@ def instantiate_llama_model(
             chosen_ctx = min(chosen_ctx, QWEN38_27B_CPU_SAFE_CTX)
         n_threads = get_optimal_n_threads(gpu_layers)
 
+    debug_llama = os.environ.get("SHIRO_DEBUG_LLAMA", "").strip().lower() in ("1", "true", "yes")
     llama_kwargs = {
         "model_path": model_path,
         "n_ctx": chosen_ctx,
         "n_threads": n_threads,
         "n_gpu_layers": gpu_layers,
-        "n_batch": 2048 if is_gpu else 512,
-        "n_ubatch": 512 if is_gpu else 256,
-        "verbose": False,
+        "n_batch": 1024 if is_gpu else 512,
+        "n_ubatch": 256,
+        "verbose": debug_llama,
     }
     orig_ctx = QWEN38_27B_NATIVE_CTX
+    f16_val = getattr(llama_cpp, "GGML_TYPE_F16", 1)
+    q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
+    q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
     if is_qwen38_unc:
         qwen_extra = build_qwen38_500k_llama_kwargs(
             model_path,
@@ -961,10 +975,8 @@ def instantiate_llama_model(
         )
         orig_ctx = qwen_extra.get("yarn_orig_ctx", get_model_native_context_length(model_path, default=QWEN38_27B_NATIVE_CTX))
         llama_kwargs.update(qwen_extra)
-        q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
-        q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
         tk_init = qwen_extra.get("type_k")
-        kv_lbl = "q8_0" if tk_init == q8_val else ("q4_0" if tk_init == q4_val else "f16")
+        kv_lbl = "f16" if tk_init == f16_val else ("q8_0" if tk_init == q8_val else ("q4_0" if tk_init == q4_val else "f16"))
         if is_gpu and chosen_ctx > orig_ctx:
             safe_print(
                 f"🚀 [{LYRA_DISPLAY_NAME}] Extended Context aktif: {chosen_ctx:,} tokens "
@@ -1039,10 +1051,18 @@ def instantiate_llama_model(
     llm, load_err = _load_with_lora_and_vision_fallback(llama_kwargs)
 
     if load_err is not None and is_qwen38_unc:
-        q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
-        q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
-        if llama_kwargs.get("type_k") == q8_val:
-            safe_print(f"⚠️ [{LYRA_DISPLAY_NAME}] Gagal memuat {chosen_ctx:,} dengan KV Q8_0 ({load_err}), mencoba KV Q4_0...")
+        if llama_kwargs.get("type_k") == f16_val:
+            safe_print(f"⚠️ [{LYRA_DISPLAY_NAME}] Gagal memuat {chosen_ctx:,} dengan KV F16 ({load_err}), mencoba KV Q8_0...")
+            q8_kwargs = dict(llama_kwargs)
+            q8_kwargs["type_k"] = q8_val
+            q8_kwargs["type_v"] = q8_val
+            llm, load_err = _load_with_lora_and_vision_fallback(q8_kwargs)
+            if llm is not None:
+                llama_kwargs = q8_kwargs
+                final_kwargs = q8_kwargs
+
+        if load_err is not None and llama_kwargs.get("type_k") in (f16_val, q8_val):
+            safe_print(f"⚠️ [{LYRA_DISPLAY_NAME}] Gagal memuat {chosen_ctx:,} dengan KV F16/Q8_0 ({load_err}), mencoba KV Q4_0...")
             q4_kwargs = dict(llama_kwargs)
             q4_kwargs["type_k"] = q4_val
             q4_kwargs["type_v"] = q4_val
@@ -1077,10 +1097,8 @@ def instantiate_llama_model(
         raise load_err
 
     try:
-        q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
-        q4_val = getattr(llama_cpp, "GGML_TYPE_Q4_0", 2)
         tk = final_kwargs.get("type_k")
-        llm._shiro_kv_type = "q8_0" if tk == q8_val else ("q4_0" if tk == q4_val else "f16")
+        llm._shiro_kv_type = "f16" if tk == f16_val else ("q8_0" if tk == q8_val else ("q4_0" if tk == q4_val else "f16"))
         llm._shiro_fast_chatml = bool(
             detect_chat_format(model_path) == "chatml"
             and hasattr(llm, "create_completion")
