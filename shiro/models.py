@@ -251,6 +251,88 @@ def _get_gpu_vram_gb() -> Optional[float]:
     return None
 
 
+def _get_system_ram_gb() -> Optional[float]:
+    """Mengambil kapasitas System RAM perangkat dalam GB."""
+    try:
+        if os.path.exists("/proc/meminfo"):
+            with open("/proc/meminfo", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        kb = int(line.split()[1])
+                        return kb / (1024.0 * 1024.0)
+    except Exception:
+        pass
+    try:
+        import ctypes
+
+        class _MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        mem_st = _MEMORYSTATUSEX()
+        mem_st.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem_st)):
+            return mem_st.ullTotalPhys / (1024.0 ** 3)
+    except Exception:
+        pass
+    return None
+
+
+def build_colab_max_gpu_kwargs(
+    is_gpu: bool,
+    vram_gb: Optional[float] = None,
+    ram_gb: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Khusus Google Colab GPU: menyetel parameter agresif agar GPU VRAM & High-RAM
+    termanfaatkan optimal (~80% target, sisakan ~20% headroom) untuk kecepatan maksimal.
+    Jika dijalankan di PC Lokal (bukan Colab) atau mode CPU, mengembalikan {} agar PC
+    menyesuaikan otomatis secara aman.
+    """
+    if not (is_gpu and is_running_in_colab()):
+        return {}
+
+    vram = vram_gb if vram_gb is not None else _get_gpu_vram_gb()
+    ram = ram_gb if ram_gb is not None else _get_system_ram_gb()
+    cpu_cnt = os.cpu_count() or 8
+
+    if vram is not None and vram >= 70.0:
+        n_batch = 8192
+        n_ubatch = 2048
+    elif vram is not None and vram >= 35.0:
+        n_batch = 4096
+        n_ubatch = 1024
+    else:
+        n_batch = 2048
+        n_ubatch = 512
+
+    max_kwargs: Dict[str, Any] = {
+        "n_gpu_layers": -1,
+        "offload_kqv": True,
+        "flash_attn": True,
+        "n_batch": n_batch,
+        "n_ubatch": n_ubatch,
+        "n_threads": max(4, min(cpu_cnt, 12)),
+        "n_threads_batch": max(4, min(cpu_cnt, 16)),
+    }
+    if ram is not None and ram >= 40.0:
+        max_kwargs["use_mmap"] = False
+        max_kwargs["use_mlock"] = True
+    else:
+        max_kwargs["use_mmap"] = True
+        max_kwargs["use_mlock"] = False
+    return max_kwargs
+
+
 def build_qwen38_500k_llama_kwargs(
     model_path: str,
     chosen_ctx: int,
@@ -287,8 +369,12 @@ def build_qwen38_500k_llama_kwargs(
         if not kv_mode:
             vram_gb = _get_gpu_vram_gb()
             if vram_gb is not None and vram_gb >= 70.0:
-                # A100 80GB / H100: native F16 hingga 700K agar FlashAttention CUDA penuh, Q8_0 untuk 1M
-                kv_mode = "f16" if chosen_ctx <= 700000 else "q8_0"
+                if is_running_in_colab():
+                    # Colab A100 80GB / H100: native F16 penuh hingga 1M (~75-80% VRAM, 0 penalti dekuantisasi KV)
+                    kv_mode = "f16"
+                else:
+                    # PC Lokal 80GB+: native F16 hingga 700K, Q8_0 untuk 1M
+                    kv_mode = "f16" if chosen_ctx <= 700000 else "q8_0"
             elif vram_gb is not None and vram_gb >= 35.0:
                 # A100 40GB: native F16 untuk Low (190K), Medium (262K), High (500K); Q8_0 untuk 700K; Q4_0 untuk 1M
                 if chosen_ctx <= 500000:
@@ -693,15 +779,30 @@ def init_vision_handler(model_path: str):
             mmproj_file = cand
             break
 
+    def _init_mm_handler(handler_cls, mm_path: str):
+        prefer_gpu = is_running_in_colab() and get_gpu_layers() != 0
+        attempts = (
+            [{"clip_model_path": mm_path, "verbose": False, "use_gpu": True}] if prefer_gpu else []
+        ) + [
+            {"clip_model_path": mm_path, "verbose": False},
+            {"clip_model_path": mm_path},
+        ]
+        last_te = None
+        for kw in attempts:
+            try:
+                return handler_cls(**kw)
+            except TypeError as te:
+                last_te = te
+                continue
+        if last_te is not None:
+            raise last_te
+
     # 1. Arsitektur Qwen-VL (Qwen2.5-VL-7B, Qwen2.5-VL-32B):
     if "vl" in name or "qwen" in name:
         try:
             from llama_cpp.llama_chat_format import Qwen25VLChatHandler
             if mmproj_file:
-                try:
-                    vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file, verbose=False)
-                except TypeError:
-                    vision_chat_handler = Qwen25VLChatHandler(clip_model_path=mmproj_file)
+                vision_chat_handler = _init_mm_handler(Qwen25VLChatHandler, mmproj_file)
                 print(f"👁️ Vision Chat Handler (Qwen25VL) aktif dengan projector: {mmproj_file}")
                 return vision_chat_handler
         except Exception as e1:
@@ -711,10 +812,7 @@ def init_vision_handler(model_path: str):
     if mmproj_file:
         try:
             from llama_cpp.llama_chat_format import Llava15ChatHandler
-            try:
-                vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file, verbose=False)
-            except TypeError:
-                vision_chat_handler = Llava15ChatHandler(clip_model_path=mmproj_file)
+            vision_chat_handler = _init_mm_handler(Llava15ChatHandler, mmproj_file)
             print(f"👁️ Vision Chat Handler (Llava15) aktif dengan projector: {mmproj_file}")
             return vision_chat_handler
         except Exception as e2:
@@ -960,8 +1058,23 @@ def instantiate_llama_model(
         "n_gpu_layers": gpu_layers,
         "n_batch": 1024 if is_gpu else 512,
         "n_ubatch": 256,
+        "use_mmap": True,
+        "use_mlock": False,
         "verbose": debug_llama,
     }
+    if is_gpu:
+        llama_kwargs["offload_kqv"] = True
+
+    colab_max_kwargs = build_colab_max_gpu_kwargs(is_gpu=is_gpu)
+    if colab_max_kwargs:
+        llama_kwargs.update(colab_max_kwargs)
+        safe_print(
+            f"🔥 [Colab MAX-GPU] Mode performa penuh aktif (~80% target VRAM/RAM · "
+            f"offload_kqv={llama_kwargs.get('offload_kqv')} · n_batch={llama_kwargs['n_batch']} · "
+            f"n_ubatch={llama_kwargs['n_ubatch']} · use_mmap={llama_kwargs.get('use_mmap')} · "
+            f"use_mlock={llama_kwargs.get('use_mlock')})"
+        )
+
     orig_ctx = QWEN38_27B_NATIVE_CTX
     f16_val = getattr(llama_cpp, "GGML_TYPE_F16", 1)
     q8_val = getattr(llama_cpp, "GGML_TYPE_Q8_0", 8)
@@ -1005,20 +1118,35 @@ def instantiate_llama_model(
         safe_print(f"🎯 LoRA Adapter Terdeteksi & Dimuat: {os.path.basename(active_lora)}")
 
     def _try_init_llama(kwargs_dict: Dict[str, Any]):
+        optional_tuning_keys = ("n_ubatch", "n_threads_batch", "offload_kqv", "use_mmap", "use_mlock")
         try:
             return Llama(**kwargs_dict)
         except TypeError as te:
-            # Fallback jika versi llama-cpp-python lama belum mendukung n_ubatch / type_k / type_v / flash_attn
-            if "n_ubatch" in kwargs_dict and "n_ubatch" in str(te):
-                without_ubatch = {k: v for k, v in kwargs_dict.items() if k != "n_ubatch"}
+            # Fallback jika versi llama-cpp-python lama belum mendukung salah satu parameter tuning/KV
+            without_opt = {k: v for k, v in kwargs_dict.items() if k not in optional_tuning_keys}
+            if len(without_opt) < len(kwargs_dict):
                 try:
-                    return Llama(**without_ubatch)
+                    return Llama(**without_opt)
                 except TypeError:
                     pass
-            stripped = {k: v for k, v in kwargs_dict.items() if k not in ("type_k", "type_v", "flash_attn", "n_ubatch")}
+            stripped = {
+                k: v for k, v in kwargs_dict.items()
+                if k not in ("type_k", "type_v", "flash_attn") + optional_tuning_keys
+            }
             if len(stripped) < len(kwargs_dict):
-                safe_print(f"⚠️ Runtime llama-cpp tidak mendukung parameter KV/flash_attn/ubatch ({te}), mencoba tanpa parameter tersebut...")
+                safe_print(f"⚠️ Runtime llama-cpp tidak mendukung parameter KV/flash_attn/tuning ({te}), mencoba tanpa parameter tersebut...")
                 return Llama(**stripped)
+            raise
+        except Exception as exc:
+            err_lower = str(exc).lower()
+            if kwargs_dict.get("use_mlock") and (
+                isinstance(exc, OSError)
+                or any(tok in err_lower for tok in ("mlock", "memlock", "memory lock"))
+            ):
+                safe_print(f"⚠️ Container membatasi use_mlock ({exc}), mencoba ulang dengan use_mlock=False...")
+                retry_no_mlock = dict(kwargs_dict)
+                retry_no_mlock["use_mlock"] = False
+                return Llama(**retry_no_mlock)
             raise
 
     def _load_with_lora_and_vision_fallback(kwargs_dict: Dict[str, Any]):
@@ -1082,6 +1210,9 @@ def instantiate_llama_model(
                 safe_print(f"⚠️ [{LYRA_DISPLAY_NAME}] Gagal memuat context {chosen_ctx:,} ({load_err}), fallback ke {step_ctx:,} tokens...")
                 step_kwargs = dict(llama_kwargs)
                 step_kwargs["n_ctx"] = step_ctx
+                if is_gpu and step_kwargs.get("n_batch", 0) > 1024:
+                    step_kwargs["n_batch"] = 1024
+                    step_kwargs["n_ubatch"] = 256
                 if step_ctx <= orig_ctx:
                     for yk in yarn_keys:
                         step_kwargs.pop(yk, None)
@@ -1106,6 +1237,9 @@ def instantiate_llama_model(
             and type(llm).__module__.startswith("llama_cpp")
         )
         llm._shiro_gpu_offload_verified = gpu_offload_ok
+        llm._shiro_colab_max_gpu = bool(colab_max_kwargs)
+        llm._shiro_n_batch = int(final_kwargs.get("n_batch", 512))
+        llm._shiro_n_ubatch = int(final_kwargs.get("n_ubatch", 256))
     except Exception:
         pass
 

@@ -612,6 +612,122 @@ class TestLyraAliasAndTiers(unittest.TestCase):
             self.assertEqual(calls[-1]["n_ctx"], sm.QWEN38_27B_CPU_SAFE_CTX)
             self.assertFalse(llm._shiro_gpu_offload_verified)
 
+    def test_colab_max_gpu_profile_saturates_a100_80gb_and_40gb(self):
+        """Di Google Colab GPU, sistem memaksimalkan VRAM/RAM (~80% target) dengan offload_kqv, n_batch besar, dan eager RAM."""
+        calls = []
+
+        def fake_llama(**kwargs):
+            calls.append(kwargs)
+            m = MagicMock()
+            m.n_ctx = lambda: kwargs["n_ctx"]
+            return m
+
+        fake_mod = types.ModuleType("llama_cpp")
+        fake_mod.Llama = fake_llama
+        fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
+        fake_mod.GGML_TYPE_Q8_0 = 8
+        fake_mod.GGML_TYPE_Q4_0 = 2
+
+        with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch("shiro.models.is_running_in_colab", return_value=True), \
+             patch("shiro.models.init_vision_handler", return_value=None), \
+             patch("shiro.models.find_active_lora_path", return_value=None), \
+             patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=80.0), \
+             patch("shiro.models._get_system_ram_gb", return_value=167.0):
+            llm_80g, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=1000000)
+            kw80 = calls[-1]
+            self.assertEqual(kw80["n_gpu_layers"], -1)
+            self.assertTrue(kw80["offload_kqv"])
+            self.assertTrue(kw80["flash_attn"])
+            self.assertEqual(kw80["n_batch"], 8192)
+            self.assertEqual(kw80["n_ubatch"], 2048)
+            self.assertFalse(kw80["use_mmap"])
+            self.assertTrue(kw80["use_mlock"])
+            self.assertEqual(kw80["type_k"], 1)  # Colab A100 80GB: F16 penuh hingga 1M
+            self.assertTrue(llm_80g._shiro_colab_max_gpu)
+
+        with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch("shiro.models.is_running_in_colab", return_value=True), \
+             patch("shiro.models.init_vision_handler", return_value=None), \
+             patch("shiro.models.find_active_lora_path", return_value=None), \
+             patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=40.0), \
+             patch("shiro.models._get_system_ram_gb", return_value=83.0):
+            llm_40g, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=190000)
+            kw40 = calls[-1]
+            self.assertEqual(kw40["n_batch"], 4096)
+            self.assertEqual(kw40["n_ubatch"], 1024)
+            self.assertTrue(kw40["offload_kqv"])
+            self.assertFalse(kw40["use_mmap"])
+            self.assertTrue(kw40["use_mlock"])
+            self.assertTrue(llm_40g._shiro_colab_max_gpu)
+
+    def test_local_pc_stays_adaptive_and_does_not_enable_colab_max_gpu(self):
+        """Di PC Lokal (bukan Colab), mode MAX-GPU Colab tidak aktif sehingga resource PC menyesuaikan aman otomatis."""
+        calls = []
+
+        def fake_llama(**kwargs):
+            calls.append(kwargs)
+            m = MagicMock()
+            m.n_ctx = lambda: kwargs["n_ctx"]
+            return m
+
+        fake_mod = types.ModuleType("llama_cpp")
+        fake_mod.Llama = fake_llama
+        fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
+        fake_mod.GGML_TYPE_Q8_0 = 8
+        fake_mod.GGML_TYPE_Q4_0 = 2
+
+        with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch("shiro.models.is_running_in_colab", return_value=False), \
+             patch("shiro.models.init_vision_handler", return_value=None), \
+             patch("shiro.models.find_active_lora_path", return_value=None), \
+             patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=40.0), \
+             patch("shiro.models._get_system_ram_gb", return_value=64.0):
+            llm_pc, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=190000)
+            kw_pc = calls[-1]
+            self.assertEqual(kw_pc["n_batch"], 1024)
+            self.assertEqual(kw_pc["n_ubatch"], 256)
+            self.assertTrue(kw_pc["use_mmap"])
+            self.assertFalse(kw_pc["use_mlock"])
+            self.assertFalse(llm_pc._shiro_colab_max_gpu)
+
+    def test_colab_mlock_rejection_falls_back_cleanly(self):
+        """Jika container Colab menolak use_mlock=True, sistem otomatis mengulang dengan use_mlock=False tanpa gagal."""
+        calls = []
+
+        def fake_llama_mlock(**kwargs):
+            calls.append(dict(kwargs))
+            if kwargs.get("use_mlock"):
+                raise RuntimeError("mlock failed: RLIMIT_MEMLOCK exceeded")
+            m = MagicMock()
+            m.n_ctx = lambda: kwargs["n_ctx"]
+            return m
+
+        fake_mod = types.ModuleType("llama_cpp")
+        fake_mod.Llama = fake_llama_mlock
+        fake_mod.LLAMA_ROPE_SCALING_TYPE_YARN = 2
+        fake_mod.GGML_TYPE_F16 = 1
+        fake_mod.GGML_TYPE_Q8_0 = 8
+        fake_mod.GGML_TYPE_Q4_0 = 2
+
+        with patch.dict(sys.modules, {"llama_cpp": fake_mod}), \
+             patch("shiro.models.is_running_in_colab", return_value=True), \
+             patch("shiro.models.init_vision_handler", return_value=None), \
+             patch("shiro.models.find_active_lora_path", return_value=None), \
+             patch("shiro.models.get_gpu_layers", return_value=-1), \
+             patch("shiro.models._get_gpu_vram_gb", return_value=80.0), \
+             patch("shiro.models._get_system_ram_gb", return_value=167.0):
+            llm, _ = sm.instantiate_llama_model(LYRA_REAL_PATH, target_ctx_override=190000)
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(calls[0]["use_mlock"])
+            self.assertFalse(calls[1]["use_mlock"])
+            self.assertEqual(llm.n_ctx(), 190000)
+
 
 if __name__ == "__main__":
     unittest.main()

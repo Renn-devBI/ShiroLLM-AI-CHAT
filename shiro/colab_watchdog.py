@@ -56,6 +56,10 @@ def configure_runtime_env() -> Tuple[bool, str]:
     if has_gpu:
         os.environ["SHIRO_GPU_LAYERS"] = "-1"
         os.environ["N_GPU_LAYERS"] = "-1"
+        # Khusus Colab GPU: larang spillover ke System RAM agar seluruh komputasi tetap di VRAM GPU berkecepatan tinggi
+        os.environ.setdefault("GGML_CUDA_ENABLE_UNIFIED_MEMORY", "0")
+        os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "0")
+        os.environ.setdefault("GGML_CUDA_NO_PINNED", "0")
     else:
         os.environ["SHIRO_GPU_LAYERS"] = "0"
         os.environ["N_GPU_LAYERS"] = "0"

@@ -198,6 +198,14 @@ if __name__ == '__main__':
                 vram_gb = _get_gpu_vram_gb()
                 vram_info = f", VRAM={vram_gb:.1f}GB" if vram_gb else ""
                 print(f"🚀 Akselerasi GPU AKTIF (Layers: {gpu_layers}{kv_info}{vram_info}, CUDA offload={offload_ok if offload_ok is not None else 'auto'})")
+                if getattr(active_llm, "_shiro_colab_max_gpu", None) is True:
+                    print(
+                        f"🔥 Profil Performa: Colab MAX-GPU (Target ~80% VRAM/RAM · "
+                        f"n_batch={getattr(active_llm, '_shiro_n_batch', '-')}, "
+                        f"n_ubatch={getattr(active_llm, '_shiro_n_ubatch', '-')})"
+                    )
+                else:
+                    print("💻 Profil Performa: PC Lokal Adaptif (Menyesuaikan otomatis GPU/RAM perangkat)")
         else:
             print("⚠️ Mode: CPU (Di Colab pastikan Runtime -> Change runtime type -> T4/A100 GPU)")
     except Exception as e:

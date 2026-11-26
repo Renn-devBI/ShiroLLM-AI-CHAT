@@ -42,6 +42,8 @@ def health_check():
     is_lyra = is_qwen38_27b_uncensored(model_path)
     raw_offload = getattr(state.llm, "_shiro_gpu_offload_verified", None) if state.llm is not None else None
     raw_kv = getattr(state.llm, "_shiro_kv_type", None) if state.llm is not None else None
+    raw_max_gpu = getattr(state.llm, "_shiro_colab_max_gpu", None) if state.llm is not None else None
+    is_max_gpu_active = raw_max_gpu if isinstance(raw_max_gpu, bool) else False
     return jsonify({
         "status": "ok" if state.llm is not None else "degraded",
         "model_loaded": state.llm is not None,
@@ -53,6 +55,8 @@ def health_check():
         "gpu_layers": get_gpu_layers(),
         "gpu_offload_supported": raw_offload if isinstance(raw_offload, bool) else None,
         "kv_cache_type": raw_kv if isinstance(raw_kv, str) else None,
+        "colab_max_gpu_mode": is_max_gpu_active,
+        "runtime_profile": "colab_max_gpu" if is_max_gpu_active else "local_pc_adaptive",
         "active_context_window": get_active_model_ctx(state.llm) if state.llm is not None else 0,
         "is_colab": is_running_in_colab(),
         "timestamp": datetime.now().isoformat()
