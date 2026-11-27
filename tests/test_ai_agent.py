@@ -17,7 +17,7 @@ class TestShiroAIAgent(unittest.TestCase):
 
     def test_mozilla_headers_and_cloudflare_dns(self):
         """Memastikan header Mozilla Firefox dan Cloudflare 1.1.1.1 DoH siap"""
-        self.assertIn("Firefox/128.0", MOZILLA_HEADERS["User-Agent"])
+        self.assertIn("Firefox/133.0", MOZILLA_HEADERS["User-Agent"])
         self.assertIn("text/html", MOZILLA_HEADERS["Accept"])
         # Test DoH resolver untuk domain publik
         ip = resolve_dns_cloudflare("cloudflare.com")

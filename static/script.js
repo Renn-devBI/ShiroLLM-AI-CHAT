@@ -1401,6 +1401,18 @@ function isSafeMarkdownUrl(rawUrl) {
     return /^(?:https?:\/\/|\/|#)/i.test(u);
 }
 
+function resolveDisplayImageUrl(rawUrl) {
+    const u = String(rawUrl || '').trim();
+    if (!u) return '';
+    if (u.startsWith('data:') || u.startsWith('/api/') || u.startsWith('/uploads/') || u.startsWith('/images/') || u.startsWith('/static/')) {
+        return u;
+    }
+    if (/^https?:\/\//i.test(u)) {
+        return `/api/image-proxy?url=${encodeURIComponent(u)}`;
+    }
+    return u;
+}
+
 function copyInlineSymbol(el) {
     if (!el) return;
     const txt = el.getAttribute('data-copy') || el.textContent || '';
@@ -1457,13 +1469,16 @@ function renderInlineMarkdown(rawText) {
         return stashSlot(renderKatexMath(rawTex, false));
     });
 
-    // 2. Gambar ![alt](url) (hanya skema aman)
+    // 2. Gambar ![alt](url) (hanya skema aman, lewat proxy Mozilla untuk URL eksternal anti-hotlink)
     txt = txt.replace(/!\[([^\]]*)\]\(([^\s)]+)\)/g, (m, alt, rawUrl) => {
         const cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
         if (!isSafeMarkdownUrl(cleanUrl)) return escapeHtml(alt || '');
+        const displayUrl = resolveDisplayImageUrl(cleanUrl);
+        const safeDisplayUrl = escapeHtml(displayUrl);
+        const safeRawUrl = escapeHtml(cleanUrl);
         const safeAlt = (alt || 'Gambar').replace(/"/g, '&quot;');
-        const jsUrl = cleanUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        return stashSlot(`<div class="chat-inline-img-wrap" onclick="openImageLightbox('${jsUrl}', '${safeAlt}')" title="Klik untuk melihat pratinjau penuh"><img src="${cleanUrl}" alt="${safeAlt}" class="chat-img-attachment" loading="lazy" onerror="this.outerHTML='<span class=\\'md-img-fallback\\'><i class=\\'ph ph-image-broken\\'></i> ${safeAlt}</span>'"></div>`);
+        const jsUrl = displayUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return stashSlot(`<div class="chat-inline-img-wrap" onclick="openImageLightbox('${jsUrl}', '${safeAlt}')" title="Klik untuk melihat pratinjau penuh"><img src="${safeDisplayUrl}" data-raw-src="${safeRawUrl}" alt="${safeAlt}" class="chat-img-attachment" loading="lazy" onerror="if(this.dataset.rawSrc && this.src !== this.dataset.rawSrc){this.src=this.dataset.rawSrc;}else{this.outerHTML='<span class=\\'md-img-fallback\\'><i class=\\'ph ph-image-broken\\'></i> ${safeAlt}</span>';}"></div>`);
     });
 
     // 3. Tautan [label](url) — blokir skema berbahaya (javascript:, data:, vbscript:)
@@ -2426,7 +2441,7 @@ function renderWebSourcesHTML(agentActionData) {
         : (Array.isArray(details.images) ? details.images : []);
 
     const sources = rawSources.filter(s => s && s.url && /^https?:\/\//i.test(s.url));
-    const webImages = rawImages.filter(im => im && im.url && /^https?:\/\//i.test(im.url));
+    const webImages = rawImages.filter(im => im && im.url && /^(?:https?:\/\/|\/api\/|\/uploads\/|\/images\/)/i.test(im.url));
     if (!sources.length && !webImages.length) return '';
 
     const chipsHTML = sources.slice(0, 6).map(s => {
@@ -2440,14 +2455,17 @@ function renderWebSourcesHTML(agentActionData) {
         `;
     }).join('');
 
-    const imgsHTML = webImages.slice(0, 4).map((im, idx) => {
-        const safeUrl = escapeHtml(im.url);
+    const imgsHTML = webImages.slice(0, 6).map((im, idx) => {
+        const rawUrl = String(im.url || '');
+        const displayUrl = resolveDisplayImageUrl(rawUrl);
+        const safeDisplayUrl = escapeHtml(displayUrl);
+        const safeRawUrl = escapeHtml(rawUrl);
         const safeTitle = escapeHtml(im.title || `Gambar Web #${idx + 1}`);
-        const jsUrl = String(im.url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const jsUrl = displayUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         const jsTitle = String(im.title || `Gambar Web #${idx + 1}`).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         return `
             <div class="ag-web-img-card" onclick="openImageLightbox('${jsUrl}', '${jsTitle}')" title="${safeTitle}">
-                <img src="${safeUrl}" alt="${safeTitle}" loading="lazy">
+                <img src="${safeDisplayUrl}" data-raw-src="${safeRawUrl}" alt="${safeTitle}" loading="lazy" onerror="if(this.dataset.rawSrc && this.src !== this.dataset.rawSrc){this.src=this.dataset.rawSrc;}">
             </div>
         `;
     }).join('');

@@ -192,10 +192,10 @@ def check_weather(locations: List[str]) -> Dict[str, Any]:
         "data": structured_data
     }
 
-def search_web_images(query: str, max_images: int = 4) -> List[Dict[str, str]]:
+def search_web_images(query: str, max_images: int = 6) -> List[Dict[str, str]]:
     """
-    Mencari URL gambar yang relevan di web (Bing Images dengan fallback Wikimedia Commons)
-    untuk disajikan sebagai referensi visual atau disematkan dalam jawaban AI Agent.
+    Mencari URL gambar yang relevan di web lintas banyak engine (Bing Images, DuckDuckGo Images,
+    Wikimedia Commons API, dan Yandex Images) menggunakan header Mozilla Firefox otentik.
     """
     clean_q = (query or "").strip()
     if not clean_q:
@@ -203,7 +203,8 @@ def search_web_images(query: str, max_images: int = 4) -> List[Dict[str, str]]:
 
     images: List[Dict[str, str]] = []
     seen_urls = set()
-    session = get_agent_session()
+    from shiro.agent.network import get_firefox_session, get_firefox_headers
+    session = get_firefox_session(prefer_curl_cffi=False) or get_agent_session()
 
     def _is_valid_img_url(u: str) -> bool:
         if not u or not isinstance(u, str):
@@ -211,16 +212,24 @@ def search_web_images(query: str, max_images: int = 4) -> List[Dict[str, str]]:
         lu = u.strip().lower()
         if not (lu.startswith("http://") or lu.startswith("https://")):
             return False
-        if any(bad in lu for bad in ("bing.net/th?id=oip", "data:image", ".svg", "favicon", "logo-small", "1x1.")):
-            # Bing th?id=OIP sebenarnya thumbnail valid, hanya hindari data:image & icon/1x1
-            if "bing.net/th?id=oip" not in lu:
-                return False
+        if any(bad in lu for bad in ("data:image", ".svg", "favicon", "logo-small", "1x1.", "pixel.gif")):
+            return False
         return True
+
+    def _push_img(u: str, title: str, purl: str, src_name: str):
+        if _is_valid_img_url(u) and u not in seen_urls and len(images) < max_images:
+            seen_urls.add(u)
+            images.append({
+                "url": u,
+                "title": (title or clean_q).strip()[:120],
+                "source_url": (purl or u).strip(),
+                "source": src_name,
+            })
 
     # 1. Bing Images HTML (iusc JSON metadata -> murl/purl/t)
     try:
         img_url = f"https://www.bing.com/images/search?q={urllib.parse.quote(clean_q)}&form=HDRSC2&first=1"
-        resp = session.get(img_url, timeout=5)
+        resp = session.get(img_url, headers=get_firefox_headers(referer="https://www.bing.com/"), timeout=5)
         if resp.status_code == 200 and BeautifulSoup:
             soup = BeautifulSoup(resp.text, "html.parser")
             for a_el in soup.select("a.iusc"):
@@ -234,20 +243,34 @@ def search_web_images(query: str, max_images: int = 4) -> List[Dict[str, str]]:
                 murl = str(meta.get("murl") or meta.get("turl") or "").strip()
                 purl = str(meta.get("purl") or "").strip()
                 title = str(meta.get("t") or clean_q).strip()
-                if _is_valid_img_url(murl) and murl not in seen_urls:
-                    seen_urls.add(murl)
-                    images.append({
-                        "url": murl,
-                        "title": title[:120] or clean_q,
-                        "source_url": purl,
-                        "source": "Bing Images",
-                    })
-                    if len(images) >= max_images:
-                        return images
+                _push_img(murl, title, purl, "Bing Images")
+                if len(images) >= max_images:
+                    return images
     except Exception:
         pass
 
-    # 2. Fallback Wikimedia Commons API (open web image metadata)
+    # 2. DuckDuckGo Images (vqd token + /i.js)
+    if len(images) < max_images:
+        try:
+            ddg_hdrs = get_firefox_headers(referer="https://duckduckgo.com/")
+            r_tok = session.get(f"https://duckduckgo.com/?q={urllib.parse.quote(clean_q)}&iax=images&ia=images", headers=ddg_hdrs, timeout=5)
+            vqd_m = re.search(r'vqd=["\']?([A-Za-z0-9\-_]+)["\']?', r_tok.text or "") if r_tok.status_code == 200 else None
+            if vqd_m:
+                r_js = session.get(
+                    "https://duckduckgo.com/i.js",
+                    params={"l": "wt-wt", "o": "json", "q": clean_q, "vqd": vqd_m.group(1), "f": ",,,", "p": "1"},
+                    headers=get_firefox_headers(referer="https://duckduckgo.com/", accept="application/json, */*"),
+                    timeout=5,
+                )
+                if r_js.status_code == 200:
+                    for it in (r_js.json().get("results") or []):
+                        _push_img(str(it.get("image") or it.get("thumbnail") or ""), str(it.get("title") or clean_q), str(it.get("url") or ""), "DuckDuckGo Images")
+                        if len(images) >= max_images:
+                            return images
+        except Exception:
+            pass
+
+    # 3. Wikimedia Commons API (open web image metadata)
     if len(images) < max_images:
         try:
             wm_url = (
@@ -265,16 +288,23 @@ def search_web_images(query: str, max_images: int = 4) -> List[Dict[str, str]]:
                     i0 = infos[0]
                     mime = str(i0.get("mime") or "").lower()
                     u = str(i0.get("url") or "").strip()
-                    if mime.startswith("image/") and "svg" not in mime and _is_valid_img_url(u) and u not in seen_urls:
-                        seen_urls.add(u)
-                        images.append({
-                            "url": u,
-                            "title": str(page.get("title") or clean_q).replace("File:", "").strip()[:120],
-                            "source_url": str(i0.get("descriptionurl") or u),
-                            "source": "Wikimedia Commons",
-                        })
+                    if mime.startswith("image/") and "svg" not in mime:
+                        _push_img(u, str(page.get("title") or clean_q).replace("File:", "").strip(), str(i0.get("descriptionurl") or u), "Wikimedia Commons")
                         if len(images) >= max_images:
                             break
+        except Exception:
+            pass
+
+    # 4. Yandex Images HTML fallback (serp-item JSON metadata)
+    if len(images) < max_images:
+        try:
+            yx_url = f"https://yandex.com/images/search?text={urllib.parse.quote(clean_q)}"
+            r_yx = session.get(yx_url, headers=get_firefox_headers(referer="https://yandex.com/images/"), timeout=5)
+            if r_yx.status_code == 200 and r_yx.text:
+                for m_img in re.finditer(r'"img_href"\s*:\s*"(https?://[^"\\]+)"', r_yx.text):
+                    _push_img(m_img.group(1), clean_q, yx_url, "Yandex Images")
+                    if len(images) >= max_images:
+                        break
         except Exception:
             pass
 
@@ -435,6 +465,57 @@ def search_google_web(query: str, max_results: int = 6, include_images: bool = T
                             "url": raw_href,
                             "snippet": snippet,
                             "source": "DuckDuckGo"
+                        })
+        except Exception:
+            pass
+
+    # 2c. Brave Search HTML & Mojeek HTML fallback bila hasil masih sedikit (multi-engine coverage)
+    if len(results) < 3:
+        try:
+            brave_url = f"https://search.brave.com/search?q={urllib.parse.quote(clean_q)}&source=web"
+            resp_br = session.get(brave_url, timeout=6)
+            if resp_br.status_code == 200 and BeautifulSoup:
+                soup_br = BeautifulSoup(resp_br.text, "html.parser")
+                for card in soup_br.select(".snippet[data-type='web'], div[data-type='web']"):
+                    if len(results) >= max_results:
+                        break
+                    a_br = card.select_one("a[href^='http']")
+                    sn_br = card.select_one(".snippet-description, .generic-snippet")
+                    if not a_br:
+                        continue
+                    t_br = a_br.get_text(" ", strip=True)
+                    u_br = str(a_br.get("href") or "").strip()
+                    if t_br and u_br.startswith("http") and "brave.com" not in u_br.lower() and not any(r["url"] == u_br for r in results):
+                        results.append({
+                            "title": t_br,
+                            "url": u_br,
+                            "snippet": sn_br.get_text(" ", strip=True) if sn_br else "",
+                            "source": "Brave Search",
+                        })
+        except Exception:
+            pass
+
+    if len(results) < 3:
+        try:
+            mj_url = f"https://www.mojeek.com/search?q={urllib.parse.quote(clean_q)}"
+            resp_mj = session.get(mj_url, timeout=6)
+            if resp_mj.status_code == 200 and BeautifulSoup:
+                soup_mj = BeautifulSoup(resp_mj.text, "html.parser")
+                for li_mj in soup_mj.select("ul.results-standard > li"):
+                    if len(results) >= max_results:
+                        break
+                    a_mj = li_mj.select_one("a.title")
+                    p_mj = li_mj.select_one("p.s")
+                    if not a_mj:
+                        continue
+                    t_mj = a_mj.get_text(" ", strip=True)
+                    u_mj = str(a_mj.get("href") or "").strip()
+                    if t_mj and u_mj.startswith("http") and not any(r["url"] == u_mj for r in results):
+                        results.append({
+                            "title": t_mj,
+                            "url": u_mj,
+                            "snippet": p_mj.get_text(" ", strip=True) if p_mj else "",
+                            "source": "Mojeek Search",
                         })
         except Exception:
             pass
@@ -1169,6 +1250,33 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
         re.search(r'\b(buatkan\s+(?:website|aplikasi|program|kode|script|skrip|login|halaman|video)|perbaiki\s+(?:kode|bug|error|tampilan|file)|edit\s+file|curhat|aku\s+(?:sedih|capek|lelah|galau))\b', text_lower)
     )
 
+    resend_image_triggers = [
+        "kirim ulang gambar", "kirim lagi gambar", "kirim gambar tersebut", "kirim gambar itu",
+        "kirimkan ulang gambar", "tampilkan ulang gambar", "resend image", "resend that image",
+        "send that image again", "send the image back",
+    ]
+    if any(rt in text_lower for rt in resend_image_triggers):
+        return {
+            "intent": "resend_image",
+            "params": {"caption": text.strip()}
+        }
+
+    image_send_triggers = [
+        "kirim gambar", "kirimkan gambar", "kirimin gambar", "kirim foto", "kirimkan foto",
+        "tampilkan gambar", "tampilkan foto", "berikan gambar", "kasih gambar",
+        "send me an image", "show me a picture",
+    ]
+    for ist in image_send_triggers:
+        if ist in text_lower and not is_coding_or_chat_personal:
+            q_img = re.sub(rf".*?{re.escape(ist)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
+            q_img = re.sub(r'\b(dong|ya|kak|shiro|tolong|coba)\b', '', q_img, flags=re.IGNORECASE).strip(" :?,.!")
+            if not q_img or len(q_img) < 2:
+                q_img = text.strip()
+            return {
+                "intent": "image_search",
+                "params": {"query": q_img, "wants_images": True}
+            }
+
     image_search_triggers = [
         "cari gambar", "carikan gambar", "cariin gambar", "cari foto", "carikan foto", "cariin foto",
         "find image", "find picture", "search image", "gambar tentang", "foto tentang",
@@ -1176,7 +1284,7 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
     for ist in image_search_triggers:
         if ist in text_lower and not is_coding_or_chat_personal:
             q_img = re.sub(rf".*?{re.escape(ist)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
-            q_img = re.sub(r'\b(dong|ya|kak|shiro)\b', '', q_img, flags=re.IGNORECASE).strip(" :?,.!")
+            q_img = re.sub(r'\b(dong|ya|kak|shiro|tolong|coba)\b', '', q_img, flags=re.IGNORECASE).strip(" :?,.!")
             if not q_img or len(q_img) < 2:
                 q_img = text.strip()
             return {

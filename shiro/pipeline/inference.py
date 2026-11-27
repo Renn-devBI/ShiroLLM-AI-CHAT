@@ -262,9 +262,10 @@ def _is_heavy_agent_task(
 def _execute_live_research_tool(
     tool_call: Dict[str, Any],
     tier_id: Optional[str] = None,
+    uploaded_image_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Menjalankan alat penelusuran web/browser (`web_search`, `open_url`, `screenshot`) secara langsung."""
-    from shiro.agent.tools import search_google_web, open_and_read_webpage, take_web_screenshot
+    """Menjalankan alat penelusuran web/browser (`web_search`, `open_url`, `screenshot`, `search_image`, `send_image`) secara langsung."""
+    from shiro.agent.tools import search_google_web, search_web_images, open_and_read_webpage, take_web_screenshot
     from shiro.web.realtime_intel import get_research_config_for_tier
     cfg = get_research_config_for_tier(tier_id)
     max_res = max(4, min(12, int(cfg.max_sources)))
@@ -272,6 +273,41 @@ def _execute_live_research_tool(
     name = (tool_call.get("name") or "").lower()
     args = tool_call.get("args") or {}
     t0 = time.perf_counter()
+
+    if name == "search_image":
+        q = (args.get("query") or args.get("q") or "").strip()
+        found_imgs = search_web_images(q, max_images=max_imgs) if q else []
+        obs_lines = [f"Hasil pencarian gambar '{q}' ({len(found_imgs)} gambar):"]
+        for im in found_imgs:
+            obs_lines.append(f"- ![{im.get('title', q)}]({im.get('url')}) (sumber: {im.get('source', 'Web')})")
+        return {
+            "tool": "image_web_search",
+            "title": f"Search Web Images ({q[:36]})",
+            "status": "success" if found_imgs else "failed",
+            "observation": "\n".join(obs_lines),
+            "sources": [
+                {"title": im.get("title") or q, "url": im.get("source_url") or im.get("url"), "domain": im.get("source") or "Images"}
+                for im in found_imgs if im.get("source_url") or im.get("url")
+            ],
+            "web_images": found_imgs,
+            "duration_sec": round(time.perf_counter() - t0, 2),
+        }
+    elif name == "send_image":
+        raw_u = (args.get("url") or args.get("src") or "").strip()
+        caption = (args.get("caption") or args.get("title") or "Gambar").strip()
+        if raw_u.lower() in ("last_uploaded", "uploaded", "user_image") and uploaded_image_url:
+            raw_u = uploaded_image_url
+        is_valid_u = bool(raw_u and (raw_u.startswith(("http://", "https://", "/api/", "/uploads/", "/images/"))))
+        imgs_out = [{"url": raw_u, "title": caption[:120], "source_url": raw_u, "source": "AI Selected"}] if is_valid_u else []
+        return {
+            "tool": "send_image",
+            "title": f"Send Image ({caption[:32]})",
+            "status": "success" if imgs_out else "failed",
+            "observation": f"![{caption}]({raw_u})" if imgs_out else "URL gambar tidak valid.",
+            "sources": [],
+            "web_images": imgs_out,
+            "duration_sec": round(time.perf_counter() - t0, 2),
+        }
 
     if name == "web_search":
         q = (args.get("query") or args.get("q") or "").strip()
@@ -522,6 +558,8 @@ def _prepare_inference_payload(
     is_identity_guard_turn = bool(identity_probe.get("is_injection") or identity_probe.get("is_identity_probe"))
     sess_hist_src: List[Dict[str, Any]] = []
     scrape_inspection_steps: List[Dict[str, Any]] = []
+    reverse_search_steps: List[Dict[str, Any]] = []
+    uploaded_image_url: Optional[str] = None
     if memory and hasattr(memory, "get_session_history"):
         sess_hist_src = memory.get_session_history(session_id)
     elif memory:
@@ -738,6 +776,75 @@ def _prepare_inference_payload(
                             "images": s_res.get("images") or [],
                             "results": s_res.get("results") or [],
                         }
+                elif agent_intent == "image_search":
+                    tool_name = "image_web_search"
+                    q = agent_params.get("query", raw_user_typed)
+                    tool_desc = f"Mencari gambar relevan di multi-engine (Bing, DuckDuckGo, Wikimedia, Yandex): '{q}'"
+                    imgs_found = search_web_images(q, max_images=6)
+                    if imgs_found:
+                        img_md_lines = [f"- ![{im.get('title', q)}]({im.get('url')}) *(Sumber: {im.get('source', 'Web')})*" for im in imgs_found]
+                        obs_summary = f"Ditemukan {len(imgs_found)} gambar untuk '{q}':\n" + "\n".join(img_md_lines)
+                        structured_obs = {
+                            "sources": [
+                                {"title": im.get("title") or q, "url": im.get("source_url") or im.get("url"), "domain": im.get("source") or "Web"}
+                                for im in imgs_found if im.get("source_url") or im.get("url")
+                            ],
+                            "images": imgs_found,
+                        }
+                    else:
+                        obs_summary = f"Tidak ditemukan gambar relevan untuk '{q}'."
+                        structured_obs = {"sources": [], "images": []}
+                elif agent_intent == "resend_image":
+                    tool_name = "resend_uploaded_image"
+                    tool_desc = "Mengambil gambar lampiran terbaru untuk dikirim ulang di chat"
+                    candidate_resend_url = None
+                    # 1. Cek gambar di giliran saat ini terlebih dahulu
+                    if all_images:
+                        try:
+                            from shiro.vision.reverse_search import _decode_and_prepare_image, save_uploaded_image_for_resend
+                            prep_im = _decode_and_prepare_image(all_images[0], min_dim=1)
+                            if prep_im:
+                                saved_im = save_uploaded_image_for_resend(prep_im[0], ext="png" if "png" in prep_im[1] else "jpg")
+                                if saved_im:
+                                    candidate_resend_url = saved_im["url"]
+                                    uploaded_image_url = saved_im["url"]
+                        except Exception:
+                            pass
+                    # 2. Cari di riwayat percakapan (user image atau assistant web_images/artifacts)
+                    if not candidate_resend_url and sess_hist_src:
+                        for hm in reversed(sess_hist_src):
+                            if hm.get("image"):
+                                img_raw_h = str(hm.get("image"))
+                                if img_raw_h.startswith(("/", "http://", "https://")):
+                                    candidate_resend_url = img_raw_h
+                                    break
+                                elif img_raw_h.startswith("data:image/"):
+                                    try:
+                                        from shiro.vision.reverse_search import _decode_and_prepare_image, save_uploaded_image_for_resend
+                                        prep_h = _decode_and_prepare_image(img_raw_h, min_dim=1)
+                                        if prep_h:
+                                            saved_h = save_uploaded_image_for_resend(prep_h[0], ext="png" if "png" in prep_h[1] else "jpg")
+                                            if saved_h:
+                                                candidate_resend_url = saved_h["url"]
+                                                break
+                                    except Exception:
+                                        pass
+                            ag_h = hm.get("agent_action")
+                            if isinstance(ag_h, dict) and isinstance(ag_h.get("web_images"), list) and ag_h["web_images"]:
+                                first_wi = ag_h["web_images"][0]
+                                if isinstance(first_wi, dict) and first_wi.get("url"):
+                                    candidate_resend_url = str(first_wi["url"])
+                                    break
+                    if candidate_resend_url:
+                        uploaded_image_url = candidate_resend_url
+                        obs_summary = f"Gambar sebelumnya tersedia untuk dikirim ulang di URL: {candidate_resend_url}\nGunakan `![Gambar Sebelumnya]({candidate_resend_url})` atau `[[AGENT_TOOL:send_image|url={candidate_resend_url}|caption=Gambar Sebelumnya]]`."
+                        structured_obs = {
+                            "sources": [],
+                            "images": [{"url": candidate_resend_url, "title": "Gambar Sebelumnya", "source_url": candidate_resend_url, "source": "Riwayat Chat"}],
+                        }
+                    else:
+                        obs_summary = "Belum ada gambar yang ditemukan di percakapan ini untuk dikirim ulang."
+                        structured_obs = {"sources": [], "images": []}
                 elif agent_intent == "browse":
                     tool_name = "web_browser_reader"
                     target_url = agent_params.get("url", "")
@@ -843,6 +950,70 @@ def _prepare_inference_payload(
                 })
         except Exception as e_scrape:
             print(f"[Scrape Inspector Warning]: {e_scrape}")
+
+    # Pipeline Anti-Halusinasi Gambar: Multi-Engine Reverse Image Search (Google Lens + trace.moe + Yandex + IQDB + SauceNAO + Bing)
+    if has_image and api_version != "v2" and not identity_probe:
+        try:
+            from shiro.vision.reverse_search import (
+                should_run_reverse_image_search,
+                run_multi_engine_reverse_image_search,
+            )
+            if should_run_reverse_image_search(raw_user_typed, has_image=True, has_video=has_video):
+                t_rev_start = time.perf_counter()
+                rev_report = run_multi_engine_reverse_image_search(
+                    raw_images if raw_images else all_images,
+                    user_query=raw_user_typed,
+                )
+                if rev_report.get("uploaded_image_url"):
+                    uploaded_image_url = rev_report["uploaded_image_url"]
+                if rev_report.get("prompt_context"):
+                    web_prompt_addon = (web_prompt_addon or "") + "\n\n" + rev_report["prompt_context"]
+                reverse_search_steps.extend(rev_report.get("steps") or [])
+
+                rev_sources = list(rev_report.get("sources") or [])
+                rev_imgs = list(rev_report.get("matched_images") or [])
+                if agent_action_data and isinstance(agent_action_data, dict):
+                    ex_s = list(agent_action_data.get("sources") or [])
+                    for rs in rev_sources:
+                        if rs.get("url") and not any(s.get("url") == rs["url"] for s in ex_s):
+                            ex_s.append(rs)
+                    ex_i = list(agent_action_data.get("web_images") or [])
+                    for ri in rev_imgs:
+                        if ri.get("url") and not any(i.get("url") == ri["url"] for i in ex_i):
+                            ex_i.append(ri)
+                    agent_action_data["sources"] = ex_s
+                    agent_action_data["web_images"] = ex_i
+                elif rev_sources or rev_imgs or rev_report.get("engines_tried", 0) > 0:
+                    agent_action_data = {
+                        "tool": "multi_engine_reverse_image_search",
+                        "description": rev_report.get("summary") or "Multi-engine visual reverse search",
+                        "observation": rev_report.get("prompt_context") or "",
+                        "details": {"sources": rev_sources, "images": rev_imgs},
+                        "image_url": rev_imgs[0]["url"] if rev_imgs else None,
+                        "sources": rev_sources,
+                        "web_images": rev_imgs,
+                        "execution_time_sec": round(time.perf_counter() - t_rev_start, 2),
+                        "status": "success" if rev_report.get("success") else "warning",
+                    }
+
+                if rev_report.get("engines_tried", 0) > 0:
+                    nodes.append({
+                        "id": "node_reverse_image_search",
+                        "name": "Multi-Engine Reverse Image Search",
+                        "type": "tool",
+                        "icon": "ph-scan",
+                        "color": "#06b6d4",
+                        "status": "success" if rev_report.get("success") else "warning",
+                        "duration_ms": round((time.perf_counter() - t_rev_start) * 1000, 2),
+                        "summary": rev_report.get("summary") or "Reverse image search executed",
+                        "data_in": {"engines": 6},
+                        "data_out": {
+                            "engines_succeeded": rev_report.get("engines_succeeded", 0),
+                            "candidates_count": len(rev_report.get("candidates") or []),
+                        },
+                    })
+        except Exception as e_rev:
+            print(f"[Reverse Image Search Warning]: {e_rev}")
 
     t_input_dur = (time.perf_counter() - t0) * 1000
     summary_node1 = f"{len(raw_user_typed)} Karakter"
@@ -1408,11 +1579,14 @@ def _prepare_inference_payload(
         stop_tokens.extend(["\nOkay, let me", "\nThe user is"])
 
     tier_top_k = int(lyra_tier_info.get("top_k", 40)) if lyra_tier_info else 40
-    is_grounded_factual_turn = agent_intent_detected in ("search", "browse", "weather", "math", "time")
+    is_grounded_factual_turn = (
+        agent_intent_detected in ("search", "image_search", "browse", "weather", "math", "time")
+        or bool(reverse_search_steps)
+    )
     if is_identity_guard_turn:
         eff_temp = 0.2
         eff_top_p = 0.75
-    elif is_grounded_factual_turn and not has_image:
+    elif is_grounded_factual_turn:
         eff_temp = 0.22
         eff_top_p = 0.75
     else:
@@ -1440,7 +1614,7 @@ def _prepare_inference_payload(
         else get_max_agent_rounds(lyra_tier_info["id"] if lyra_tier_info else None)
     )
 
-    if scrape_inspection_steps:
+    if scrape_inspection_steps or reverse_search_steps:
         is_heavy_task = True
         disable_thinking = False
 
@@ -1495,6 +1669,10 @@ def _prepare_inference_payload(
                 "status": "done",
                 "feedback": f"Found {found_cnt} file(s) across history/uploads; packaging will run after AI completes its response.",
             })
+
+        if reverse_search_steps:
+            for rv_s in reverse_search_steps:
+                agent_steps.append(rv_s)
 
         if scrape_inspection_steps:
             for sc_s in scrape_inspection_steps:
@@ -1557,6 +1735,7 @@ def _prepare_inference_payload(
         "agent_action_data": agent_action_data,
         "agent_intent_detected": agent_intent_detected,
         "generated_artifacts": generated_artifacts,
+        "uploaded_image_url": uploaded_image_url,
         "pending_archive_request": pending_archive_request,
         "pending_video_request": pending_video_request,
         "available_archive_files": available_archive_files,
@@ -1761,6 +1940,45 @@ def _finalize_inference_output(
     for tc_src in (list(pre_parsed_tool_calls or []) + list(raw_inline_calls or []) + list(inline_tool_calls or [])):
         if tc_src not in combined_tool_calls:
             combined_tool_calls.append(tc_src)
+
+    # Proses tag send_image / search_image eksplisit dari AI agar gambar tampil di UI & tersimpan di riwayat
+    image_delivery_calls = [tc for tc in combined_tool_calls if (tc.get("name") or "").lower() in ("send_image", "search_image")]
+    if image_delivery_calls and api_version != "v2":
+        cur_action = prep.get("agent_action_data")
+        if not isinstance(cur_action, dict):
+            cur_action = {
+                "tool": "ai_image_delivery",
+                "description": "AI selected and delivered images",
+                "observation": "",
+                "details": {"sources": [], "images": []},
+                "image_url": None,
+                "sources": [],
+                "web_images": [],
+                "execution_time_sec": 0.0,
+                "status": "success",
+            }
+            prep["agent_action_data"] = cur_action
+        cur_imgs = list(cur_action.get("web_images") or [])
+        cur_srcs = list(cur_action.get("sources") or [])
+        for itc in image_delivery_calls[:4]:
+            ires = _execute_live_research_tool(
+                itc,
+                tier_id=(prep.get("lyra_tier_info") or {}).get("id"),
+                uploaded_image_url=prep.get("uploaded_image_url"),
+            )
+            for im_it in ires.get("web_images") or []:
+                if im_it.get("url") and not any(existing.get("url") == im_it["url"] for existing in cur_imgs):
+                    cur_imgs.append(im_it)
+            for src_it in ires.get("sources") or []:
+                if src_it.get("url") and not any(existing.get("url") == src_it["url"] for existing in cur_srcs):
+                    cur_srcs.append(src_it)
+        cur_action["web_images"] = cur_imgs
+        cur_action["sources"] = cur_srcs
+        if cur_imgs and not cur_action.get("image_url"):
+            cur_action["image_url"] = cur_imgs[0]["url"]
+        if isinstance(cur_action.get("details"), dict):
+            cur_action["details"]["images"] = cur_imgs
+            cur_action["details"]["sources"] = cur_srcs
 
     # Post-LLM Packaging, Deferred Video Rendering & Exact Filename Artifacts
     artifacts: List[Dict[str, Any]] = list(prep.get("generated_artifacts") or [])
@@ -2214,7 +2432,7 @@ def get_shiro_reply(
             round_calls, _ = _parse_agent_tool_calls(raw_reply)
             research_calls = []
             for tc in round_calls:
-                if tc.get("name") in ("web_search", "open_url", "screenshot"):
+                if tc.get("name") in ("web_search", "open_url", "screenshot", "search_image"):
                     sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
                     if sig not in executed_tool_sigs:
                         research_calls.append((tc, sig))
@@ -3046,7 +3264,7 @@ def stream_shiro_reply(
             round_calls, non_tool_raw = _parse_agent_tool_calls(round_raw_reply)
             research_calls = []
             for tc in round_calls:
-                if tc.get("name") in ("web_search", "open_url", "screenshot"):
+                if tc.get("name") in ("web_search", "open_url", "screenshot", "search_image"):
                     sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
                     if sig not in executed_tool_sigs:
                         research_calls.append((tc, sig))

@@ -7,7 +7,7 @@ Handles document upload, text extraction, previews, and static file/image servin
 import os
 import re
 from typing import Optional
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, Response
 from shiro.auth import verify_api_key
 
 documents_bp = Blueprint("documents_bp", __name__)
@@ -311,3 +311,33 @@ def get_uploaded_image(filename):
         return send_file(target_u)
         
     return jsonify({"error": "Gambar tidak ditemukan"}), 404
+
+
+@documents_bp.route('/api/image-proxy', methods=['GET'])
+def proxy_external_image():
+    """
+    Proxy gambar eksternal dengan header Mozilla Firefox otentik & perlindungan SSRF
+    agar gambar hasil pencarian AI (Google Lens, trace.moe, Yandex, Bing, AniList, dll.) tampil mulus di UI.
+    """
+    raw_url = (request.args.get("url") or "").strip()
+    referer = (request.args.get("referer") or "").strip() or None
+    if not raw_url:
+        return jsonify({"error": "Parameter url wajib diisi."}), 400
+
+    from shiro.agent.network import is_safe_external_url, fetch_image_bytes
+    if not is_safe_external_url(raw_url):
+        return jsonify({"error": "URL gambar eksternal tidak valid atau diblokir kebijakan keamanan."}), 400
+
+    ok, img_bytes, ctype, err = fetch_image_bytes(raw_url, referer=referer, timeout=10)
+    if not ok or not img_bytes:
+        return jsonify({"error": err or "Gagal mengambil gambar eksternal."}), 502
+
+    return Response(
+        img_bytes,
+        status=200,
+        mimetype=ctype or "image/jpeg",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
