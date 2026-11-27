@@ -122,6 +122,8 @@ def auto_trigger():
     memory = state.init_memory()
     try:
         with memory.lock:
+            if not bool(memory.system_metadata.get("roleplay_enabled", True)):
+                return jsonify({"status": "idle", "reason": "roleplay_disabled"})
             if state.serial_questions >= 1:
                 return jsonify({"status": "idle", "reason": "already_initiated"})
 

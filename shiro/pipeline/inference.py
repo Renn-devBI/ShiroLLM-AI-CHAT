@@ -521,6 +521,7 @@ def _prepare_inference_payload(
     identity_probe = detect_identity_or_injection_probe(raw_user_typed)
     is_identity_guard_turn = bool(identity_probe.get("is_injection") or identity_probe.get("is_identity_probe"))
     sess_hist_src: List[Dict[str, Any]] = []
+    scrape_inspection_steps: List[Dict[str, Any]] = []
     if memory and hasattr(memory, "get_session_history"):
         sess_hist_src = memory.get_session_history(session_id)
     elif memory:
@@ -795,6 +796,31 @@ def _prepare_inference_payload(
                     )
         except Exception as e_agent:
             print(f"[Inference Agent Warning]: {e_agent}")
+
+    # Inspeksi DOM & jaringan website target secara langsung untuk permintaan scraping
+    # (tetap dijalankan walaupun intent utama berupa archive/zip agar AI tidak menebak selector!)
+    if api_version != "v2" and raw_user_typed and not identity_probe:
+        try:
+            from shiro.web.reader import inspect_target_website_for_scraping
+            t_scrape_start = time.perf_counter()
+            scrape_report = inspect_target_website_for_scraping(raw_user_typed, timeout=10)
+            if scrape_report:
+                scrape_inspection_steps.extend(scrape_report.get("steps") or [])
+                web_prompt_addon = (web_prompt_addon or "") + (scrape_report.get("prompt_context") or "")
+                nodes.append({
+                    "id": "node_scrape_inspect",
+                    "name": "Target Website DOM Inspector",
+                    "type": "tool",
+                    "icon": "ph-magnifying-glass-plus",
+                    "color": "#06b6d4",
+                    "status": "success",
+                    "duration_ms": round((time.perf_counter() - t_scrape_start) * 1000, 2),
+                    "summary": scrape_report.get("summary") or f"Inspected {scrape_report.get('domain')}",
+                    "data_in": {"target_url": scrape_report.get("target_url")},
+                    "data_out": {"steps": scrape_report.get("steps")},
+                })
+        except Exception as e_scrape:
+            print(f"[Scrape Inspector Warning]: {e_scrape}")
 
     t_input_dur = (time.perf_counter() - t0) * 1000
     summary_node1 = f"{len(raw_user_typed)} Karakter"
@@ -1392,6 +1418,10 @@ def _prepare_inference_payload(
         else get_max_agent_rounds(lyra_tier_info["id"] if lyra_tier_info else None)
     )
 
+    if scrape_inspection_steps:
+        is_heavy_task = True
+        disable_thinking = False
+
     if api_version == "v2" or not is_heavy_task:
         agent_steps: List[Dict[str, Any]] = []
     else:
@@ -1443,6 +1473,10 @@ def _prepare_inference_payload(
                 "status": "done",
                 "feedback": f"Found {found_cnt} file(s) across history/uploads; packaging will run after AI completes its response.",
             })
+
+        if scrape_inspection_steps:
+            for sc_s in scrape_inspection_steps:
+                agent_steps.append(sc_s)
 
         if has_doc and all_docs:
             total_chars_read = sum(len(str(d.get("text") or "")) for d in all_docs)

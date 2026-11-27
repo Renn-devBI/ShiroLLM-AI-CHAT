@@ -1007,6 +1007,10 @@ function updateRoleplayModeUI(enabled) {
         text.setAttribute('data-i18n', roleplayEnabled ? 'roleplay_status_on' : 'roleplay_status_off');
         text.textContent = t(roleplayEnabled ? 'roleplay_status_on' : 'roleplay_status_off');
     }
+    if (!roleplayEnabled && typeof triggerTimer !== 'undefined') {
+        clearTimeout(triggerTimer);
+        triggerTimer = null;
+    }
 }
 
 async function toggleRoleplayMode(enabled) {
@@ -3212,10 +3216,12 @@ function setInputLock(locked) {
 
 function startTriggerTimer() {
     clearTimeout(triggerTimer);
+    triggerTimer = null;
+    if (!roleplayEnabled) return;
     const naturalDelay = Math.floor(Math.random() * (240000 - 150000 + 1)) + 150000;
     
     triggerTimer = setTimeout(() => {
-        if (isAnySessionRunning() || (userInput && userInput.value.trim().length > 0)) return; 
+        if (!roleplayEnabled || isAnySessionRunning() || (userInput && userInput.value.trim().length > 0)) return; 
         const triggerSessionId = activeSessionId;
 
         fetch('/api/trigger', {
@@ -3224,7 +3230,7 @@ function startTriggerTimer() {
         })
         .then(res => res.json())
         .then(data => {
-            if (activeSessionId === triggerSessionId && data.reply && data.status !== 'idle') {
+            if (roleplayEnabled && activeSessionId === triggerSessionId && data.reply && data.status !== 'idle') {
                 addMessage('assistant', data.reply, null, null, null, null, null, null, data.assistant_message_id || null, false); 
             }
         })
