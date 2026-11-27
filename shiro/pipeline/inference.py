@@ -624,13 +624,35 @@ def _prepare_inference_payload(
                         f"(buatkan/tuliskan berkas tersebut dengan nama persisnya jika diperlukan)."
                         if missing_req else ""
                     )
-                    custom_agent_prompt = (
-                        f"\n\n[INVENTARIS BERKAS WORKSPACE UNTUK PENGARSIPAN (.{req_fmt})]:\n"
-                        f"- Berkas tersedia dari riwayat percakapan & unggahan: {found_line}{missing_line}\n"
-                        f"- Pengemasan arsip `.{req_fmt}` akan dijalankan OTOMATIS SETELAH responsmu selesai (jangan mengklaim file sudah jadi sebelum kamu menjawab, dan jangan menolak membuat arsip).\n"
-                        f"- Bertindaklah sebagai AI Agent sejati: pikirkan dan tentukan sendiri nama proyek/arsip yang deskriptif sesuai aplikasi yang kamu bangun (misal `otakudesu-anime-scraper.{req_fmt}` atau sesuai `name` di `package.json`, JANGAN nama generik atau 1 huruf).\n"
-                        f"- Lengkapi/tuliskan semua berkas menggunakan blok kode dengan nama file eksplisit (`### File: nama.ext`), dan sertakan tag `[[AGENT_TOOL:create_archive|format={req_fmt}|name=<nama-proyek-deskriptif>.{req_fmt}]]` di akhir respons agar arsip dikemas dengan nama pilihanmu sendiri.\n"
+                    wants_code_modification = bool(
+                        re.search(
+                            r'\b(?:perbaiki|fix|edit|ubah\s+kode|revisi|tambah\s+fitur|tambahkan|refactor|modifikasi|upgrade|perbagus|rewrite|tulis\s+ulang\s+kode|ganti\s+kode|update\s+kode)\b',
+                            low_req,
+                        )
                     )
+                    is_repackage_only = bool(
+                        found_names
+                        and not missing_req
+                        and not wants_new_generation
+                        and not wants_code_modification
+                    )
+                    suggested_arch_stem = inferred_project_name or "nama-proyek-deskriptif"
+                    if is_repackage_only:
+                        custom_agent_prompt = (
+                            f"\n\n[INVENTARIS BERKAS WORKSPACE UNTUK PENGEMASAN ULANG ARSIP (.{req_fmt}) — JANGAN TULIS ULANG KODE]:\n"
+                            f"- Seluruh {len(found_names)} berkas proyek SUDAH ADA lengkap di workspace percakapan: {found_line}\n"
+                            f"- TUGASMU HANYA MENGEMAS ULANG ARSIP `.{req_fmt}` dari berkas-berkas yang sudah ada tersebut (BUKAN membuat ulang atau menulis ulang kode dari awal!).\n"
+                            f"- DILARANG KERAS menulis ulang atau menyalin ulang isi blok kode (```...```) dari berkas-berkas di atas kecuali pengguna secara eksplisit meminta mengubah/memperbaiki kode.\n"
+                            f"- Berikan jawaban ringkas yang mengonfirmasi daftar berkas yang dikemas ulang serta nama arsip deskriptif pilihanmu (misal `{suggested_arch_stem}.{req_fmt}`), lalu sertakan tag `[[AGENT_TOOL:create_archive|format={req_fmt}|name={suggested_arch_stem}.{req_fmt}]]` di akhir respons.\n"
+                        )
+                    else:
+                        custom_agent_prompt = (
+                            f"\n\n[INVENTARIS BERKAS WORKSPACE UNTUK PENGARSIPAN (.{req_fmt})]:\n"
+                            f"- Berkas tersedia dari riwayat percakapan & unggahan: {found_line}{missing_line}\n"
+                            f"- Pengemasan arsip `.{req_fmt}` akan dijalankan OTOMATIS SETELAH responsmu selesai (jangan mengklaim file sudah jadi sebelum kamu menjawab, dan jangan menolak membuat arsip).\n"
+                            f"- Bertindaklah sebagai AI Agent sejati: pikirkan dan tentukan sendiri nama proyek/arsip yang deskriptif sesuai aplikasi yang kamu bangun (misal `otakudesu-anime-scraper.{req_fmt}` atau sesuai `name` di `package.json`, JANGAN nama generik atau 1 huruf).\n"
+                            f"- Lengkapi/tuliskan hanya berkas yang baru atau perlu diubah menggunakan blok kode dengan nama file eksplisit (`### File: nama.ext`), dan sertakan tag `[[AGENT_TOOL:create_archive|format={req_fmt}|name=<nama-proyek-deskriptif>.{req_fmt}]]` di akhir respons agar arsip dikemas dengan nama pilihanmu sendiri.\n"
+                        )
                 elif agent_intent == "generate_video":
                     tool_name = "video_renderer"
                     vid_dur = float(agent_params.get("duration_sec") or 5.0)

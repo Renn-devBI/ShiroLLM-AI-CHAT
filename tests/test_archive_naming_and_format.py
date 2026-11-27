@@ -107,6 +107,31 @@ class TestArchiveNamingAndFormat(unittest.TestCase):
         ]
         self.assertEqual(infer_project_name_from_text("", layout_files), "otakudesu-local-viewer")
 
+    def test_repackage_only_request_forbids_rewriting_code(self):
+        from shiro.pipeline.inference import _prepare_inference_payload
+
+        hist = [
+            {"role": "user", "content": "Buatkan web scraper otakudesu"},
+            {
+                "role": "assistant",
+                "content": (
+                    '### File: package.json\n```json\n{"name": "otakudesu-scraper"}\n```\n'
+                    "### File: app/page.tsx\n```tsx\nexport default function Page(){ return <div/>; }\n```"
+                ),
+            },
+            {"role": "user", "content": "buat ulang zip nya pastikan dengan nama sesuai"},
+        ]
+
+        prep = _prepare_inference_payload(
+            user_input="buat ulang zip nya pastikan dengan nama sesuai",
+            incoming_messages=hist,
+            session_id="default",
+        )
+        sys_prompt = prep["msgs"][0]["content"]
+        self.assertIn("PENGEMASAN ULANG ARSIP", sys_prompt)
+        self.assertIn("DILARANG KERAS menulis ulang", sys_prompt)
+        self.assertIn("otakudesu-scraper.zip", sys_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
