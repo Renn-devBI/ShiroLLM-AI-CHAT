@@ -181,6 +181,8 @@ const sessionRuns = new Map();
 const sessionQueues = new Map();
 const unreadDoneSessions = new Set();
 let serverRunningSessions = new Set();
+const recentlyAbortedSessions = new Map();
+const ABORT_COOLDOWN_MS = 15000;
 let sessionSwitchSeq = 0;
 
 let activeSessionId = 'default';
@@ -207,15 +209,32 @@ function getSessionQueue(sid = activeSessionId) {
     return sessionQueues.get(key);
 }
 
-function isSessionRunning(sid = activeSessionId) {
+function isSessionActivelyRunningLocally(sid = activeSessionId) {
     const key = sid || 'default';
     const r = sessionRuns.get(key);
-    return Boolean((r && r.isRunning) || serverRunningSessions.has(key));
+    return Boolean(r && r.isRunning && !r.aborted);
+}
+
+function isSessionRecentlyAborted(sid = activeSessionId) {
+    const key = sid || 'default';
+    const ts = recentlyAbortedSessions.get(key);
+    if (!ts) return false;
+    if (Date.now() - ts >= ABORT_COOLDOWN_MS) {
+        recentlyAbortedSessions.delete(key);
+        return false;
+    }
+    return true;
+}
+
+function isSessionRunning(sid = activeSessionId) {
+    const key = sid || 'default';
+    if (isSessionActivelyRunningLocally(key)) return true;
+    if (isSessionRecentlyAborted(key)) return false;
+    return serverRunningSessions.has(key);
 }
 
 function isActiveSessionGenerating() {
-    const r = sessionRuns.get(activeSessionId || 'default');
-    return Boolean(r && r.isRunning);
+    return isSessionActivelyRunningLocally(activeSessionId || 'default');
 }
 
 function isAnySessionRunning() {
@@ -634,7 +653,10 @@ const SHIRO_I18N = {
         notifications_status_on: 'Status: AKTIF — Notifikasi muncul saat sesi selesai diproses.',
         notifications_status_off: 'Status: NONAKTIF — Popup notifikasi dimatikan agar tidak mengganggu.',
         notifications_toast_on: 'Notifikasi penyelesaian sesi DIAKTIFKAN',
-        notifications_toast_off: 'Notifikasi penyelesaian sesi DINONAKTIFKAN'
+        notifications_toast_off: 'Notifikasi penyelesaian sesi DINONAKTIFKAN',
+        paste_as_text_btn: 'Paste teks langsung',
+        click_for_paste_hint: 'Klik · opsi Paste',
+        pasted_converted_toast: 'Teks berhasil diubah ke mode teks langsung'
     },
     en: {
         new_chat: 'New chat',
@@ -850,7 +872,10 @@ const SHIRO_I18N = {
         notifications_status_on: 'Status: ON — Notifications appear when a session finishes.',
         notifications_status_off: 'Status: OFF — Completion notification popups are muted.',
         notifications_toast_on: 'Session completion notifications ENABLED',
-        notifications_toast_off: 'Session completion notifications DISABLED'
+        notifications_toast_off: 'Session completion notifications DISABLED',
+        paste_as_text_btn: 'Paste as text',
+        click_for_paste_hint: 'Click · Paste option',
+        pasted_converted_toast: 'Converted to direct text mode'
     }
 };
 
@@ -3216,7 +3241,7 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
         explicitSessionId = null;
     }
     const targetSessionId = explicitSessionId || activeSessionId || 'default';
-    if (!overridePayload && isSessionRunning(targetSessionId)) {
+    if (!overridePayload && isSessionActivelyRunningLocally(targetSessionId)) {
         await enqueueCurrentComposer(targetSessionId);
         return;
     }
@@ -3234,7 +3259,10 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
         ? [...(overridePayload.videos || [])]
         : [...attachedVideos];
 
-    if ((!message && !sendingImages.length && !sendingDocs.length && !sendingVideos.length) || isSessionRunning(targetSessionId)) return;
+    if ((!message && !sendingImages.length && !sendingDocs.length && !sendingVideos.length) || isSessionActivelyRunningLocally(targetSessionId)) return;
+
+    recentlyAbortedSessions.delete(targetSessionId);
+    serverRunningSessions.delete(targetSessionId);
 
     clearTimeout(triggerTimer);
     unreadDoneSessions.delete(targetSessionId);
@@ -3985,9 +4013,21 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
 
 function stopGeneration(targetSessionId = activeSessionId) {
     const sid = (typeof targetSessionId === 'string' && targetSessionId) ? targetSessionId : (activeSessionId || 'default');
+    recentlyAbortedSessions.set(sid, Date.now());
+    serverRunningSessions.delete(sid);
     const run = sessionRuns.get(sid);
-    if (run && run.abortController) {
-        run.abortController.abort();
+    if (run) {
+        run.aborted = true;
+        run.isRunning = false;
+        if (run.abortController) {
+            run.abortController.abort();
+        }
+    }
+    updateSidebarRunningIndicators();
+    if (sid === activeSessionId) {
+        setInputLock(false);
+        showTyping(false);
+        if (status) status.textContent = t('status_stopped');
     }
 }
 
@@ -4249,9 +4289,11 @@ function applySessionsListUI(sessions, runningSessions = [], activeIdOverride = 
     if (!Array.isArray(sessions)) return;
     currentSessionsData = sessions;
     const displayActiveId = activeIdOverride || activeSessionId || 'default';
-    serverRunningSessions = new Set(Array.isArray(runningSessions) ? runningSessions : []);
+    serverRunningSessions = new Set(
+        (Array.isArray(runningSessions) ? runningSessions : []).filter(id => !isSessionRecentlyAborted(id))
+    );
     sessions.forEach(s => {
-        if (s && s.is_running) serverRunningSessions.add(s.id);
+        if (s && s.is_running && !isSessionRecentlyAborted(s.id)) serverRunningSessions.add(s.id);
     });
 
     const activeSession = sessions.find(s => s.id === displayActiveId);
@@ -5827,6 +5869,38 @@ function readFileAsDataUrl(file) {
     });
 }
 
+let expandedAttachedDocIdx = -1;
+
+function convertAttachedDocToText(index) {
+    if (index < 0 || index >= attachedDocuments.length) return;
+    const doc = attachedDocuments[index];
+    const rawText = String(doc && doc.text ? doc.text : '');
+    if (!rawText) return;
+
+    expandedAttachedDocIdx = -1;
+    removeAttachedDocument(index);
+
+    if (userInput) {
+        const existing = userInput.value || '';
+        const sep = existing && !existing.endsWith('\n') ? '\n' : '';
+        userInput.value = existing ? (existing + sep + rawText) : rawText;
+        adjustInputHeight();
+        userInput.focus();
+        try {
+            userInput.selectionStart = userInput.selectionEnd = userInput.value.length;
+        } catch (_) {}
+    }
+    updateComposerSendButton();
+    if (typeof showToast === 'function') {
+        showToast(t('pasted_converted_toast'));
+    }
+}
+
+function toggleAttachedDocPreview(index) {
+    expandedAttachedDocIdx = (expandedAttachedDocIdx === index) ? -1 : index;
+    renderAttachmentPreviewBars();
+}
+
 function renderAttachmentChipList(barEl, items, kind) {
     if (!barEl) return;
     const uploadingItems = pendingUploads.filter((u) => u.kind === kind);
@@ -5878,13 +5952,18 @@ function renderAttachmentChipList(barEl, items, kind) {
     (items || []).forEach((item, idx) => {
         const chip = document.createElement('div');
         const playUrl = kind === 'video' ? (item.blobUrl || item.url || '') : (kind === 'image' ? (item.dataUrl || '') : '');
-        const isPlayable = Boolean(playUrl && (kind === 'video' || kind === 'image'));
-        chip.className = `attach-chip attach-chip-${kind}${isPlayable ? ' is-clickable' : ''}`;
+        const isClickableDoc = Boolean(kind === 'document' && item && item.text);
+        const isPlayable = Boolean((playUrl && (kind === 'video' || kind === 'image')) || isClickableDoc);
+        const isExpandedDoc = Boolean(isClickableDoc && expandedAttachedDocIdx === idx);
+        chip.className = `attach-chip attach-chip-${kind}${isPlayable ? ' is-clickable' : ''}${item && item.is_pasted ? ' is-pasted-doc' : ''}${isExpandedDoc ? ' is-expanded' : ''}`;
         if (kind === 'video' && playUrl) {
             chip.title = t('click_to_play_video');
             chip.addEventListener('click', () => openVideoLightbox(playUrl, item.filename || item.name || t('video_preview')));
         } else if (kind === 'image' && item.dataUrl) {
             chip.addEventListener('click', () => openImageLightbox(item.dataUrl, item.name || t('image_preview')));
+        } else if (isClickableDoc) {
+            chip.title = t('click_for_paste_hint');
+            chip.addEventListener('click', () => toggleAttachedDocPreview(idx));
         }
 
         if (kind === 'image' && item.dataUrl) {
@@ -5916,7 +5995,9 @@ function renderAttachmentChipList(barEl, items, kind) {
         if (kind === 'document') {
             const chars = item.char_count || (item.text ? item.text.length : 0);
             const ftype = item.file_type ? String(item.file_type).toUpperCase() : 'FILE';
-            sub.textContent = `${ftype} · ${chars} chars`;
+            sub.textContent = item.is_pasted
+                ? `${ftype} · ${chars.toLocaleString()} chars · ${t('click_for_paste_hint')}`
+                : `${ftype} · ${chars.toLocaleString()} chars`;
         } else if (kind === 'video') {
             const extLabel = getFileExtLower(item.filename || item.name || '').replace('.', '').toUpperCase();
             const dur = item.duration_sec ? `${Number(item.duration_sec).toFixed(1)}s` : '';
@@ -5959,6 +6040,54 @@ function renderAttachmentChipList(barEl, items, kind) {
     }
 
     barEl.appendChild(strip);
+
+    // Claude / ChatGPT-style inline preview + opsi "Paste" di bawah berkas saat chip teks diklik
+    if (kind === 'document' && expandedAttachedDocIdx >= 0 && expandedAttachedDocIdx < (items || []).length) {
+        const activeDoc = items[expandedAttachedDocIdx];
+        if (activeDoc && activeDoc.text) {
+            const previewPanel = document.createElement('div');
+            previewPanel.className = 'attach-doc-preview-panel';
+            const previewSnippet = activeDoc.text.length > 1200
+                ? (activeDoc.text.slice(0, 1200) + '\n...')
+                : activeDoc.text;
+            previewPanel.innerHTML = `
+                <div class="attach-doc-preview-head">
+                    <span class="attach-doc-preview-title">
+                        <i class="ph ph-file-text"></i>
+                        <span>${escapeHtml(activeDoc.filename || 'pasted-text.txt')}</span>
+                        <span class="attach-doc-preview-meta">${Number(activeDoc.text.length).toLocaleString()} chars</span>
+                    </span>
+                    <button type="button" class="attach-doc-preview-close" title="${escapeHtml(t('cancel'))}">
+                        <i class="ph ph-x"></i>
+                    </button>
+                </div>
+                <pre class="attach-doc-preview-body">${escapeHtml(previewSnippet)}</pre>
+                <div class="attach-doc-preview-footer">
+                    <button type="button" class="attach-paste-as-text-btn" id="btn-paste-doc-as-text">
+                        <i class="ph ph-clipboard-text"></i>
+                        <span>${escapeHtml(t('paste_as_text_btn'))}</span>
+                    </button>
+                </div>
+            `;
+            const closeBtn = previewPanel.querySelector('.attach-doc-preview-close');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    expandedAttachedDocIdx = -1;
+                    renderAttachmentPreviewBars();
+                });
+            }
+            const pasteBtn = previewPanel.querySelector('.attach-paste-as-text-btn');
+            if (pasteBtn) {
+                const targetIdx = expandedAttachedDocIdx;
+                pasteBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    convertAttachedDocToText(targetIdx);
+                });
+            }
+            barEl.appendChild(previewPanel);
+        }
+    }
 }
 
 function renderAttachmentPreviewBars() {
@@ -6019,6 +6148,8 @@ function setAttachedDocument(docData) {
 
 function removeAttachedDocument(index) {
     if (index < 0 || index >= attachedDocuments.length) return;
+    if (expandedAttachedDocIdx === index) expandedAttachedDocIdx = -1;
+    else if (expandedAttachedDocIdx > index) expandedAttachedDocIdx -= 1;
     attachedDocuments.splice(index, 1);
     attachedDocument = attachedDocuments[0] || null;
     if (attachedDocuments.length === 0) {
@@ -6029,6 +6160,7 @@ function removeAttachedDocument(index) {
 }
 
 function clearAttachedDocument() {
+    expandedAttachedDocIdx = -1;
     attachedDocuments = [];
     attachedDocument = null;
     if (docFileInput) docFileInput.value = '';
@@ -6280,15 +6412,18 @@ function handleLongPaste(text) {
         text: text,
         file_type: meta.ext,
         char_count: text.length,
-        url: url
+        url: url,
+        is_pasted: true
     });
 
-    status.textContent = `Teks ${text.length.toLocaleString()} karakter otomatis dijadikan lampiran (${meta.filename}).`;
+    status.textContent = currentLang === 'en'
+        ? `Pasted ${text.length.toLocaleString()} chars as ${meta.filename} (click file to Paste as text).`
+        : `Teks ${text.length.toLocaleString()} karakter dijadikan ${meta.filename} (klik berkas untuk opsi Paste teks langsung).`;
     setTimeout(() => {
-        if (!isActiveSessionGenerating() && status && status.textContent.includes('otomatis dijadikan lampiran')) {
-            status.textContent = 'Siap';
+        if (!isActiveSessionGenerating() && status && (status.textContent.includes('dijadikan') || status.textContent.includes('Pasted'))) {
+            status.textContent = t('status_ready');
         }
-    }, 4000);
+    }, 5000);
 }
 
 if (userInput) {
