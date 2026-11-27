@@ -732,6 +732,39 @@ class TestLyraAliasAndTiers(unittest.TestCase):
             self.assertFalse(calls[1]["use_mlock"])
             self.assertEqual(llm.n_ctx(), 190000)
 
+    def test_check_llama_cpp_gpu_offload_loads_dynamic_ggml_backends(self):
+        """Pada wheel v0.4.x (GGML_BACKEND_DL=ON), check_llama_cpp_gpu_offload harus memuat dynamic backend sebelum mengecek."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pkg_dir = os.path.join(tmpdir, "llama_cpp")
+            lib_dir = os.path.join(pkg_dir, "lib")
+            os.makedirs(lib_dir, exist_ok=True)
+            fake_init_file = os.path.join(pkg_dir, "__init__.py")
+
+            state_flags = {"inited": False, "loaded_path": None}
+
+            fake_ggml = types.ModuleType("llama_cpp._ggml")
+            fake_ggml.ggml_backend_reg_count = lambda: 1 if state_flags["loaded_path"] else 0
+
+            def _load_all_from_path(c_path):
+                state_flags["loaded_path"] = c_path.value.decode("utf-8") if hasattr(c_path, "value") else c_path
+
+            fake_ggml.ggml_backend_load_all_from_path = _load_all_from_path
+
+            fake_mod = types.ModuleType("llama_cpp")
+            fake_mod.__file__ = fake_init_file
+            fake_mod._ggml = fake_ggml
+            fake_mod.llama_backend_init = lambda: state_flags.__setitem__("inited", True)
+            fake_mod.llama_supports_gpu_offload = lambda: bool(state_flags["inited"] and state_flags["loaded_path"])
+
+            # Tanpa dynamic backend load, llama_supports_gpu_offload() bernilai False
+            self.assertFalse(fake_mod.llama_supports_gpu_offload())
+            # Dengan check_llama_cpp_gpu_offload, ia menginisialisasi & memuat lib lalu mengembalikan True
+            self.assertTrue(sm.check_llama_cpp_gpu_offload(fake_mod))
+            self.assertTrue(state_flags["inited"])
+            self.assertEqual(os.path.normpath(state_flags["loaded_path"]), os.path.normpath(lib_dir))
+
 
 if __name__ == "__main__":
     unittest.main()

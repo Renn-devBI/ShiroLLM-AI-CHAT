@@ -209,6 +209,52 @@ def _has_cuda_gpu() -> bool:
     return False
 
 
+def _ensure_llama_backends_loaded(mod: Any) -> None:
+    """
+    Memuat dynamic GGML backends (libggml-cuda.so, dll) untuk wheel llama-cpp-python v0.4.x+
+    yang dikompilasi dengan GGML_BACKEND_DL=ON sebelum mengecek llama_supports_gpu_offload().
+    """
+    if mod is None:
+        return
+    mod_file = getattr(mod, "__file__", None)
+
+    backend_init = getattr(mod, "llama_backend_init", None)
+    if callable(backend_init):
+        try:
+            backend_init()
+        except Exception:
+            pass
+
+    ggml_sub = getattr(mod, "_ggml", None)
+    if ggml_sub is None and mod_file and getattr(mod, "__name__", "") == "llama_cpp":
+        try:
+            import llama_cpp._ggml as ggml_sub  # type: ignore
+        except Exception:
+            ggml_sub = None
+
+    if ggml_sub is not None:
+        reg_count = getattr(ggml_sub, "ggml_backend_reg_count", None)
+        if callable(reg_count):
+            try:
+                if int(reg_count()) > 0:
+                    return
+            except Exception:
+                pass
+
+    load_from_path = getattr(mod, "ggml_backend_load_all_from_path", None)
+    if not callable(load_from_path) and ggml_sub is not None:
+        load_from_path = getattr(ggml_sub, "ggml_backend_load_all_from_path", None)
+
+    if callable(load_from_path) and mod_file:
+        lib_dir = os.path.join(os.path.dirname(os.path.abspath(mod_file)), "lib")
+        if os.path.isdir(lib_dir):
+            try:
+                import ctypes
+                load_from_path(ctypes.c_char_p(lib_dir.encode("utf-8")))
+            except Exception:
+                pass
+
+
 def check_llama_cpp_gpu_offload(llama_cpp_mod: Any = None) -> Optional[bool]:
     """Memeriksa apakah biner llama-cpp-python benar-benar terkompilasi dengan dukungan offload GPU/CUDA."""
     mod = llama_cpp_mod
@@ -217,6 +263,7 @@ def check_llama_cpp_gpu_offload(llama_cpp_mod: Any = None) -> Optional[bool]:
             import llama_cpp as mod
         except Exception:
             return None
+    _ensure_llama_backends_loaded(mod)
     fn = getattr(mod, "llama_supports_gpu_offload", None)
     if callable(fn):
         try:

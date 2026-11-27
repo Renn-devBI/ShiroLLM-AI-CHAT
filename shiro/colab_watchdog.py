@@ -187,24 +187,80 @@ def detect_cuda_tag() -> List[str]:
     return tags
 
 
-def check_cuda_offload_subprocess() -> bool:
-    """Memeriksa di subprocess baru apakah llama-cpp-python terpasang mendukung offload GPU CUDA."""
+_CUDA_PROBE_SCRIPT = (
+    "import os, ctypes, llama_cpp\n"
+    "init_fn = getattr(llama_cpp, 'llama_backend_init', None)\n"
+    "if callable(init_fn):\n"
+    "    try:\n"
+    "        init_fn()\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "ggml_sub = getattr(llama_cpp, '_ggml', None)\n"
+    "if ggml_sub is None:\n"
+    "    try:\n"
+    "        import llama_cpp._ggml as ggml_sub\n"
+    "    except Exception:\n"
+    "        ggml_sub = None\n"
+    "lib_dir = os.path.join(os.path.dirname(os.path.abspath(llama_cpp.__file__)), 'lib')\n"
+    "load_p = getattr(llama_cpp, 'ggml_backend_load_all_from_path', None) or (\n"
+    "    getattr(ggml_sub, 'ggml_backend_load_all_from_path', None) if ggml_sub is not None else None\n"
+    ")\n"
+    "if callable(load_p) and os.path.isdir(lib_dir):\n"
+    "    try:\n"
+    "        load_p(ctypes.c_char_p(lib_dir.encode('utf-8')))\n"
+    "    except Exception as e:\n"
+    "        print('SHIRO_BACKEND_LOAD_ERR=' + str(e))\n"
+    "else:\n"
+    "    load_all = getattr(ggml_sub, 'ggml_backend_load_all', None) if ggml_sub is not None else None\n"
+    "    if callable(load_all):\n"
+    "        try:\n"
+    "            load_all()\n"
+    "        except Exception:\n"
+    "            pass\n"
+    "ok = bool(llama_cpp.llama_supports_gpu_offload())\n"
+    "print('SHIRO_GPU_OFFLOAD=' + str(ok))\n"
+    "if not ok and os.path.isdir(lib_dir):\n"
+    "    cuda_so = os.path.join(lib_dir, 'libggml-cuda.so')\n"
+    "    if os.path.exists(cuda_so):\n"
+    "        try:\n"
+    "            ctypes.CDLL(cuda_so)\n"
+    "        except Exception as dl_err:\n"
+    "            print('SHIRO_CUDA_DLOPEN_ERR=' + str(dl_err))\n"
+)
+
+
+def probe_cuda_offload_subprocess() -> Tuple[bool, str]:
+    """
+    Memeriksa di subprocess baru apakah llama-cpp-python mendukung offload GPU CUDA
+    setelah memuat dynamic GGML backend (wajib untuk v0.4.x dengan GGML_BACKEND_DL=ON).
+    Mengembalikan (supported, diagnostic_detail).
+    """
     try:
         res = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import llama_cpp; print('SHIRO_GPU_OFFLOAD=' + str(bool(llama_cpp.llama_supports_gpu_offload())))",
-            ],
+            [sys.executable, "-c", _CUDA_PROBE_SCRIPT],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             env=dict(os.environ),
             timeout=20,
         )
-        return res.returncode == 0 and "SHIRO_GPU_OFFLOAD=True" in (res.stdout or "")
-    except Exception:
-        return False
+        out = res.stdout or ""
+        err = res.stderr or ""
+        ok = res.returncode == 0 and "SHIRO_GPU_OFFLOAD=True" in out
+        dl_match = re.search(r"SHIRO_CUDA_DLOPEN_ERR=(.+)", out)
+        if dl_match:
+            detail = f"CUDA dlopen error: {dl_match.group(1).strip()}"
+        else:
+            detail = (err or out or f"exit={res.returncode}").strip()[-350:]
+        return ok, detail
+    except Exception as exc:
+        return False, str(exc)
+
+
+def check_cuda_offload_subprocess() -> bool:
+    """Memeriksa di subprocess baru apakah llama-cpp-python terpasang mendukung offload GPU CUDA."""
+    ok, _ = probe_cuda_offload_subprocess()
+    return ok
 
 
 def find_prebuilt_cuda_wheel_url(
@@ -245,23 +301,36 @@ def find_prebuilt_cuda_wheel_url(
         pass
 
     ordered: List[str] = []
+    # 1. Satu wheel terbaru per masing-masing CUDA tag (misal 0.4.8+cu130, 0.4.8+cu128, 0.4.8+cu124)
+    # agar jika satu runtime CUDA gagal, langsung berpindah ke tag CUDA berbeda alih-alih mengulang versi lama tag yang sama.
+    represented_cus = set()
     for cu in cu_tags:
-        for u in candidates_by_cu.get(cu, []):
+        cu_urls = candidates_by_cu.get(cu, [])
+        if cu_urls:
+            u = cu_urls[0]
+            if u not in ordered:
+                ordered.append(u)
+            represented_cus.add(cu)
+
+    # 2. Static fallback v0.4.8 untuk CUDA tag yang belum muncul di hasil API (atau jika API terkena rate-limit)
+    for cu in cu_tags:
+        if cu not in represented_cus:
+            static_url = (
+                f"https://github.com/JamePeng/llama-cpp-python/releases/download/"
+                f"v0.4.8-{cu}-linux-20261122/"
+                f"llama_cpp_python-0.4.8+{cu}-{py_tag}-{py_tag}-linux_x86_64.whl"
+            )
+            if static_url not in ordered:
+                ordered.append(static_url)
+
+    # 3. Wheel versi lebih lama sebagai cadangan terakhir
+    for cu in cu_tags:
+        for u in candidates_by_cu.get(cu, [])[1:]:
             if u not in ordered:
                 ordered.append(u)
     for u in other_matches:
         if u not in ordered:
             ordered.append(u)
-
-    # Static fallback URLs jika GitHub API terkena rate-limit
-    for cu in cu_tags:
-        static_url = (
-            f"https://github.com/JamePeng/llama-cpp-python/releases/download/"
-            f"v0.4.8-{cu}-linux-20261122/"
-            f"llama_cpp_python-0.4.8+{cu}-{py_tag}-{py_tag}-linux_x86_64.whl"
-        )
-        if static_url not in ordered:
-            ordered.append(static_url)
     return ordered
 
 
@@ -286,7 +355,7 @@ def ensure_cuda_llama_cpp(force: bool = False) -> bool:
     print("=" * 62, flush=True)
 
     wheel_urls = find_prebuilt_cuda_wheel_url(py_tag=py_tag)
-    for whl_url in wheel_urls[:2]:
+    for whl_url in wheel_urls[:3]:
         print(f"📦 Memasang wheel CUDA pra-kompilasi: {os.path.basename(whl_url)} ...", flush=True)
         try:
             res = subprocess.run(
@@ -310,18 +379,7 @@ def ensure_cuda_llama_cpp(force: bool = False) -> bool:
                 if check_cuda_offload_subprocess():
                     print("✅ Akselerasi CUDA GPU (llama_supports_gpu_offload=True) BERHASIL DIAKTIFKAN!", flush=True)
                     return True
-                try:
-                    diag = subprocess.run(
-                        [sys.executable, "-c", "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        env=dict(os.environ),
-                        timeout=15,
-                    )
-                    reason = (diag.stderr or diag.stdout or "llama_supports_gpu_offload=False").strip()[-350:]
-                except Exception as diag_err:
-                    reason = str(diag_err)
+                _, reason = probe_cuda_offload_subprocess()
                 print(f"⚠️ Wheel terpasang tetapi CUDA offload masih False ({reason})", flush=True)
             else:
                 err_tail = (res.stderr or res.stdout or f"exit={res.returncode}").strip()[-350:]

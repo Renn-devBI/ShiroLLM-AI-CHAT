@@ -404,6 +404,76 @@ class TestServerStability(unittest.TestCase):
             except OSError:
                 pass
 
+    def test_wheel_ordering_tries_distinct_cuda_tags_before_older_versions(self):
+        """find_prebuilt_cuda_wheel_url mengurutkan 1 wheel terbaru per tag CUDA (cu130, cu128, cu124) sebelum versi lama (0.4.7+cu130)."""
+        api_payload = json.dumps([
+            {
+                "tag_name": "v0.4.8-cu130-linux",
+                "assets": [
+                    {
+                        "name": "llama_cpp_python-0.4.8+cu130-cp313-cp313-linux_x86_64.whl",
+                        "browser_download_url": "https://example.com/llama_cpp_python-0.4.8+cu130-cp313-cp313-linux_x86_64.whl",
+                    }
+                ],
+            },
+            {
+                "tag_name": "v0.4.7-cu130-linux",
+                "assets": [
+                    {
+                        "name": "llama_cpp_python-0.4.7+cu130-cp313-cp313-linux_x86_64.whl",
+                        "browser_download_url": "https://example.com/llama_cpp_python-0.4.7+cu130-cp313-cp313-linux_x86_64.whl",
+                    }
+                ],
+            },
+            {
+                "tag_name": "v0.4.8-cu128-linux",
+                "assets": [
+                    {
+                        "name": "llama_cpp_python-0.4.8+cu128-cp313-cp313-linux_x86_64.whl",
+                        "browser_download_url": "https://example.com/llama_cpp_python-0.4.8+cu128-cp313-cp313-linux_x86_64.whl",
+                    }
+                ],
+            },
+        ]).encode("utf-8")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = api_payload
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_resp
+
+        with patch("shiro.colab_watchdog.urllib.request.urlopen", return_value=mock_cm):
+            urls = find_prebuilt_cuda_wheel_url(py_tag="cp313", preferred_cu_tags=["cu130", "cu128", "cu124"])
+
+        self.assertIn("0.4.8+cu130", urls[0])
+        self.assertIn("0.4.8+cu128", urls[1])
+        self.assertIn("0.4.8+cu124", urls[2])
+        self.assertIn("0.4.7+cu130", urls[3])
+
+    def test_probe_cuda_offload_subprocess_loads_backends_and_reports_dlopen_error(self):
+        """probe_cuda_offload_subprocess memuat ggml_backend_load_all_from_path di skrip probe dan menangkap SHIRO_CUDA_DLOPEN_ERR."""
+        from shiro.colab_watchdog import probe_cuda_offload_subprocess
+
+        seen_cmds = []
+
+        def fake_sub_ok(cmd, **kwargs):
+            seen_cmds.append(cmd)
+            return MagicMock(returncode=0, stdout="SHIRO_GPU_OFFLOAD=True\n", stderr="")
+
+        with patch("shiro.colab_watchdog.subprocess.run", side_effect=fake_sub_ok):
+            ok, detail = probe_cuda_offload_subprocess()
+        self.assertTrue(ok)
+        self.assertIn("ggml_backend_load_all_from_path", seen_cmds[0][2])
+        self.assertIn("llama_backend_init", seen_cmds[0][2])
+
+        fake_fail = MagicMock(
+            returncode=0,
+            stdout="SHIRO_GPU_OFFLOAD=False\nSHIRO_CUDA_DLOPEN_ERR=libcudart.so.13: cannot open shared object file\n",
+            stderr="",
+        )
+        with patch("shiro.colab_watchdog.subprocess.run", return_value=fake_fail):
+            ok2, detail2 = probe_cuda_offload_subprocess()
+        self.assertFalse(ok2)
+        self.assertIn("libcudart.so.13", detail2)
+
 
 if __name__ == "__main__":
     unittest.main()
