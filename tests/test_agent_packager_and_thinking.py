@@ -181,11 +181,18 @@ class TestAgentPackagerAndThinking(unittest.TestCase):
             token_evs = [e["token"] for e in events if e.get("type") == "token"]
             done_evs = [e for e in events if e.get("type") == "done"]
 
-            self.assertTrue(any("700,000 tokens" in (s.get("feedback") or "") for s in trace_steps))
+            self.assertTrue(any("ShiroHaru-Lyra Extra High" in (s.get("feedback") or "") for s in trace_steps))
+            self.assertFalse(any("tokens" in (s.get("feedback") or "").lower() for s in trace_steps))
             self.assertTrue(any("app.py" in (s.get("feedback") or "") or ".zip" in (s.get("feedback") or "").lower() for s in trace_steps))
             full_thought = "".join(thought_evs)
             self.assertIn("User wants previous app.py", full_thought)
             self.assertEqual(len(thought_done_evs), 1)
+            # Pastikan artefak zip tidak muncul sebelum reasoning/token selesai
+            idx_thought_done = next(i for i, e in enumerate(events) if e.get("type") == "thought_done")
+            idx_last_token = max(i for i, e in enumerate(events) if e.get("type") == "token")
+            idx_artifacts = next(i for i, e in enumerate(events) if e.get("type") == "artifacts")
+            self.assertGreater(idx_artifacts, idx_thought_done)
+            self.assertGreater(idx_artifacts, idx_last_token)
             # Pastikan isi <think> tidak bocor ke token jawaban akhir
             full_ans = "".join(token_evs)
             self.assertNotIn("User wants previous", full_ans)
@@ -193,6 +200,7 @@ class TestAgentPackagerAndThinking(unittest.TestCase):
 
             self.assertEqual(len(done_evs), 1)
             done = done_evs[0]
+            self.assertEqual(done.get("active_context_window"), 700000)
             self.assertGreaterEqual(len(done.get("artifacts", [])), 1)
             arch = done["artifacts"][0]
             self.assertEqual(arch["kind"], "archive")
@@ -242,8 +250,8 @@ class TestAgentPackagerAndThinking(unittest.TestCase):
         idx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "index.html")
         with open(idx_path, "r", encoding="utf-8") as f:
             html = f.read()
-        self.assertIn("script.js?v=3.5.0", html)
-        self.assertIn("style.css?v=3.5.0", html)
+        self.assertIn("script.js?v=3.6.0", html)
+        self.assertIn("style.css?v=3.6.0", html)
 
 
 if __name__ == "__main__":

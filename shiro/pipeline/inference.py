@@ -139,6 +139,115 @@ def _build_completion_kwargs(call_kwargs: Dict[str, Any], stream: bool = False) 
     out["stream"] = stream
     return out
 
+
+_AGENT_TOOL_TAG_RE = re.compile(r'\[\[AGENT_TOOL:([A-Za-z0-9_]+)(?:\|([^\]]*))?\]\]', re.IGNORECASE)
+
+
+def _parse_agent_tool_calls(text: str) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Mengekstrak tag alat otonom `[[AGENT_TOOL:nama|k=v|...]]` dari keluaran model
+    dan mengembalikan (daftar_panggilan, teks_bersih_tanpa_tag).
+    """
+    if not text or "AGENT_TOOL:" not in text:
+        return [], text or ""
+    calls: List[Dict[str, Any]] = []
+    for m in _AGENT_TOOL_TAG_RE.finditer(text):
+        tool_name = (m.group(1) or "").strip().lower()
+        raw_args = (m.group(2) or "").strip()
+        args: Dict[str, str] = {}
+        if raw_args:
+            for seg in raw_args.split("|"):
+                if "=" in seg:
+                    k, v = seg.split("=", 1)
+                    args[k.strip().lower()] = v.strip()
+        calls.append({"name": tool_name, "args": args, "raw": m.group(0)})
+    cleaned = _AGENT_TOOL_TAG_RE.sub("", text)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return calls, cleaned
+
+
+def _split_partial_agent_tag(buf: str) -> Tuple[str, str]:
+    """Menahan potongan tag `[[AGENT_TOOL:...]]` agar sintaks mentah alat tidak berkedip di UI stream."""
+    if not buf:
+        return "", ""
+    # Jika ada pembuka tag yang belum tertutup `]]`, tahan seluruh sisanya
+    open_idx = buf.rfind("[[")
+    if open_idx != -1:
+        after_open = buf[open_idx:]
+        if "]]" not in after_open:
+            upper_after = after_open.upper()
+            if len(after_open) <= 13 and "[[AGENT_TOOL:".startswith(upper_after):
+                return buf[:open_idx], after_open
+            if upper_after.startswith("[[AGENT_TOOL:"):
+                return buf[:open_idx], after_open
+    if buf.endswith("["):
+        return buf[:-1], "["
+    return buf, ""
+
+
+def _execute_live_research_tool(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    """Menjalankan alat penelusuran web/browser (`web_search`, `open_url`, `screenshot`) secara langsung."""
+    from shiro.agent.tools import search_google_web, open_and_read_webpage, take_web_screenshot
+    name = (tool_call.get("name") or "").lower()
+    args = tool_call.get("args") or {}
+    t0 = time.perf_counter()
+
+    if name == "web_search":
+        q = (args.get("query") or args.get("q") or "").strip()
+        res = search_google_web(q, max_results=6, include_images=True)
+        sources = [
+            {
+                "title": str(r.get("title") or "Sumber Web"),
+                "url": str(r.get("url") or ""),
+                "domain": "",
+                "snippet": str(r.get("snippet") or "")[:200],
+            }
+            for r in (res.get("results") or [])[:6]
+            if isinstance(r, dict) and r.get("url")
+        ]
+        images = list((res.get("images") or [])[:4])
+        return {
+            "tool": "multi_source_web_research",
+            "title": f"Browser Web Search ({q[:40]})",
+            "status": "success" if res.get("success") else "failed",
+            "observation": res.get("summary") or "",
+            "sources": sources,
+            "web_images": images,
+            "duration_sec": round(time.perf_counter() - t0, 2),
+        }
+    elif name == "open_url":
+        u = (args.get("url") or "").strip()
+        res = open_and_read_webpage(u)
+        sources = [{"title": res.get("title") or u, "url": u, "domain": "", "snippet": (res.get("content") or "")[:200]}] if u else []
+        images = list((res.get("images") or [])[:4])
+        img_lines = "\n".join(f"- ![{im.get('title', 'Image')}]({im.get('url')})" for im in images if im.get("url"))
+        obs = f"Judul: {res.get('title')}\nURL: {u}\nKonten:\n{res.get('content')}"
+        if img_lines:
+            obs += f"\n\nGambar pada halaman:\n{img_lines}"
+        return {
+            "tool": "web_browser_reader",
+            "title": f"Read Webpage ({u[:40]})",
+            "status": "success" if res.get("success") else "failed",
+            "observation": obs,
+            "sources": sources,
+            "web_images": images,
+            "duration_sec": round(time.perf_counter() - t0, 2),
+        }
+    elif name == "screenshot":
+        u = (args.get("url") or "").strip()
+        res = take_web_screenshot(u)
+        return {
+            "tool": "web_screenshot",
+            "title": f"Browser Screenshot ({u[:40]})",
+            "status": "success" if res.get("success") else "failed",
+            "observation": res.get("summary") or "",
+            "image_url": res.get("image_url"),
+            "sources": [{"title": u, "url": u, "domain": ""}] if u else [],
+            "web_images": [],
+            "duration_sec": round(time.perf_counter() - t0, 2),
+        }
+    return {"tool": name, "title": name, "status": "failed", "observation": "", "sources": [], "web_images": [], "duration_sec": 0.0}
+
 def _prepare_inference_payload(
     user_input: str,
     image_base64: Optional[Union[str, List[str]]] = None,
@@ -255,6 +364,18 @@ def _prepare_inference_payload(
     agent_intent_detected = "none"
     generated_artifacts: List[Dict[str, Any]] = []
     pending_archive_request: Optional[Dict[str, Any]] = None
+    pending_video_request: Optional[Dict[str, Any]] = None
+    available_archive_files: List[Dict[str, str]] = []
+    inferred_project_name: Optional[str] = None
+    all_docs_files: List[Dict[str, str]] = [
+        {
+            "filename": d.get("filename") or f"file_{i}.txt",
+            "basename": os.path.basename(d.get("filename") or f"file_{i}.txt"),
+            "content": str(d.get("text") or ""),
+            "language": str(d.get("file_type") or "text"),
+        }
+        for i, d in enumerate(all_docs, 1)
+    ]
 
     if raw_user_typed:
         try:
@@ -262,6 +383,7 @@ def _prepare_inference_payload(
                 detect_agent_intent,
                 check_weather,
                 search_google_web,
+                search_web_images,
                 open_and_read_webpage,
                 calculate_math,
                 get_current_time_info,
@@ -283,19 +405,20 @@ def _prepare_inference_payload(
 
                 if agent_intent == "archive":
                     from shiro.agent.packager import (
+                        extract_requested_filenames,
                         extract_files_from_conversation,
-                        create_archive_artifact,
+                        merge_file_collections,
                     )
                     tool_name = "archive_packager"
                     req_fmt = agent_params.get("format", "zip")
                     req_arch_name = agent_params.get("archive_name")
+                    req_files = extract_requested_filenames(raw_user_typed)
                     hist_src = (
                         incoming_messages[:-1]
                         if (incoming_messages and len(incoming_messages) > 1)
                         else list(getattr(memory, "short_term_history", []) or [])
                     )
-                    # Jika user meminta membuat berkas/proyek BARU lalu dikompres (mis. "buatkan login.app lalu kompres tar.gz"),
-                    # tunda pengemasan hingga post-LLM agar berkas baru yang dihasilkan ikut dikemas.
+                    # Jika user meminta membuat berkas/proyek BARU tanpa menyebut berkas lama, abaikan arsip lama
                     low_req = raw_user_typed.lower()
                     wants_new_generation = bool(
                         re.search(r'\b(?:lalu|terus|kemudian|and\s+then|then)\b', low_req)
@@ -307,89 +430,78 @@ def _prepare_inference_payload(
                             )
                         )
                     )
-                    extracted_files, inferred_proj = ([], None) if wants_new_generation else extract_files_from_conversation(hist_src)
-                    if not extracted_files and not wants_new_generation and all_docs:
-                        extracted_files = [
-                            {
-                                "filename": d.get("filename") or f"file_{i}.txt",
-                                "basename": os.path.basename(d.get("filename") or f"file_{i}.txt"),
-                                "content": str(d.get("text") or ""),
-                                "language": d.get("file_type") or "text",
-                            }
-                            for i, d in enumerate(all_docs, 1)
-                        ]
-                        inferred_proj = os.path.splitext(extracted_files[0]["basename"])[0] if len(extracted_files) == 1 else "shiro-bundle"
-                    if extracted_files:
-                        arch_art = create_archive_artifact(
-                            extracted_files,
-                            fmt=req_fmt,
-                            archive_name=req_arch_name,
-                            project_name=inferred_proj,
+                    extracted_hist, inferred_proj = (
+                        ([], None)
+                        if (wants_new_generation and not req_files)
+                        else extract_files_from_conversation(
+                            hist_src,
+                            max_lookback=40,
+                            requested_filenames=req_files or None,
                         )
-                        generated_artifacts.append(arch_art)
-                        tool_desc = (
-                            f"Compressing {arch_art['file_count']} file(s) into "
-                            f"{arch_art['filename']} ({arch_art['format'].upper()}, {arch_art['size_label']})"
-                        )
-                        note_line = f"\nCatatan format: {arch_art['note']}" if arch_art.get("note") else ""
-                        obs_summary = (
-                            f"Arsip nyata `{arch_art['filename']}` ({arch_art['size_label']}) berhasil dibuat dari "
-                            f"{arch_art['file_count']} berkas: {', '.join(arch_art['files_included'])}.{note_line}"
-                        )
-                        structured_obs = arch_art
-                        custom_agent_prompt = (
-                            f"\n\n[HASIL EKSEKUSI AGEN PENGEMAS ARSIP — SUDAH BERHASIL DIBUAT]:\n"
-                            f"{obs_summary}\n"
-                            f"Tombol unduhan langsung untuk `{arch_art['filename']}` sudah otomatis disematkan di antarmuka obrolan di bawah jawabanmu.\n"
-                            f"[INSTRUKSI]:\n"
-                            f"1. Sampaikan kepada Kakak dengan antusias bahwa arsip `{arch_art['filename']}` ({arch_art['size_label']}) sudah jadi dan siap diunduh langsung lewat tombol di bawah.\n"
-                            f"2. Sebutkan daftar berkas di dalamnya ({', '.join(arch_art['files_included'])}) dan jelaskan singkat cara pakainya bila perlu.\n"
-                            f"3. DILARANG PERNAH mengatakan tidak bisa membuat/mengirim file .zip atau arsip, dan tidak perlu menulis ulang seluruh isi kode mentah kecuali diminta.\n"
-                        )
-                    else:
-                        pending_archive_request = dict(agent_params)
-                        tool_desc = f"Preparing to generate & compress files as .{req_fmt.upper()}"
-                        obs_summary = (
-                            f"Belum ada berkas program di riwayat percakapan; menugaskan model menghasilkan "
-                            f"berkas lengkap untuk dikemas otomatis menjadi .{req_fmt}."
-                        )
-                        structured_obs = {"pending": True, **agent_params}
-                        custom_agent_prompt = (
-                            f"\n\n[PERMINTAAN PEMBUATAN BERKAS + KOMPRESI OTOMATIS (.{req_fmt})]:\n"
-                            f"Sistem agen akan otomatis mengemas seluruh blok kode yang kamu hasilkan menjadi berkas arsip `.{req_fmt}` siap unduh.\n"
-                            f"Tulis setiap berkas secara LENGKAP dengan nama berkas eksplisit di judul atau header blok kode (contoh: `### File: app.py` atau ```` ```python:login.app ````). "
-                            f"Jangan katakan kamu tidak bisa membuat .{req_fmt}.\n"
-                        )
+                    )
+                    inferred_project_name = inferred_proj
+                    available_archive_files = merge_file_collections(
+                        all_docs_files,
+                        extracted_hist,
+                        requested_filenames=req_files or None,
+                    )
+                    # Tunda pembuatan arsip hingga SETELAH model AI selesai berpikir & merespons
+                    pending_archive_request = {
+                        **agent_params,
+                        "requested_filenames": req_files,
+                    }
+                    found_names = [f["filename"] for f in available_archive_files]
+                    found_low = {f["filename"].lower() for f in available_archive_files} | {f["basename"].lower() for f in available_archive_files}
+                    missing_req = [r for r in req_files if r.lower() not in found_low and r.split("/")[-1].lower() not in found_low]
+
+                    tool_desc = f"Scanning conversation workspace for .{req_fmt.upper()} packaging"
+                    obs_summary = (
+                        f"Terdeteksi {len(found_names)} berkas siap dikemas ({', '.join(found_names) if found_names else 'belum ada'}); "
+                        f"pengemasan .{req_fmt} akan dieksekusi setelah AI Agent menyelesaikan respons."
+                    )
+                    structured_obs = {
+                        "pending": True,
+                        "format": req_fmt,
+                        "requested_filenames": req_files,
+                        "found_files": found_names,
+                        "missing_files": missing_req,
+                    }
+                    found_line = ", ".join(f"`{n}`" for n in found_names) if found_names else "(belum ada file di riwayat/unggahan)"
+                    missing_line = (
+                        f"\n- Berkas yang diminta namun belum ditemukan di riwayat: {', '.join(f'`{m}`' for m in missing_req)} "
+                        f"(buatkan/tuliskan berkas tersebut dengan nama persisnya jika diperlukan)."
+                        if missing_req else ""
+                    )
+                    custom_agent_prompt = (
+                        f"\n\n[INVENTARIS BERKAS WORKSPACE UNTUK PENGARSIPAN (.{req_fmt})]:\n"
+                        f"- Berkas tersedia dari riwayat percakapan & unggahan: {found_line}{missing_line}\n"
+                        f"- Pengemasan arsip `.{req_fmt}` akan dijalankan OTOMATIS SETELAH responsmu selesai (jangan mengklaim file sudah jadi sebelum kamu menjawab, dan jangan menolak membuat arsip).\n"
+                        f"- Bertindaklah sebagai AI Agent sejati: jelaskan berkas yang akan dikemas secara alami, lengkapi/perbarui berkas bila ada yang kurang atau diminta diperbaiki menggunakan blok kode dengan nama file eksplisit (`### File: nama.ext`), atau panggil `[[AGENT_TOOL:create_archive|format={req_fmt}|files={','.join(req_files or found_names)}]]`.\n"
+                    )
                 elif agent_intent == "generate_video":
-                    from shiro.vision.video import render_video_artifact
                     tool_name = "video_renderer"
                     vid_dur = float(agent_params.get("duration_sec") or 5.0)
                     vid_out_name = agent_params.get("output_name")
                     raw_scenes = [s.strip() for s in re.split(r'[;\n]+|->|\|', raw_user_typed) if s.strip()]
                     if len(raw_scenes) <= 1 and len(raw_user_typed) > 65:
                         raw_scenes = [p.strip() for p in re.split(r'[,.]', raw_user_typed) if len(p.strip()) > 6][:5]
-                    vid_art = render_video_artifact(
-                        title=raw_user_typed,
-                        scenes=raw_scenes,
-                        input_images_b64=raw_images if raw_images else None,
-                        output_name=vid_out_name,
-                        duration_sec=vid_dur,
-                    )
-                    generated_artifacts.append(vid_art)
-                    tool_desc = (
-                        f"Rendering MP4 video {vid_art['filename']} ({vid_art['resolution']}, "
-                        f"{vid_art['duration_sec']}s, {vid_art['size_label']})"
-                    )
+                    pending_video_request = {
+                        "title": raw_user_typed,
+                        "scenes": raw_scenes,
+                        "input_images_b64": list(raw_images) if raw_images else [],
+                        "output_name": vid_out_name,
+                        "duration_sec": vid_dur,
+                    }
+                    tool_desc = f"Preparing MP4 video render ({vid_dur}s) after AI reasoning"
                     obs_summary = (
-                        f"Video MP4 nyata `{vid_art['filename']}` ({vid_art['resolution']}, durasi {vid_art['duration_sec']} detik, "
-                        f"ukuran {vid_art['size_label']}) berhasil dirender dan sudah disematkan pemutar video + tombol unduh di obrolan."
+                        f"Menyiapkan render video MP4 programatik ({vid_out_name or 'otomatis.mp4'}, durasi {vid_dur}s) "
+                        "yang akan dijalankan setelah AI Agent selesai menyusun respons."
                     )
-                    structured_obs = vid_art
+                    structured_obs = {"pending": True, **agent_params}
                     custom_agent_prompt = (
-                        f"\n\n[HASIL RENDER VIDEO MP4 PROGRAMATIK — SUDAH BERHASIL DIBUAT]:\n"
-                        f"{obs_summary}\n"
-                        f"Pemutar video dan tombol unduh `{vid_art['filename']}` sudah otomatis tersedia di bawah jawabanmu.\n"
-                        f"[INSTRUKSI]: Sampaikan ke Kakak bahwa video `{vid_art['filename']}` sudah selesai dibuat dan bisa langsung diputar/diunduh di bawah. "
+                        f"\n\n[PERMINTAAN RENDER VIDEO MP4 (.mp4)]:\n"
+                        f"Sistem akan merender video MP4 programatik berdurasi {vid_dur} detik SETELAH responsmu selesai.\n"
+                        f"Jelaskan rencana visual/adegan video untuk Kakak dengan alami. "
                         f"Catatan jujur bila diminta video sinematik AI/foto bergerak realistis: Qwen3.8-27B adalah model pemahaman video/gambar (video understanding), sehingga generator video di server saat ini merender MP4 motion-graphic / slideshow programatik.\n"
                     )
                 elif agent_intent == "weather":
@@ -402,19 +514,22 @@ def _prepare_inference_payload(
                 elif agent_intent == "search":
                     tool_name = "multi_source_web_research"
                     q = agent_params.get("query", raw_user_typed)
-                    tool_desc = f"Riset multi-sumber adaptif & verifikasi silang: '{q}'"
+                    tool_desc = f"Riset browser multi-sumber & pencarian gambar web: '{q}'"
                     try:
                         from shiro.web.realtime_intel import research, wrap_search_fn, default_fetcher
                         res_intel = research(
                             user_query=q,
                             search_fn=wrap_search_fn(search_google_web),
-                            fetch_fn=default_fetcher
+                            fetch_fn=default_fetcher,
+                            image_search_fn=lambda q_str: search_web_images(q_str, max_images=4),
                         )
                         obs_summary = res_intel.summary_text
                         structured_obs = {
                             "topic": res_intel.topic,
                             "confidence": res_intel.confidence,
                             "independent_sources": res_intel.independent_sources_count,
+                            "sources": res_intel.sources,
+                            "images": res_intel.images,
                             "verified_facts": [
                                 {"claim": f.claim, "status": f.status, "sources": f.supporting_sources}
                                 for f in res_intel.verified_facts
@@ -424,16 +539,28 @@ def _prepare_inference_payload(
                         web_prompt_addon = f"\n\n{res_intel.prompt_block}\n"
                     except Exception as e_intel:
                         print(f"[Research Error Fallback]: {e_intel}")
-                        s_res = search_google_web(q)
+                        s_res = search_google_web(q, max_results=6, include_images=True)
                         obs_summary = s_res.get("summary", "")
-                        structured_obs = s_res.get("results")
+                        structured_obs = {
+                            "sources": s_res.get("results") or [],
+                            "images": s_res.get("images") or [],
+                            "results": s_res.get("results") or [],
+                        }
                 elif agent_intent == "browse":
                     tool_name = "web_browser_reader"
                     target_url = agent_params.get("url", "")
-                    tool_desc = f"Membuka dan membaca halaman web via Mozilla Headers: {target_url}"
+                    tool_desc = f"Membuka dan membaca halaman web via Browser Headers: {target_url}"
                     b_res = open_and_read_webpage(target_url)
-                    obs_summary = f"Judul Halaman: {b_res.get('title')}\nIsi Teks:\n{b_res.get('content')}"
-                    structured_obs = b_res
+                    b_imgs = list((b_res.get("images") or [])[:4])
+                    img_lines = "\n".join(f"- ![{im.get('title', 'Web Image')}]({im.get('url')})" for im in b_imgs if im.get("url"))
+                    obs_summary = f"Judul Halaman: {b_res.get('title')}\nURL: {target_url}\nIsi Teks:\n{b_res.get('content')}"
+                    if img_lines:
+                        obs_summary += f"\n\nGambar pada halaman:\n{img_lines}"
+                    structured_obs = {
+                        **b_res,
+                        "sources": [{"title": b_res.get("title") or target_url, "url": target_url, "domain": ""}] if target_url else [],
+                        "images": b_imgs,
+                    }
                 elif agent_intent == "screenshot":
                     tool_name = "web_screenshot"
                     target_url = agent_params.get("url", "")
@@ -466,6 +593,8 @@ def _prepare_inference_payload(
                 is_tool_success = bool(obs_summary)
                 if isinstance(structured_obs, dict) and "success" in structured_obs:
                     is_tool_success = structured_obs["success"]
+                elif isinstance(structured_obs, dict) and tool_name == "multi_source_web_research":
+                    is_tool_success = bool(structured_obs.get("sources") or structured_obs.get("images") or structured_obs.get("verified_facts"))
 
                 agent_action_data = {
                     "tool": tool_name,
@@ -473,20 +602,22 @@ def _prepare_inference_payload(
                     "observation": obs_summary,
                     "details": structured_obs,
                     "image_url": structured_obs.get("image_url") if isinstance(structured_obs, dict) else None,
+                    "sources": structured_obs.get("sources", []) if isinstance(structured_obs, dict) else [],
+                    "web_images": structured_obs.get("images", []) if isinstance(structured_obs, dict) else [],
                     "execution_time_sec": t_tool_dur,
                     "status": "success" if is_tool_success else "failed"
                 }
 
                 if custom_agent_prompt:
                     web_prompt_addon = custom_agent_prompt
-                else:
+                elif not web_prompt_addon:
                     web_prompt_addon = (
                         f"\n\n[Informasi / Fakta Web Nyata Real-time]:\n"
                         f"{obs_summary}\n\n"
                         f"[Instruksi Karakter]:\n"
-                        f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta di atas.\n"
-                        f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH ada di atas.\n"
-                        f"3. DILARANG KERAS menyertakan header teknis, badge, nama tool/alat, browser Mozilla, Cloudflare, atau awalan '> 🌐'. Sampaikan murni dengan gaya bicara manis dan hangat khas Shiro.\n"
+                        f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta & tautan sumber di atas.\n"
+                        f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek karena datanya SUDAH tersedia di atas.\n"
+                        f"3. Cantumkan tautan sumber `[Judul](URL)` atau gambar `![Judul](url)` yang tersedia jika relevan, dan sampaikan murni dengan gaya bicara manis dan hangat khas Shiro tanpa menyebut nama tool internal.\n"
                     )
         except Exception as e_agent:
             print(f"[Inference Agent Warning]: {e_agent}")
@@ -1012,33 +1143,45 @@ def _prepare_inference_payload(
             "title": "Analyze Request & Context",
             "status": "done",
             "feedback": (
-                f"Intent: {agent_intent_detected} · Context: {tier_lbl_en} ({effective_ctx:,} tokens) · "
+                f"Intent: {agent_intent_detected} · Profile: {tier_lbl_en} · "
                 f"Memory: {len(relevant_facts)} fact(s), {len(clean_context)} turn(s) · Mode: {mode_en}"
             ),
         }
     ]
-    if generated_artifacts:
-        first_art = generated_artifacts[0]
-        if first_art.get("kind") == "video":
+    if agent_action_data and agent_action_data.get("tool") not in ("archive_packager", "video_renderer"):
+        t_key = agent_action_data.get("tool")
+        if t_key in ("multi_source_web_research", "google_web_search"):
+            src_cnt = len(agent_action_data.get("sources") or [])
+            img_cnt = len(agent_action_data.get("web_images") or [])
             agent_steps.append({
-                "id": "render_video",
-                "title": f"Render MP4 Video ({first_art['filename']})",
-                "status": "done",
-                "feedback": f"Rendered {first_art['duration_sec']}s {first_art['resolution']} MP4 ({first_art['size_label']})",
+                "id": "web_search",
+                "title": "Search Web & Browser Sources",
+                "status": "done" if agent_action_data.get("status") == "success" else "failed",
+                "feedback": f"Collected {src_cnt} web source(s) & {img_cnt} image(s) for grounded synthesis.",
+            })
+        elif t_key == "web_browser_reader":
+            src_cnt = len(agent_action_data.get("sources") or [])
+            img_cnt = len(agent_action_data.get("web_images") or [])
+            agent_steps.append({
+                "id": "web_browse",
+                "title": "Open & Read Webpage",
+                "status": "done" if agent_action_data.get("status") == "success" else "failed",
+                "feedback": f"Extracted webpage content ({src_cnt} URL, {img_cnt} image(s)).",
             })
         else:
             agent_steps.append({
-                "id": "package",
-                "title": f"Compress Archive ({first_art['filename']})",
-                "status": "done",
-                "feedback": f"Packaged {first_art['file_count']} file(s) into {first_art['filename']} ({first_art['format'].upper()}, {first_art['size_label']})",
+                "id": f"tool_{agent_action_data['tool']}",
+                "title": f"Execute Tool ({agent_action_data['tool']})",
+                "status": "done" if agent_action_data.get("status") == "success" else "failed",
+                "feedback": str(agent_action_data.get("description") or "")[:160],
             })
-    elif agent_action_data and agent_action_data.get("tool") not in ("archive_packager", "video_renderer"):
+    elif pending_archive_request:
+        found_cnt = len(available_archive_files)
         agent_steps.append({
-            "id": f"tool_{agent_action_data['tool']}",
-            "title": f"Execute Tool ({agent_action_data['tool']})",
-            "status": "done" if agent_action_data.get("status") == "success" else "failed",
-            "feedback": str(agent_action_data.get("description") or "")[:160],
+            "id": "scan_files",
+            "title": "Inspect Workspace & Conversation Files",
+            "status": "done",
+            "feedback": f"Found {found_cnt} file(s) across history/uploads; packaging will run after AI completes its response.",
         })
 
     if has_doc and all_docs:
@@ -1094,6 +1237,10 @@ def _prepare_inference_payload(
         "agent_intent_detected": agent_intent_detected,
         "generated_artifacts": generated_artifacts,
         "pending_archive_request": pending_archive_request,
+        "pending_video_request": pending_video_request,
+        "available_archive_files": available_archive_files,
+        "inferred_project_name": inferred_project_name,
+        "all_docs_files": all_docs_files,
         "agent_steps": agent_steps,
         "web_data": web_data,
         "api_version": api_version,
@@ -1208,34 +1355,62 @@ def _finalize_inference_output(
     if not cleaned_reply and raw_reply:
         cleaned_reply = raw_reply.strip()
 
-    # Post-LLM Packaging & Exact Filename Artifacts (zip/tar.gz/7z atau file individual seperti login.app)
+    inline_tool_calls, cleaned_reply = _parse_agent_tool_calls(cleaned_reply)
+    if not cleaned_reply and raw_reply:
+        _, cleaned_reply = _parse_agent_tool_calls(raw_reply)
+
+    # Post-LLM Packaging, Deferred Video Rendering & Exact Filename Artifacts
     artifacts: List[Dict[str, Any]] = list(prep.get("generated_artifacts") or [])
     agent_steps: List[Dict[str, Any]] = [dict(s) for s in (prep.get("agent_steps") or [])]
     pending_arch = prep.get("pending_archive_request")
+    pending_video = prep.get("pending_video_request")
+    ai_archive_call = next((tc for tc in reversed(inline_tool_calls) if tc.get("name") == "create_archive"), None)
+    ai_video_call = next((tc for tc in reversed(inline_tool_calls) if tc.get("name") == "render_video"), None)
+
     try:
         from shiro.agent.packager import (
             extract_named_files_from_markdown,
             infer_project_name_from_text,
+            merge_file_collections,
             create_archive_artifact,
             create_file_artifacts,
         )
         extracted_post = extract_named_files_from_markdown(cleaned_reply)
         has_archive_already = any(a.get("kind") == "archive" for a in artifacts)
-        if pending_arch and not has_archive_already and extracted_post:
-            proj_name = infer_project_name_from_text(cleaned_reply, extracted_post)
-            arch_art = create_archive_artifact(
+
+        if (pending_arch or ai_archive_call) and not has_archive_already:
+            arch_args = (ai_archive_call or {}).get("args") or {}
+            req_files_ai = [
+                s.strip() for s in str(arch_args.get("files") or "").split(",") if s.strip()
+            ] if arch_args.get("files") else None
+            eff_req_files = req_files_ai or (pending_arch or {}).get("requested_filenames") or None
+
+            merged_arch_files = merge_file_collections(
                 extracted_post,
-                fmt=pending_arch.get("format", "zip"),
-                archive_name=pending_arch.get("archive_name"),
-                project_name=proj_name,
+                list(prep.get("all_docs_files") or []),
+                list(prep.get("available_archive_files") or []),
+                requested_filenames=eff_req_files,
             )
-            artifacts.append(arch_art)
-            agent_steps.append({
-                "id": "package",
-                "title": f"Package Archive ({arch_art['filename']})",
-                "status": "done",
-                "feedback": f"Compressed {arch_art['file_count']} file(s) into {arch_art['filename']} ({arch_art['format'].upper()}, {arch_art['size_label']})",
-            })
+            if merged_arch_files:
+                fmt_val = arch_args.get("format") or (pending_arch or {}).get("format", "zip")
+                arch_name_val = arch_args.get("name") or (pending_arch or {}).get("archive_name")
+                proj_name = (
+                    prep.get("inferred_project_name")
+                    or infer_project_name_from_text(cleaned_reply, merged_arch_files)
+                )
+                arch_art = create_archive_artifact(
+                    merged_arch_files,
+                    fmt=fmt_val,
+                    archive_name=arch_name_val,
+                    project_name=proj_name,
+                )
+                artifacts.append(arch_art)
+                agent_steps.append({
+                    "id": "package",
+                    "title": f"Compress Archive ({arch_art['filename']})",
+                    "status": "done",
+                    "feedback": f"Packaged {arch_art['file_count']} file(s) into {arch_art['filename']} ({arch_art['format'].upper()}, {arch_art['size_label']})",
+                })
         elif not artifacts and extracted_post:
             wants_file_download = bool(
                 re.search(r'\b[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,12}\b', raw_user_typed or "")
@@ -1256,6 +1431,37 @@ def _finalize_inference_output(
                     })
     except Exception as e_pkg:
         print(f"[Inference Packager Warning]: {e_pkg}")
+
+    # Post-LLM Deferred MP4 Video Rendering
+    if (pending_video or ai_video_call) and not any(a.get("kind") == "video" for a in artifacts):
+        try:
+            from shiro.vision.video import render_video_artifact
+            v_args = (ai_video_call or {}).get("args") or {}
+            v_title = v_args.get("title") or (pending_video or {}).get("title") or raw_user_typed or "Shiro AI Video"
+            v_scenes = (
+                [s.strip() for s in v_args["scenes"].split(";") if s.strip()]
+                if v_args.get("scenes")
+                else list((pending_video or {}).get("scenes") or [])
+            )
+            v_dur = float(v_args.get("duration") or (pending_video or {}).get("duration_sec") or 5.0)
+            v_out = v_args.get("name") or (pending_video or {}).get("output_name")
+            v_imgs = (pending_video or {}).get("input_images_b64") or None
+            vid_art = render_video_artifact(
+                title=v_title,
+                scenes=v_scenes,
+                input_images_b64=v_imgs,
+                output_name=v_out,
+                duration_sec=v_dur,
+            )
+            artifacts.append(vid_art)
+            agent_steps.append({
+                "id": "render_video",
+                "title": f"Render MP4 Video ({vid_art['filename']})",
+                "status": "done",
+                "feedback": f"Rendered {vid_art['duration_sec']}s {vid_art['resolution']} MP4 ({vid_art['size_label']})",
+            })
+        except Exception as e_vid_post:
+            print(f"[Inference Video Renderer Warning]: {e_vid_post}")
 
     t_filter_dur = (time.perf_counter() - t0) * 1000
     nodes.append({
@@ -1465,85 +1671,136 @@ def get_shiro_reply(
             raise RuntimeError("Model LLM belum dimuat di memori server.")
 
         t0 = time.perf_counter()
-        active_model_path = prep.get("active_model_path", "")
-        disable_thinking = bool(prep.get("disable_thinking", False))
-        use_fast_text = _should_use_fast_text_completion(llm, has_image, tools, active_model_path)
+        for react_round in range(3):
+            t_round = time.perf_counter()
+            active_model_path = prep.get("active_model_path", "")
+            disable_thinking = bool(prep.get("disable_thinking", False))
+            use_fast_text = _should_use_fast_text_completion(llm, has_image, tools, active_model_path)
+
+            with state.llm_lock:
+                res = None
+                if use_fast_text:
+                    prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
+                    comp_kwargs = _build_completion_kwargs(call_kwargs, stream=False)
+                    try:
+                        if state.last_turn_had_image and hasattr(llm, "reset"):
+                            llm.reset()
+                            state.last_turn_had_image = False
+                        comp_res = llm.create_completion(prompt=prompt_str, **comp_kwargs)
+                    except Exception as e_fast_first:
+                        comp_res = None
+                        err_fast_str = str(e_fast_first).lower()
+                        if "exceed" in err_fast_str and ("context" in err_fast_str or "token" in err_fast_str or "window" in err_fast_str):
+                            try:
+                                em_prompt = _format_chatml_prompt(
+                                    [{"role": "system", "content": system_prompt[:1200]}, user_turn_msg],
+                                    disable_thinking=disable_thinking
+                                )
+                                comp_res = llm.create_completion(prompt=em_prompt, **comp_kwargs)
+                            except Exception:
+                                comp_res = None
+                        elif hasattr(llm, "reset"):
+                            try:
+                                llm.reset()
+                                comp_res = llm.create_completion(prompt=prompt_str, **comp_kwargs)
+                            except Exception:
+                                comp_res = None
+                        if comp_res is None:
+                            print(f"[Inference Fast-Path Fallback]: {e_fast_first}")
+
+                    if comp_res is not None:
+                        comp_choice = (comp_res.get("choices") or [{}])[0] if isinstance(comp_res, dict) else {}
+                        res = {
+                            "choices": [{
+                                "message": {"content": comp_choice.get("text", "") or ""},
+                                "finish_reason": comp_choice.get("finish_reason", "stop"),
+                            }],
+                            "usage": comp_res.get("usage", {}) if isinstance(comp_res, dict) else {},
+                        }
+
+                if res is None:
+                    try:
+                        if tools:
+                            try:
+                                res = llm.create_chat_completion(
+                                    messages=msgs,
+                                    tools=tools,
+                                    tool_choice=tool_choice,
+                                    **call_kwargs
+                                )
+                            except (TypeError, Exception):
+                                res = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                        else:
+                            res = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                        if has_image:
+                            state.last_turn_had_image = True
+                    except Exception as inf_err:
+                        err_str = str(inf_err).lower()
+                        if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
+                            emergency_msgs = [{"role": "system", "content": system_prompt[:1200]}]
+                            emergency_msgs.append(user_turn_msg)
+                            res = llm.create_chat_completion(messages=emergency_msgs, **call_kwargs)
+                        elif has_image and any(k in err_str for k in ["image", "list", "content", "dict", "str", "iterable"]):
+                            from shiro.vision.bridge import extract_local_image_text_and_info
+                            local_obs = extract_local_image_text_and_info(all_images) or "Gambar visual terlampir"
+                            text_user = f"[Pengamatan Gambar Visual: {local_obs}]\n{raw_user_typed}"
+                            msgs[-1] = {"role": "user", "content": text_user}
+                            res = llm.create_chat_completion(messages=msgs, **call_kwargs)
+                        else:
+                            raise inf_err
+
+                raw_reply = (res['choices'][0]['message'].get('content', '') or '').strip()
+
+            round_calls, _ = _parse_agent_tool_calls(raw_reply)
+            research_calls = [tc for tc in round_calls if tc.get("name") in ("web_search", "open_url", "screenshot")]
+            if research_calls and react_round < 2:
+                obs_chunks: List[str] = []
+                agg_sources: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("sources") or [])
+                agg_images: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("web_images") or [])
+                last_img_url = (prep.get("agent_action_data") or {}).get("image_url")
+                for tc in research_calls[:3]:
+                    tool_res = _execute_live_research_tool(tc)
+                    obs_chunks.append(f"[{tool_res['title']}]\n{tool_res['observation']}")
+                    for src_it in tool_res.get("sources") or []:
+                        if src_it.get("url") and not any(s.get("url") == src_it["url"] for s in agg_sources):
+                            agg_sources.append(src_it)
+                    for im_it in tool_res.get("web_images") or []:
+                        if im_it.get("url") and not any(im.get("url") == im_it["url"] for im in agg_images):
+                            agg_images.append(im_it)
+                    if tool_res.get("image_url"):
+                        last_img_url = tool_res["image_url"]
+                    prep.setdefault("agent_steps", []).append({
+                        "id": f"react_{react_round}_{tc.get('name')}",
+                        "title": tool_res["title"],
+                        "status": tool_res["status"],
+                        "feedback": f"Retrieved {len(tool_res.get('sources') or [])} source(s) & {len(tool_res.get('web_images') or [])} image(s).",
+                    })
+                prep["agent_action_data"] = {
+                    "tool": research_calls[0].get("name") if research_calls[0].get("name") != "web_search" else "multi_source_web_research",
+                    "description": f"Live browser search round {react_round + 1}",
+                    "observation": "\n\n".join(obs_chunks),
+                    "details": {"sources": agg_sources, "images": agg_images, "image_url": last_img_url},
+                    "image_url": last_img_url,
+                    "sources": agg_sources,
+                    "web_images": agg_images,
+                    "execution_time_sec": round(time.perf_counter() - t_round, 2),
+                    "status": "success" if obs_chunks else "failed",
+                }
+                msgs = list(msgs) + [
+                    {"role": "assistant", "content": raw_reply},
+                    {
+                        "role": "user",
+                        "content": (
+                            "[HASIL PENELUSURAN BROWSER/WEB REAL-TIME]:\n"
+                            + "\n\n".join(obs_chunks)
+                            + "\n\nJawab pertanyaan Kakak secara langsung, lengkap, dan akurat menggunakan hasil di atas, sertakan link sumber `[Judul](URL)` serta gambar relevan `![Judul](url)` bila tersedia."
+                        ),
+                    },
+                ]
+                continue
+            break
 
         with state.llm_lock:
-            res = None
-            if use_fast_text:
-                prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
-                comp_kwargs = _build_completion_kwargs(call_kwargs, stream=False)
-                try:
-                    if state.last_turn_had_image and hasattr(llm, "reset"):
-                        llm.reset()
-                        state.last_turn_had_image = False
-                    comp_res = llm.create_completion(prompt=prompt_str, **comp_kwargs)
-                except Exception as e_fast_first:
-                    comp_res = None
-                    err_fast_str = str(e_fast_first).lower()
-                    if "exceed" in err_fast_str and ("context" in err_fast_str or "token" in err_fast_str or "window" in err_fast_str):
-                        try:
-                            em_prompt = _format_chatml_prompt(
-                                [{"role": "system", "content": system_prompt[:1200]}, user_turn_msg],
-                                disable_thinking=disable_thinking
-                            )
-                            comp_res = llm.create_completion(prompt=em_prompt, **comp_kwargs)
-                        except Exception:
-                            comp_res = None
-                    elif hasattr(llm, "reset"):
-                        try:
-                            llm.reset()
-                            comp_res = llm.create_completion(prompt=prompt_str, **comp_kwargs)
-                        except Exception:
-                            comp_res = None
-                    if comp_res is None:
-                        print(f"[Inference Fast-Path Fallback]: {e_fast_first}")
-
-                if comp_res is not None:
-                    comp_choice = (comp_res.get("choices") or [{}])[0] if isinstance(comp_res, dict) else {}
-                    res = {
-                        "choices": [{
-                            "message": {"content": comp_choice.get("text", "") or ""},
-                            "finish_reason": comp_choice.get("finish_reason", "stop"),
-                        }],
-                        "usage": comp_res.get("usage", {}) if isinstance(comp_res, dict) else {},
-                    }
-
-            if res is None:
-                try:
-                    if tools:
-                        try:
-                            res = llm.create_chat_completion(
-                                messages=msgs,
-                                tools=tools,
-                                tool_choice=tool_choice,
-                                **call_kwargs
-                            )
-                        except (TypeError, Exception):
-                            res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                    else:
-                        res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                    if has_image:
-                        state.last_turn_had_image = True
-                except Exception as inf_err:
-                    err_str = str(inf_err).lower()
-                    if "exceed" in err_str and ("context" in err_str or "token" in err_str or "window" in err_str):
-                        emergency_msgs = [{"role": "system", "content": system_prompt[:1200]}]
-                        emergency_msgs.append(user_turn_msg)
-                        res = llm.create_chat_completion(messages=emergency_msgs, **call_kwargs)
-                    elif has_image and any(k in err_str for k in ["image", "list", "content", "dict", "str", "iterable"]):
-                        from shiro.vision.bridge import extract_local_image_text_and_info
-                        local_obs = extract_local_image_text_and_info(all_images) or "Gambar visual terlampir"
-                        text_user = f"[Pengamatan Gambar Visual: {local_obs}]\n{raw_user_typed}"
-                        msgs[-1] = {"role": "user", "content": text_user}
-                        res = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                    else:
-                        raise inf_err
-
-            raw_reply = res['choices'][0]['message'].get('content', '') or ''
-            raw_reply = raw_reply.strip()
-
             grounding_info = {"checked": False, "ungrounded": [], "regenerated": False}
             if has_image and raw_reply:
                 from shiro.memory.gating import find_ungrounded_domains
@@ -1749,8 +2006,6 @@ def stream_shiro_reply(
         )
         for st_step in prep.get("agent_steps") or []:
             yield {"type": "agent_trace_step", "step": st_step}
-        if prep.get("generated_artifacts"):
-            yield {"type": "artifacts", "artifacts": prep["generated_artifacts"]}
         if prep.get("agent_action_data"):
             yield {"type": "agent_action", "agent_action": prep["agent_action_data"]}
 
@@ -1786,25 +2041,16 @@ def stream_shiro_reply(
         # Kirim heartbeat ping awal agar Cloudflare Tunnel tetap hidup
         yield {"type": "ping"}
 
-        # Serialisasi akses ke llama_context via global lock (mencegah GGML_ASSERT / SIGABRT paralel)
-        # Sambil menunggu lock, terus kirim heartbeat ping berkala agar koneksi tunnel tidak terputus
-        lock_acquired = state.llm_lock.acquire(blocking=False)
-        if not lock_acquired:
-            yield {"type": "status", "status": "Shiro sedang menyelesaikan proses sebelumnya, mohon tunggu sebentar..."}
-            wait_last_ping = time.perf_counter()
-            while not lock_acquired:
-                lock_acquired = state.llm_lock.acquire(timeout=min(0.5, ping_interval))
-                if not lock_acquired:
-                    now_wait = time.perf_counter()
-                    if now_wait - wait_last_ping >= ping_interval:
-                        yield {"type": "ping"}
-                        wait_last_ping = now_wait
-
-        # Jalankan inferensi llama.cpp pada worker thread terpisah agar generator SSE bisa terus
-        # memancarkan ': ping' setiap beberapa detik selama prompt prefill (mencegah timeout 100s Cloudflare)
-        chunk_queue: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
-        cancel_event = threading.Event()
-        worker_started = False
+        from shiro.llm.cleaner import (
+            is_user_input_foreign_or_english,
+            contains_english_segments,
+            translate_to_indonesian_fast,
+            replace_inline_english_idioms,
+            is_predominantly_english,
+        )
+        should_guard_id = bool(raw_user_typed and not is_user_input_foreign_or_english(raw_user_typed) and api_version != "v3")
+        lyra_tier_info = prep.get("lyra_tier_info")
+        lyra_tier_id = lyra_tier_info["id"] if lyra_tier_info else "high"
         has_image_turn = bool(prep.get("has_image"))
         tools_turn = prep.get("tools")
         tool_choice_turn = prep.get("tool_choice")
@@ -1813,172 +2059,184 @@ def stream_shiro_reply(
         use_fast_text = _should_use_fast_text_completion(llm, has_image_turn, tools_turn, active_model_path)
         path_used = "fast_chatml" if use_fast_text else "chat_handler"
 
-        def _llm_stream_worker():
-            nonlocal path_used
-            stream_iter = None
-            try:
-                fast_succeeded = False
-                if use_fast_text:
-                    prompt_str = _format_chatml_prompt(msgs, disable_thinking=disable_thinking)
-                    stream_comp_kwargs = _build_completion_kwargs(call_kwargs, stream=True)
-                    emitted_fast = False
-                    try:
-                        if state.last_turn_had_image and hasattr(llm, "reset"):
-                            llm.reset()
-                            state.last_turn_had_image = False
-                        stream_iter = llm.create_completion(prompt=prompt_str, **stream_comp_kwargs)
-                        for ch in stream_iter:
-                            if cancel_event.is_set():
-                                break
-                            txt = ((ch.get("choices") or [{}])[0].get("text", "") or "") if isinstance(ch, dict) else ""
-                            if txt:
-                                emitted_fast = True
-                                chunk_queue.put(("chunk", {"choices": [{"delta": {"content": txt}}]}))
-                        fast_succeeded = True
-                    except Exception as e_fast_stream:
-                        if cancel_event.is_set():
-                            return
-                        if stream_iter is not None and hasattr(stream_iter, "close"):
-                            try:
-                                stream_iter.close()
-                            except Exception:
-                                pass
-                        stream_iter = None
-                        if not emitted_fast and hasattr(llm, "reset"):
-                            try:
+        thought_acc = ""
+        thought_duration_sec: Optional[float] = None
+        t_first_token = None
+        max_clause_len = 48 if lyra_tier_id == "low" else 80
+        any_visible_streamed = False
+
+        def _flush_stream_seg(seg: str) -> str:
+            if not seg or not seg.strip():
+                return seg
+            if should_guard_id and "```" not in seg and contains_english_segments(seg):
+                replaced = replace_inline_english_idioms(seg)
+                if lyra_tier_id != "low" and is_predominantly_english(replaced.strip()):
+                    lead_ws = re.match(r'^\s*', replaced).group(0)
+                    trail_ws = re.search(r'\s*$', replaced).group(0)
+                    tr = translate_to_indonesian_fast(replaced.strip())
+                    if tr and tr.strip():
+                        return lead_ws + tr.strip() + trail_ws
+                return replaced
+            return seg
+
+        for react_round in range(3):
+            if react_round > 0 and any_visible_streamed:
+                yield {"type": "reset_stream"}
+                any_visible_streamed = False
+
+            round_raw_reply = ""
+            # Serialisasi akses ke llama_context via global lock sambil menjaga SSE heartbeat tetap hidup
+            lock_acquired = state.llm_lock.acquire(blocking=False)
+            if not lock_acquired:
+                yield {"type": "status", "status": "Shiro sedang menyelesaikan proses sebelumnya, mohon tunggu sebentar..."}
+                wait_last_ping = time.perf_counter()
+                while not lock_acquired:
+                    lock_acquired = state.llm_lock.acquire(timeout=min(0.5, ping_interval))
+                    if not lock_acquired:
+                        now_wait = time.perf_counter()
+                        if now_wait - wait_last_ping >= ping_interval:
+                            yield {"type": "ping"}
+                            wait_last_ping = now_wait
+
+            chunk_queue: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
+            cancel_event = threading.Event()
+            worker_started = False
+            round_msgs = list(msgs)
+
+            def _llm_stream_worker():
+                nonlocal path_used
+                stream_iter = None
+                try:
+                    fast_succeeded = False
+                    if use_fast_text:
+                        prompt_str = _format_chatml_prompt(round_msgs, disable_thinking=disable_thinking)
+                        stream_comp_kwargs = _build_completion_kwargs(call_kwargs, stream=True)
+                        emitted_fast = False
+                        try:
+                            if state.last_turn_had_image and hasattr(llm, "reset"):
                                 llm.reset()
-                                stream_iter = llm.create_completion(prompt=prompt_str, **stream_comp_kwargs)
-                                for ch in stream_iter:
-                                    if cancel_event.is_set():
-                                        break
-                                    txt = ((ch.get("choices") or [{}])[0].get("text", "") or "") if isinstance(ch, dict) else ""
-                                    if txt:
-                                        chunk_queue.put(("chunk", {"choices": [{"delta": {"content": txt}}]}))
-                                fast_succeeded = True
-                            except Exception as e_fast_retry:
+                                state.last_turn_had_image = False
+                            stream_iter = llm.create_completion(prompt=prompt_str, **stream_comp_kwargs)
+                            for ch in stream_iter:
                                 if cancel_event.is_set():
-                                    return
-                                print(f"[Inference Fast-Path Fallback]: {e_fast_retry}")
-                        else:
-                            print(f"[Inference Fast-Path Fallback]: {e_fast_stream}")
-                        if not fast_succeeded:
-                            path_used = "chat_handler"
+                                    break
+                                txt = ((ch.get("choices") or [{}])[0].get("text", "") or "") if isinstance(ch, dict) else ""
+                                if txt:
+                                    emitted_fast = True
+                                    chunk_queue.put(("chunk", {"choices": [{"delta": {"content": txt}}]}))
+                            fast_succeeded = True
+                        except Exception as e_fast_stream:
+                            if cancel_event.is_set():
+                                return
                             if stream_iter is not None and hasattr(stream_iter, "close"):
                                 try:
                                     stream_iter.close()
                                 except Exception:
                                     pass
                             stream_iter = None
+                            if not emitted_fast and hasattr(llm, "reset"):
+                                try:
+                                    llm.reset()
+                                    stream_iter = llm.create_completion(prompt=prompt_str, **stream_comp_kwargs)
+                                    for ch in stream_iter:
+                                        if cancel_event.is_set():
+                                            break
+                                        txt = ((ch.get("choices") or [{}])[0].get("text", "") or "") if isinstance(ch, dict) else ""
+                                        if txt:
+                                            chunk_queue.put(("chunk", {"choices": [{"delta": {"content": txt}}]}))
+                                    fast_succeeded = True
+                                except Exception as e_fast_retry:
+                                    if cancel_event.is_set():
+                                        return
+                                    print(f"[Inference Fast-Path Fallback]: {e_fast_retry}")
+                            else:
+                                print(f"[Inference Fast-Path Fallback]: {e_fast_stream}")
+                            if not fast_succeeded:
+                                path_used = "chat_handler"
+                                if stream_iter is not None and hasattr(stream_iter, "close"):
+                                    try:
+                                        stream_iter.close()
+                                    except Exception:
+                                        pass
+                                stream_iter = None
 
-                if not fast_succeeded:
-                    stream_kwargs = dict(call_kwargs)
-                    stream_kwargs["stream"] = True
-                    try:
-                        if tools_turn:
-                            try:
-                                stream_iter = llm.create_chat_completion(
-                                    messages=msgs,
-                                    tools=tools_turn,
-                                    tool_choice=tool_choice_turn,
-                                    **stream_kwargs
-                                )
-                            except (TypeError, Exception):
-                                stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
-                        else:
-                            stream_iter = llm.create_chat_completion(messages=msgs, **stream_kwargs)
-                        if has_image_turn:
-                            state.last_turn_had_image = True
+                    if not fast_succeeded:
+                        stream_kwargs = dict(call_kwargs)
+                        stream_kwargs["stream"] = True
+                        try:
+                            if tools_turn:
+                                try:
+                                    stream_iter = llm.create_chat_completion(
+                                        messages=round_msgs,
+                                        tools=tools_turn,
+                                        tool_choice=tool_choice_turn,
+                                        **stream_kwargs
+                                    )
+                                except (TypeError, Exception):
+                                    stream_iter = llm.create_chat_completion(messages=round_msgs, **stream_kwargs)
+                            else:
+                                stream_iter = llm.create_chat_completion(messages=round_msgs, **stream_kwargs)
+                            if has_image_turn:
+                                state.last_turn_had_image = True
 
-                        for ch in stream_iter:
+                            for ch in stream_iter:
+                                if cancel_event.is_set():
+                                    break
+                                chunk_queue.put(("chunk", ch))
+                        except Exception as e_stream_inner:
                             if cancel_event.is_set():
-                                break
-                            chunk_queue.put(("chunk", ch))
-                    except Exception as e_stream_inner:
-                        if cancel_event.is_set():
-                            return
-                        print(f"[Inference Stream Fallback]: {e_stream_inner}")
-                        # Fallback jika model/wrapper tidak mendukung generator stream=True
-                        if tools_turn:
-                            try:
-                                res_sync = llm.create_chat_completion(
-                                    messages=msgs,
-                                    tools=tools_turn,
-                                    tool_choice=tool_choice_turn,
-                                    **call_kwargs
-                                )
-                            except (TypeError, Exception):
-                                res_sync = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                        else:
-                            res_sync = llm.create_chat_completion(messages=msgs, **call_kwargs)
-                        if has_image_turn:
-                            state.last_turn_had_image = True
-                        if not cancel_event.is_set():
-                            chunk_queue.put(("sync_result", res_sync))
-            except Exception as e_worker:
-                if not cancel_event.is_set():
-                    chunk_queue.put(("error", e_worker))
-            finally:
-                if stream_iter is not None and hasattr(stream_iter, "close"):
+                                return
+                            print(f"[Inference Stream Fallback]: {e_stream_inner}")
+                            if tools_turn:
+                                try:
+                                    res_sync = llm.create_chat_completion(
+                                        messages=round_msgs,
+                                        tools=tools_turn,
+                                        tool_choice=tool_choice_turn,
+                                        **call_kwargs
+                                    )
+                                except (TypeError, Exception):
+                                    res_sync = llm.create_chat_completion(messages=round_msgs, **call_kwargs)
+                            else:
+                                res_sync = llm.create_chat_completion(messages=round_msgs, **call_kwargs)
+                            if has_image_turn:
+                                state.last_turn_had_image = True
+                            if not cancel_event.is_set():
+                                chunk_queue.put(("sync_result", res_sync))
+                except Exception as e_worker:
+                    if not cancel_event.is_set():
+                        chunk_queue.put(("error", e_worker))
+                finally:
+                    if stream_iter is not None and hasattr(stream_iter, "close"):
+                        try:
+                            stream_iter.close()
+                        except Exception:
+                            pass
                     try:
-                        stream_iter.close()
-                    except Exception:
+                        state.llm_lock.release()
+                    except RuntimeError:
                         pass
-                try:
-                    state.llm_lock.release()
-                except RuntimeError:
-                    pass
-                chunk_queue.put(("end", None))
+                    chunk_queue.put(("end", None))
 
-        try:
-            worker_thread = threading.Thread(
-                target=_llm_stream_worker,
-                name="shiro-llm-stream-worker",
-                daemon=True
-            )
-            worker_thread.start()
-            worker_started = True
-
-            from shiro.llm.cleaner import (
-                is_user_input_foreign_or_english,
-                contains_english_segments,
-                translate_to_indonesian_fast,
-                replace_inline_english_idioms,
-                is_predominantly_english,
-            )
-            should_guard_id = bool(raw_user_typed and not is_user_input_foreign_or_english(raw_user_typed) and api_version != "v3")
-            lyra_tier_info = prep.get("lyra_tier_info")
-            lyra_tier_id = lyra_tier_info["id"] if lyra_tier_info else "high"
             clause_buf = ""
             streamed_reply_acc = ""
-
-            def _flush_stream_seg(seg: str) -> str:
-                if not seg or not seg.strip():
-                    return seg
-                if should_guard_id and "```" not in seg and contains_english_segments(seg):
-                    replaced = replace_inline_english_idioms(seg)
-                    # Di mode Low atau kalimat campuran istilah teknis, hindari blocking HTTP translate tiap baris
-                    if lyra_tier_id != "low" and is_predominantly_english(replaced.strip()):
-                        lead_ws = re.match(r'^\s*', replaced).group(0)
-                        trail_ws = re.search(r'\s*$', replaced).group(0)
-                        tr = translate_to_indonesian_fast(replaced.strip())
-                        if tr and tr.strip():
-                            return lead_ws + tr.strip() + trail_ws
-                    return replaced
-                return seg
-
+            agent_tag_carry = ""
             in_think = False
             thinking_status_sent = False
-            thought_acc = ""
             thought_started_at: Optional[float] = None
-            thought_duration_sec: Optional[float] = None
             tag_carry = ""
-            t_first_token = None
-            max_clause_len = 48 if lyra_tier_id == "low" else 80
 
             def _emit_visible_token(vis_tok: str):
-                nonlocal clause_buf, streamed_reply_acc, last_ping_time, t_first_token
-                if not vis_tok:
+                nonlocal clause_buf, streamed_reply_acc, last_ping_time, t_first_token, agent_tag_carry, any_visible_streamed
+                if not vis_tok and not agent_tag_carry:
                     return []
+                ready_vis, agent_tag_carry = _split_partial_agent_tag(agent_tag_carry + vis_tok)
+                if ready_vis and "AGENT_TOOL:" in ready_vis:
+                    _, ready_vis = _parse_agent_tool_calls(ready_vis)
+                if not ready_vis:
+                    return []
+                vis_tok = ready_vis
+
                 out_events = []
                 if not streamed_reply_acc and not clause_buf:
                     if not vis_tok.strip():
@@ -1987,13 +2245,15 @@ def stream_shiro_reply(
                 if t_first_token is None and vis_tok.strip():
                     t_first_token = time.perf_counter()
 
-                if not should_guard_id or (raw_reply.count("```") % 2 == 1):
+                if not should_guard_id or (round_raw_reply.count("```") % 2 == 1):
                     if clause_buf:
                         flushed = _flush_stream_seg(clause_buf)
                         streamed_reply_acc += flushed
+                        any_visible_streamed = True
                         out_events.append({"type": "token", "token": flushed})
                         clause_buf = ""
                     streamed_reply_acc += vis_tok
+                    any_visible_streamed = True
                     out_events.append({"type": "token", "token": vis_tok})
                     last_ping_time = time.perf_counter()
                 else:
@@ -2006,6 +2266,7 @@ def stream_shiro_reply(
                         if to_flush.count("*") % 2 == 0:
                             flushed = _flush_stream_seg(to_flush)
                             streamed_reply_acc += flushed
+                            any_visible_streamed = True
                             out_events.append({"type": "token", "token": flushed})
                             clause_buf = tail
                             last_ping_time = time.perf_counter()
@@ -2016,18 +2277,21 @@ def stream_shiro_reply(
                             if head_part.count("*") % 2 == 0:
                                 flushed = _flush_stream_seg(head_part)
                                 streamed_reply_acc += flushed
+                                any_visible_streamed = True
                                 out_events.append({"type": "token", "token": flushed})
                                 clause_buf = tail_part
                                 last_ping_time = time.perf_counter()
                         elif is_first_emit and re.search(r'\s$', clause_buf):
                             flushed = _flush_stream_seg(clause_buf)
                             streamed_reply_acc += flushed
+                            any_visible_streamed = True
                             out_events.append({"type": "token", "token": flushed})
                             clause_buf = ""
                             last_ping_time = time.perf_counter()
                     elif len(clause_buf) >= buf_cap:
                         flushed = _flush_stream_seg(clause_buf)
                         streamed_reply_acc += flushed
+                        any_visible_streamed = True
                         out_events.append({"type": "token", "token": flushed})
                         clause_buf = ""
                         last_ping_time = time.perf_counter()
@@ -2059,19 +2323,21 @@ def stream_shiro_reply(
                         if m_close:
                             th_seg = cur[:m_close.start()]
                             if th_seg:
+                                if thought_acc and not thought_acc.endswith("\n") and react_round > 0:
+                                    thought_acc += "\n"
                                 thought_acc += th_seg
                                 events_out.append({"type": "thought", "token": th_seg})
                             in_think = False
                             dur_s = round(max(0.1, time.perf_counter() - (thought_started_at or time.perf_counter())), 1)
-                            thought_duration_sec = dur_s
-                            events_out.append({"type": "thought_done", "duration_sec": dur_s})
+                            thought_duration_sec = round((thought_duration_sec or 0.0) + dur_s, 1) if react_round > 0 else dur_s
+                            events_out.append({"type": "thought_done", "duration_sec": thought_duration_sec})
                             events_out.append({
                                 "type": "agent_trace_step",
                                 "step": {
                                     "id": "reason",
                                     "title": "Reasoning & Solution Synthesis",
                                     "status": "running",
-                                    "feedback": f"English analysis complete ({dur_s}s) — streaming response...",
+                                    "feedback": f"English analysis complete ({thought_duration_sec}s) — streaming response...",
                                 },
                             })
                             cur = cur[m_close.end():]
@@ -2085,78 +2351,182 @@ def stream_shiro_reply(
                             cur = ""
                 return events_out
 
-            while True:
-                try:
-                    ev_kind, ev_val = chunk_queue.get(timeout=ping_interval)
-                except queue.Empty:
-                    yield {"type": "ping"}
-                    last_ping_time = time.perf_counter()
-                    continue
+            try:
+                worker_thread = threading.Thread(
+                    target=_llm_stream_worker,
+                    name="shiro-llm-stream-worker",
+                    daemon=True
+                )
+                worker_thread.start()
+                worker_started = True
 
-                if ev_kind == "end":
-                    if tag_carry:
-                        for ev_item in _process_stream_piece(tag_carry):
-                            yield ev_item
-                        tag_carry = ""
-                    if in_think and thought_started_at is not None and thought_duration_sec is None:
-                        thought_duration_sec = round(max(0.1, time.perf_counter() - thought_started_at), 1)
-                        yield {"type": "thought_done", "duration_sec": thought_duration_sec}
-                    break
-                elif ev_kind == "error":
-                    raise ev_val
-                elif ev_kind == "sync_result":
-                    res_sync = ev_val
-                    sync_text = ""
-                    if isinstance(res_sync, dict) and res_sync.get("choices"):
-                        sync_text = res_sync["choices"][0].get("message", {}).get("content", "") or ""
-                    if sync_text:
-                        raw_reply = sync_text
+                while True:
+                    try:
+                        ev_kind, ev_val = chunk_queue.get(timeout=ping_interval)
+                    except queue.Empty:
+                        yield {"type": "ping"}
+                        last_ping_time = time.perf_counter()
+                        continue
+
+                    if ev_kind == "end":
+                        if tag_carry:
+                            for ev_item in _process_stream_piece(tag_carry):
+                                yield ev_item
+                            tag_carry = ""
+                        if agent_tag_carry:
+                            _, leftover_vis = _parse_agent_tool_calls(agent_tag_carry)
+                            agent_tag_carry = ""
+                            if leftover_vis:
+                                clause_buf += leftover_vis
+                        if in_think and thought_started_at is not None and thought_duration_sec is None:
+                            thought_duration_sec = round(max(0.1, time.perf_counter() - thought_started_at), 1)
+                            yield {"type": "thought_done", "duration_sec": thought_duration_sec}
+                        break
+                    elif ev_kind == "error":
+                        raise ev_val
+                    elif ev_kind == "sync_result":
+                        res_sync = ev_val
+                        sync_text = ""
+                        if isinstance(res_sync, dict) and res_sync.get("choices"):
+                            sync_text = res_sync["choices"][0].get("message", {}).get("content", "") or ""
+                        if sync_text:
+                            round_raw_reply = sync_text
+                            if not is_reasoning_enabled:
+                                for ev_item in _process_stream_piece(sync_text):
+                                    yield ev_item
+                            else:
+                                _, vis_sync = _parse_agent_tool_calls(sync_text)
+                                if vis_sync:
+                                    if t_first_token is None:
+                                        t_first_token = time.perf_counter()
+                                    streamed_reply_acc = vis_sync
+                                    any_visible_streamed = True
+                                    yield {"type": "token", "token": vis_sync}
+                        continue
+
+                    chunk = ev_val
+                    choices = chunk.get("choices", []) if isinstance(chunk, dict) else []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    token = delta.get("content", "")
+                    if token:
+                        round_raw_reply += token
                         if not is_reasoning_enabled:
-                            for ev_item in _process_stream_piece(sync_text):
-                                yield ev_item
+                            ready_piece, tag_carry = _split_partial_think_suffix(tag_carry + token)
+                            if ready_piece:
+                                for ev_item in _process_stream_piece(ready_piece):
+                                    yield ev_item
                         else:
-                            if t_first_token is None:
-                                t_first_token = time.perf_counter()
-                            streamed_reply_acc = sync_text
-                            yield {"type": "token", "token": sync_text}
-                    continue
-
-                chunk = ev_val
-                choices = chunk.get("choices", []) if isinstance(chunk, dict) else []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta", {})
-                token = delta.get("content", "")
-                if token:
-                    raw_reply += token
-                    if not is_reasoning_enabled:
-                        ready_piece, tag_carry = _split_partial_think_suffix(tag_carry + token)
-                        if ready_piece:
-                            for ev_item in _process_stream_piece(ready_piece):
+                            for ev_item in _emit_visible_token(token):
                                 yield ev_item
-                    else:
-                        for ev_item in _emit_visible_token(token):
-                            yield ev_item
 
-                now = time.perf_counter()
-                if now - last_ping_time > ping_interval:
-                    yield {"type": "ping"}
-                    last_ping_time = now
+                    now = time.perf_counter()
+                    if now - last_ping_time > ping_interval:
+                        yield {"type": "ping"}
+                        last_ping_time = now
 
-            if clause_buf:
-                flushed = _flush_stream_seg(clause_buf)
-                streamed_reply_acc += flushed
-                yield {"type": "token", "token": flushed}
-                clause_buf = ""
+                if clause_buf:
+                    _, clean_tail = _parse_agent_tool_calls(clause_buf)
+                    if clean_tail:
+                        flushed = _flush_stream_seg(clean_tail)
+                        streamed_reply_acc += flushed
+                        any_visible_streamed = True
+                        yield {"type": "token", "token": flushed}
+                    clause_buf = ""
+            finally:
+                cancel_event.set()
+                if lock_acquired and not worker_started:
+                    try:
+                        state.llm_lock.release()
+                    except RuntimeError:
+                        pass
+
+            round_calls, _ = _parse_agent_tool_calls(round_raw_reply)
+            research_calls = [tc for tc in round_calls if tc.get("name") in ("web_search", "open_url", "screenshot")]
+            if research_calls and react_round < 2:
+                obs_chunks: List[str] = []
+                agg_sources: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("sources") or [])
+                agg_images: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("web_images") or [])
+                last_img_url = (prep.get("agent_action_data") or {}).get("image_url")
+                t_react = time.perf_counter()
+                for idx_rc, tc in enumerate(research_calls[:3]):
+                    step_id = f"react_{react_round}_{idx_rc}_{tc.get('name')}"
+                    step_label = (
+                        f"Searching Browser ({(tc.get('args') or {}).get('query', '')[:36]})"
+                        if tc.get("name") == "web_search"
+                        else f"Opening Webpage ({(tc.get('args') or {}).get('url', '')[:36]})"
+                    )
+                    yield {
+                        "type": "agent_trace_step",
+                        "step": {
+                            "id": step_id,
+                            "title": step_label,
+                            "status": "running",
+                            "feedback": "Fetching live browser sources & images...",
+                        },
+                    }
+                    yield {"type": "status", "status": "Menelusuri informasi & gambar di browser..."}
+                    tool_res = _execute_live_research_tool(tc)
+                    obs_chunks.append(f"[{tool_res['title']}]\n{tool_res['observation']}")
+                    for src_it in tool_res.get("sources") or []:
+                        if src_it.get("url") and not any(s.get("url") == src_it["url"] for s in agg_sources):
+                            agg_sources.append(src_it)
+                    for im_it in tool_res.get("web_images") or []:
+                        if im_it.get("url") and not any(im.get("url") == im_it["url"] for im in agg_images):
+                            agg_images.append(im_it)
+                    if tool_res.get("image_url"):
+                        last_img_url = tool_res["image_url"]
+                    done_step = {
+                        "id": step_id,
+                        "title": tool_res["title"],
+                        "status": tool_res["status"],
+                        "feedback": f"Found {len(tool_res.get('sources') or [])} source(s) & {len(tool_res.get('web_images') or [])} image(s).",
+                    }
+                    prep.setdefault("agent_steps", []).append(done_step)
+                    yield {"type": "agent_trace_step", "step": done_step}
+
+                prep["agent_action_data"] = {
+                    "tool": research_calls[0].get("name") if research_calls[0].get("name") != "web_search" else "multi_source_web_research",
+                    "description": f"Live browser search round {react_round + 1}",
+                    "observation": "\n\n".join(obs_chunks),
+                    "details": {"sources": agg_sources, "images": agg_images, "image_url": last_img_url},
+                    "image_url": last_img_url,
+                    "sources": agg_sources,
+                    "web_images": agg_images,
+                    "execution_time_sec": round(time.perf_counter() - t_react, 2),
+                    "status": "success" if obs_chunks else "failed",
+                }
+                yield {"type": "agent_action", "agent_action": prep["agent_action_data"]}
+                msgs = list(msgs) + [
+                    {"role": "assistant", "content": round_raw_reply},
+                    {
+                        "role": "user",
+                        "content": (
+                            "[HASIL PENELUSURAN BROWSER/WEB REAL-TIME]:\n"
+                            + "\n\n".join(obs_chunks)
+                            + "\n\nSekarang jawab pertanyaan pengguna secara langsung, lengkap, dan akurat menggunakan fakta, link sumber `[Judul](URL)`, serta gambar relevan `![Judul](url)` di atas."
+                        ),
+                    },
+                ]
+                yield {
+                    "type": "agent_trace_step",
+                    "step": {
+                        "id": "reason",
+                        "title": "Reasoning & Solution Synthesis",
+                        "status": "running",
+                        "feedback": "Synthesizing grounded response from browser sources...",
+                    },
+                }
+                continue
+
+            raw_reply = round_raw_reply
             if should_guard_id and streamed_reply_acc.strip():
-                raw_reply = streamed_reply_acc
-        finally:
-            cancel_event.set()
-            if lock_acquired and not worker_started:
-                try:
-                    state.llm_lock.release()
-                except RuntimeError:
-                    pass
+                _, non_tool_raw = _parse_agent_tool_calls(round_raw_reply)
+                # Pertahankan konten think di thought_acc dan jaga hasil stream yang sudah diterjemahkan bersih
+                if non_tool_raw:
+                    raw_reply = streamed_reply_acc
+            break
 
         t_end = time.perf_counter()
         t_llm_dur = (t_end - t0) * 1000
@@ -2198,10 +2568,10 @@ def stream_shiro_reply(
             final_steps.append(reason_done_step)
 
         for st_emit in final_steps:
-            if st_emit.get("id") in ("reason", "package", "files"):
+            if st_emit.get("id") in ("reason", "package", "files", "render_video"):
                 yield {"type": "agent_trace_step", "step": st_emit}
 
-        if details.get("artifacts") and not prep.get("generated_artifacts"):
+        if details.get("artifacts"):
             yield {"type": "artifacts", "artifacts": details["artifacts"]}
 
         yield {
@@ -2214,7 +2584,7 @@ def stream_shiro_reply(
             "artifacts": details.get("artifacts") or [],
             "active_context_window": details.get("active_context_window"),
             "trace": trace,
-            "agent_action": prep.get("agent_action_data")
+            "agent_action": details.get("agent_action") or prep.get("agent_action_data")
         }
 
     except Exception as e:

@@ -430,38 +430,167 @@ def infer_project_name_from_text(text: str, files: Optional[List[Dict[str, str]]
     return "shiro-project"
 
 
+_NON_PROJECT_SKIP_EXTS = {
+    "zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "7z", "rar",
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg",
+    "mp4", "webm", "mov", "mkv", "avi", "mp3", "wav", "ogg",
+}
+
+
+def extract_requested_filenames(text: str) -> List[str]:
+    """
+    Mengekstrak nama berkas eksplisit yang diminta pengguna (mis. 'app.py', 'index.html', 'login.app'),
+    mengabaikan ekstensi arsip seperti .zip/.tar.gz.
+    """
+    if not text:
+        return []
+    seen = set()
+    requested: List[str] = []
+    for m in _FILENAME_TOKEN_RE.finditer(text):
+        cand = sanitize_filename(m.group(1), allow_subdirs=True)
+        if not cand or not _looks_like_explicit_filename(cand):
+            continue
+        low = cand.lower()
+        ext = low.rsplit(".", 1)[-1] if "." in low else ""
+        if ext in _NON_PROJECT_SKIP_EXTS or low.endswith(".tar.gz") or low.endswith(".tar.bz2") or low.endswith(".tar.xz"):
+            continue
+        if low not in seen:
+            seen.add(low)
+            requested.append(cand)
+    return requested
+
+
+def _file_matches_requested(item: Dict[str, str], requested_filenames: List[str]) -> bool:
+    """Memeriksa apakah item file cocok dengan salah satu nama yang diminta user."""
+    if not requested_filenames:
+        return True
+    fname_low = str(item.get("filename") or "").strip().lower()
+    base_low = str(item.get("basename") or "").strip().lower()
+    for req in requested_filenames:
+        req_low = str(req).strip().lower()
+        req_base = req_low.split("/")[-1]
+        if fname_low == req_low or base_low == req_base or fname_low.endswith("/" + req_low):
+            return True
+    return False
+
+
+def merge_file_collections(
+    *collections: List[Dict[str, str]],
+    requested_filenames: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
+    """
+    Menggabungkan beberapa sumber daftar berkas dengan prioritas urutan argumen
+    (koleksi lebih awal = versi lebih baru / prioritas lebih tinggi).
+    Deduplikasi berdasarkan path maupun basename (bila basename identik, versi terprioritas dipertahankan).
+    """
+    merged: List[Dict[str, str]] = []
+    seen_paths = set()
+    seen_basenames = set()
+
+    for col in collections:
+        if not col:
+            continue
+        for item in col:
+            if not isinstance(item, dict):
+                continue
+            rel = sanitize_filename(item.get("filename") or item.get("basename") or "", allow_subdirs=True)
+            if not rel:
+                continue
+            base = rel.split("/")[-1]
+            norm_path = rel.lower()
+            norm_base = base.lower()
+            if norm_path in seen_paths:
+                continue
+            # Jika sudah ada versi lebih baru dengan basename sama, jangan timpa dengan versi lama
+            if "/" not in rel and norm_base in seen_basenames:
+                continue
+            if norm_base in seen_basenames and any(m.get("basename", "").lower() == norm_base and "/" not in m.get("filename", "") for m in merged):
+                continue
+            seen_paths.add(norm_path)
+            seen_basenames.add(norm_base)
+            merged.append({
+                "filename": rel,
+                "basename": base,
+                "content": str(item.get("content") or ""),
+                "language": str(item.get("language") or "text"),
+            })
+
+    if requested_filenames:
+        matched = [m for m in merged if _file_matches_requested(m, requested_filenames)]
+        if matched:
+            return matched
+
+    return merged
+
+
 def extract_files_from_conversation(
     history: Optional[List[Dict[str, Any]]],
-    max_lookback: int = 10,
+    max_lookback: int = 40,
+    requested_filenames: Optional[List[str]] = None,
 ) -> Tuple[List[Dict[str, str]], Optional[str]]:
     """
-    Mengumpulkan file program terbaru dari riwayat percakapan asisten saat user meminta
-    kompresi (mis. 'jadikan zip semua shiro!!').
+    Mengumpulkan seluruh berkas program terbaru dari riwayat percakapan (baik kode asisten
+    maupun berkas unggahan user) lintas beberapa giliran chat tanpa berhenti di giliran terakhir saja.
+    Jika beberapa giliran mengubah berkas yang sama (mis. turn 1 app.py+index.html, turn 2 index.html),
+    versi TERBARU tiap berkas tetap dipertahankan bersama berkas dari turn sebelumnya.
     """
     if not history:
         return [], None
 
     recent = list(history)[-max_lookback:]
-    collected_by_name: Dict[str, Dict[str, str]] = {}
+    collected_by_norm: Dict[str, Dict[str, str]] = {}
+    seen_basenames = set()
     project_name: Optional[str] = None
 
     for msg in reversed(recent):
-        if msg.get("role") != "assistant":
-            continue
-        content = str(msg.get("content") or "")
-        extracted = extract_named_files_from_markdown(content)
-        if not extracted:
-            continue
-        if not project_name:
-            project_name = infer_project_name_from_text(content, extracted)
-        for item in extracted:
-            # Pertahankan versi terbaru dari berkas dengan nama sama
-            collected_by_name.setdefault(item["filename"], item)
-        # Berhenti pada turn asisten terbaru yang berisi berkas proyek koheren
-        if len(collected_by_name) >= 1:
-            break
+        role = msg.get("role")
+        if role == "assistant":
+            content = str(msg.get("content") or "")
+            extracted = extract_named_files_from_markdown(content)
+            if not extracted:
+                continue
+            if not project_name:
+                cand_proj = infer_project_name_from_text(content, extracted)
+                if cand_proj and cand_proj != "shiro-project":
+                    project_name = cand_proj
+            for item in extracted:
+                norm_path = item["filename"].lower()
+                norm_base = item["basename"].lower()
+                if norm_path in collected_by_norm or norm_base in seen_basenames:
+                    continue
+                collected_by_norm[norm_path] = item
+                seen_basenames.add(norm_base)
+        elif role == "user":
+            # Sertakan berkas yang pernah diunggah user jika teksnya tersedia di metadata
+            docs_meta = msg.get("documents")
+            if isinstance(docs_meta, list):
+                for d in docs_meta:
+                    if not isinstance(d, dict):
+                        continue
+                    d_name = sanitize_filename(d.get("filename") or "", allow_subdirs=True)
+                    d_text = d.get("text")
+                    if d_name and d_text and str(d_text).strip():
+                        norm_path = d_name.lower()
+                        norm_base = d_name.split("/")[-1].lower()
+                        if norm_path not in collected_by_norm and norm_base not in seen_basenames:
+                            collected_by_norm[norm_path] = {
+                                "filename": d_name,
+                                "basename": d_name.split("/")[-1],
+                                "content": str(d_text),
+                                "language": str(d.get("file_type") or "text"),
+                            }
+                            seen_basenames.add(norm_base)
 
-    return list(collected_by_name.values()), project_name
+    all_files = list(collected_by_norm.values())
+    if requested_filenames:
+        matched = [f for f in all_files if _file_matches_requested(f, requested_filenames)]
+        if matched:
+            all_files = matched
+
+    if not project_name and all_files:
+        project_name = infer_project_name_from_text("", all_files)
+
+    return all_files, project_name
 
 
 def create_archive_artifact(

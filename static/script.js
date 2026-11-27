@@ -61,12 +61,17 @@ let triggerTimer;
 // State tracking
 let isGenerating = false;
 let abortController = null;
+let lastGenerationAborted = false;
 let activeSessionId = 'default';
 let attachedDocument = null;
 let attachedImage = null;
 let attachedDocuments = [];
 let attachedImages = [];
 let attachedVideos = [];
+let queuedMessages = [];
+let queuedPanelCollapsed = false;
+let inFlightUploadsCount = 0;
+let activeUploadPromises = [];
 let enableTrainingLogging = true;
 let currentLang = localStorage.getItem('shiro_lang') || 'id';
 let currentUILang = currentLang;
@@ -1290,14 +1295,14 @@ function buildAgentStepsHTML(steps) {
     if (!Array.isArray(steps) || !steps.length) return '';
     return steps.map(st => {
         const statusVal = st.status || 'done';
-        let iconCls = 'ph-check-circle';
-        if (statusVal === 'running') iconCls = 'ph-spinner ph-spin';
-        else if (statusVal === 'failed') iconCls = 'ph-x-circle';
+        let iconHTML = '<i class="ph ph-check-circle"></i>';
+        if (statusVal === 'running') iconHTML = '<span class="ag-spinner-ring" aria-hidden="true"></span>';
+        else if (statusVal === 'failed') iconHTML = '<i class="ph ph-x-circle"></i>';
         const titleStr = escapeHtml(st.title || '');
         const fbStr = st.feedback ? `<div class="ag-trace-step-feedback">${escapeHtml(st.feedback)}</div>` : '';
         return `
             <div class="ag-trace-step status-${escapeHtml(statusVal)}">
-                <span class="ag-trace-step-icon"><i class="ph ${iconCls}"></i></span>
+                <span class="ag-trace-step-icon">${iconHTML}</span>
                 <div class="ag-trace-step-content">
                     <div class="ag-trace-step-title">${titleStr}</div>
                     ${fbStr}
@@ -1333,7 +1338,7 @@ function renderAgentThoughtHTML(meta) {
     }
 
     const iconHtml = isRunning
-        ? '<i class="ph ph-spinner ph-spin"></i>'
+        ? '<span class="ag-spinner-ring" aria-hidden="true"></span>'
         : '<i class="ph ph-sparkle"></i>';
 
     const reasoningHTML = thoughtText ? `
@@ -1464,6 +1469,69 @@ function syncArtifactsInMsg(msgEl, artifacts) {
     } else {
         const actionsBar = container.querySelector('.msg-actions-bar');
         if (actionsBar) container.insertBefore(nextWrap, actionsBar);
+        else container.appendChild(nextWrap);
+    }
+}
+
+function renderWebSourcesHTML(agentActionData) {
+    if (!agentActionData || typeof agentActionData !== 'object') return '';
+    const details = (agentActionData.details && typeof agentActionData.details === 'object') ? agentActionData.details : {};
+    const rawSources = Array.isArray(agentActionData.sources) && agentActionData.sources.length
+        ? agentActionData.sources
+        : (Array.isArray(details.sources) ? details.sources : []);
+    const rawImages = Array.isArray(agentActionData.web_images) && agentActionData.web_images.length
+        ? agentActionData.web_images
+        : (Array.isArray(details.images) ? details.images : []);
+
+    const sources = rawSources.filter(s => s && s.url && /^https?:\/\//i.test(s.url));
+    const webImages = rawImages.filter(im => im && im.url && /^https?:\/\//i.test(im.url));
+    if (!sources.length && !webImages.length) return '';
+
+    const chipsHTML = sources.slice(0, 6).map(s => {
+        const label = escapeHtml(s.title || s.domain || s.url);
+        const safeUrl = escapeHtml(s.url);
+        return `
+            <a class="ag-source-chip" href="${safeUrl}" target="_blank" rel="noopener noreferrer" title="${safeUrl}">
+                <i class="ph ph-link"></i>
+                <span>${label}</span>
+            </a>
+        `;
+    }).join('');
+
+    const imgsHTML = webImages.slice(0, 4).map((im, idx) => {
+        const safeUrl = escapeHtml(im.url);
+        const safeTitle = escapeHtml(im.title || `Gambar Web #${idx + 1}`);
+        const jsUrl = String(im.url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const jsTitle = String(im.title || `Gambar Web #${idx + 1}`).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `
+            <div class="ag-web-img-card" onclick="openImageLightbox('${jsUrl}', '${jsTitle}')" title="${safeTitle}">
+                <img src="${safeUrl}" alt="${safeTitle}" loading="lazy">
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="ag-sources-wrap">
+            ${sources.length ? `<div class="ag-sources-title"><i class="ph ph-globe"></i> <span>Sumber Browser (${sources.length})</span></div><div class="ag-sources-chips">${chipsHTML}</div>` : ''}
+            ${webImages.length ? `<div class="ag-web-images-row">${imgsHTML}</div>` : ''}
+        </div>
+    `;
+}
+
+function syncWebSourcesInMsg(msgEl, agentActionData) {
+    if (!msgEl || !agentActionData) return;
+    const container = msgEl.querySelector('.bubble-container');
+    if (!container) return;
+    const oldWrap = container.querySelector('.ag-sources-wrap');
+    const holder = document.createElement('div');
+    holder.innerHTML = renderWebSourcesHTML(agentActionData);
+    const nextWrap = holder.firstElementChild;
+    if (!nextWrap) return;
+    if (oldWrap) {
+        oldWrap.replaceWith(nextWrap);
+    } else {
+        const anchor = container.querySelector('.ag-artifacts-wrap') || container.querySelector('.msg-actions-bar');
+        if (anchor) container.insertBefore(nextWrap, anchor);
         else container.appendChild(nextWrap);
     }
 }
@@ -1679,10 +1747,17 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     }
 
     let agThoughtHTML = '';
+    let sourcesHTML = '';
     let artifactsHTML = '';
-    if (role === 'assistant' && meta) {
-        agThoughtHTML = renderAgentThoughtHTML(meta);
-        artifactsHTML = renderArtifactsHTML(meta.artifacts);
+    if (role === 'assistant') {
+        if (meta) {
+            agThoughtHTML = renderAgentThoughtHTML(meta);
+            artifactsHTML = renderArtifactsHTML(meta.artifacts);
+        }
+        const actionObj = agentActionData || (meta && meta.agent_action) || null;
+        if (actionObj) {
+            sourcesHTML = renderWebSourcesHTML(actionObj);
+        }
     }
 
     let innerBubbleHTML = '';
@@ -1698,6 +1773,7 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
             ${statusCardHTML}
             ${agThoughtHTML}
             <div class="bubble${!hasText && !attachmentHTML ? ' hidden' : ''}" data-original-text="${escapedContent}">${innerBubbleHTML}</div>
+            ${sourcesHTML}
             ${artifactsHTML}
             ${actionsBarHTML}
         </div>
@@ -1938,39 +2014,224 @@ function showTyping(show, statusText = null) {
     }
 }
 
-// Global input lockout manager
+function hasComposerDraftContent() {
+    const hasText = Boolean(userInput && userInput.value.trim());
+    return Boolean(
+        hasText
+        || attachedImages.length
+        || attachedDocuments.length
+        || attachedVideos.length
+        || inFlightUploadsCount > 0
+    );
+}
+
+function updateComposerSendButton() {
+    if (!sendBtn) return;
+    if (isGenerating) {
+        sendBtn.disabled = false;
+        sendBtn.classList.add('is-queue-mode');
+        if (hasComposerDraftContent()) {
+            sendBtn.classList.remove('hidden');
+            sendBtn.title = currentLang === 'en'
+                ? 'Queue message (sends after Shiro finishes)'
+                : 'Antrekan pesan (dikirim otomatis setelah Shiro selesai)';
+        } else {
+            sendBtn.classList.add('hidden');
+        }
+    } else {
+        sendBtn.disabled = false;
+        sendBtn.classList.remove('hidden', 'is-queue-mode');
+        sendBtn.title = t('send_msg_tooltip') || 'Kirim pesan (Enter)';
+    }
+}
+
+function toggleQueuedMessagesPanel() {
+    queuedPanelCollapsed = !queuedPanelCollapsed;
+    renderQueuedMessagesPanel();
+}
+
+function renderQueuedMessagesPanel() {
+    const panel = document.getElementById('queued-messages-panel');
+    if (!panel) return;
+    if (!Array.isArray(queuedMessages) || queuedMessages.length === 0) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+
+    panel.classList.remove('hidden');
+    panel.classList.toggle('is-collapsed', queuedPanelCollapsed);
+
+    const subtitleTxt = currentLang === 'en'
+        ? 'Sends after agent finishes working'
+        : 'Terkirim otomatis setelah Shiro selesai bekerja';
+
+    const itemsHTML = queuedMessages.map((qItem, idx) => {
+        const qImgs = Array.isArray(qItem.images) ? qItem.images : [];
+        const qDocs = Array.isArray(qItem.documents) ? qItem.documents : [];
+        const qVids = Array.isArray(qItem.videos) ? qItem.videos : [];
+
+        let mediaHTML = '';
+        if (qImgs.length || qDocs.length || qVids.length) {
+            const thumbs = qImgs.slice(0, 2).map((im, ti) => (
+                `<img class="queued-item-thumb" src="${escapeHtml(im.dataUrl)}" alt="img-${ti + 1}">`
+            )).join('');
+            const extraImg = qImgs.length > 2 ? `<span class="queued-item-badge">+${qImgs.length - 2}</span>` : '';
+            const docBadge = qDocs.length ? `<span class="queued-item-badge" title="${qDocs.length} berkas"><i class="ph ph-file-text"></i></span>` : '';
+            const vidBadge = qVids.length ? `<span class="queued-item-badge" title="${qVids.length} video"><i class="ph ph-film-strip"></i></span>` : '';
+            mediaHTML = `<div class="queued-item-media">${thumbs}${extraImg}${docBadge}${vidBadge}</div>`;
+        }
+
+        const attachSummaryParts = [];
+        if (qDocs.length) attachSummaryParts.push(`${qDocs.length} file`);
+        if (qImgs.length) attachSummaryParts.push(`${qImgs.length} img`);
+        if (qVids.length) attachSummaryParts.push(`${qVids.length} video`);
+        const attachMeta = attachSummaryParts.length
+            ? `<div class="queued-item-meta">${escapeHtml(attachSummaryParts.join(' · '))}</div>`
+            : '';
+
+        const textPreview = (qItem.message || '').trim()
+            || (attachSummaryParts.length ? `[${attachSummaryParts.join(' + ')}]` : '(Pesan kosong)');
+
+        return `
+            <div class="queued-item" data-queue-idx="${idx}">
+                ${mediaHTML}
+                <div class="queued-item-body">
+                    <div class="queued-item-text">${escapeHtml(textPreview)}</div>
+                    ${attachMeta}
+                </div>
+                <div class="queued-item-actions">
+                    <button type="button" class="queued-act-btn" onclick="promoteQueuedMessage(${idx})" title="${currentLang === 'en' ? 'Prioritize next' : 'Prioritaskan berikutnya'}">
+                        <i class="ph ph-arrow-right"></i>
+                    </button>
+                    <button type="button" class="queued-act-btn" onclick="editQueuedMessage(${idx})" title="${currentLang === 'en' ? 'Edit in composer' : 'Ubah di kolom input'}">
+                        <i class="ph ph-pencil-simple"></i>
+                    </button>
+                    <button type="button" class="queued-act-btn is-delete" onclick="removeQueuedMessage(${idx})" title="${currentLang === 'en' ? 'Remove from queue' : 'Hapus dari antrean'}">
+                        <i class="ph ph-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    panel.innerHTML = `
+        <div class="queued-panel-header" onclick="toggleQueuedMessagesPanel()">
+            <div class="queued-header-left">
+                <span class="queued-title">Queued Messages</span>
+                <span class="queued-count-badge">${queuedMessages.length}</span>
+                <span class="queued-subtitle">${escapeHtml(subtitleTxt)}</span>
+            </div>
+            <i class="ph ph-caret-down queued-header-caret"></i>
+        </div>
+        <div class="queued-panel-list">${itemsHTML}</div>
+    `;
+}
+
+function promoteQueuedMessage(idx) {
+    if (idx < 0 || idx >= queuedMessages.length) return;
+    if (!isGenerating) {
+        const [item] = queuedMessages.splice(idx, 1);
+        renderQueuedMessagesPanel();
+        sendMessage(item);
+        return;
+    }
+    if (idx > 0) {
+        const [item] = queuedMessages.splice(idx, 1);
+        queuedMessages.unshift(item);
+        renderQueuedMessagesPanel();
+    }
+}
+
+function editQueuedMessage(idx) {
+    if (idx < 0 || idx >= queuedMessages.length) return;
+    const [item] = queuedMessages.splice(idx, 1);
+    renderQueuedMessagesPanel();
+
+    if (userInput) {
+        userInput.value = item.message || '';
+        adjustInputHeight();
+        userInput.focus();
+    }
+    (item.images || []).forEach(im => setAttachedImage(im.dataUrl, im.name));
+    (item.documents || []).forEach(doc => setAttachedDocument(doc));
+    (item.videos || []).forEach(vid => setAttachedVideo(vid));
+    updateComposerSendButton();
+}
+
+function removeQueuedMessage(idx) {
+    if (idx < 0 || idx >= queuedMessages.length) return;
+    queuedMessages.splice(idx, 1);
+    renderQueuedMessagesPanel();
+}
+
+async function enqueueCurrentComposer() {
+    if (typeof activeUploadPromises !== 'undefined' && activeUploadPromises.length > 0) {
+        if (status) {
+            status.textContent = currentLang === 'en'
+                ? 'Waiting for file upload to finish before queueing...'
+                : 'Menunggu proses upload selesai lalu mengantrekan pesan...';
+        }
+        try {
+            await Promise.allSettled([...activeUploadPromises]);
+        } catch (_) {}
+    }
+
+    const msgText = userInput ? userInput.value.trim() : '';
+    if (!msgText && !attachedImages.length && !attachedDocuments.length && !attachedVideos.length) {
+        return;
+    }
+
+    queuedMessages.push({
+        message: msgText,
+        images: [...attachedImages],
+        documents: [...attachedDocuments],
+        videos: [...attachedVideos],
+    });
+    queuedPanelCollapsed = false;
+
+    if (userInput) {
+        userInput.value = '';
+        adjustInputHeight();
+    }
+    clearAttachedImage();
+    clearAttachedDocument();
+    clearAttachedVideo();
+    renderQueuedMessagesPanel();
+    updateComposerSendButton();
+    if (status) {
+        status.textContent = currentLang === 'en'
+            ? `Queued (${queuedMessages.length}) · Sends when Shiro finishes`
+            : `Masuk antrean (${queuedMessages.length}) · Terkirim setelah Shiro selesai`;
+    }
+}
+
+// Global input lock manager (tetap izinkan mengetik, upload file/gambar/video, & antrean selama AI bekerja)
 function setInputLock(locked) {
     if (userInput) {
-        userInput.disabled = locked;
+        userInput.disabled = false;
+        userInput.removeAttribute('readonly');
         if (locked) {
-            userInput.setAttribute('readonly', 'true');
             if (!userInput.dataset.prevPlaceholder) {
                 userInput.dataset.prevPlaceholder = userInput.placeholder;
             }
-            userInput.placeholder = t('status_input_locked') || 'Shiro sedang memproses... Mohon tunggu sebentar...';
+            userInput.placeholder = currentLang === 'en'
+                ? 'Write a follow-up or attach files to queue while Shiro responds...'
+                : 'Ketik pesan lanjutan atau unggah berkas ke antrean selagi Shiro bekerja...';
         } else {
-            userInput.removeAttribute('readonly');
             userInput.placeholder = userInput.dataset.prevPlaceholder || t('input_placeholder') || 'Tulis pesan...';
         }
     }
-    if (uploadDocBtn) uploadDocBtn.disabled = locked;
-    if (uploadImageBtn) uploadImageBtn.disabled = locked;
+    if (uploadDocBtn) uploadDocBtn.disabled = false;
+    if (uploadImageBtn) uploadImageBtn.disabled = false;
     const uploadVideoBtnEl = document.getElementById('upload-video-btn');
-    if (uploadVideoBtnEl) uploadVideoBtnEl.disabled = locked;
-    if (openCameraBtn) openCameraBtn.disabled = locked;
-    if (docFileInput) docFileInput.disabled = locked;
-    if (imageFileInput) imageFileInput.disabled = locked;
+    if (uploadVideoBtnEl) uploadVideoBtnEl.disabled = false;
+    if (openCameraBtn) openCameraBtn.disabled = false;
+    if (docFileInput) docFileInput.disabled = false;
+    if (imageFileInput) imageFileInput.disabled = false;
     const videoFileInputEl = document.getElementById('video-file-input');
-    if (videoFileInputEl) videoFileInputEl.disabled = locked;
+    if (videoFileInputEl) videoFileInputEl.disabled = false;
 
-    if (sendBtn) {
-        sendBtn.disabled = locked;
-        if (locked) {
-            sendBtn.classList.add('hidden');
-        } else {
-            sendBtn.classList.remove('hidden');
-        }
-    }
     const lyraBtn = document.getElementById('lyra-tier-btn');
     if (lyraBtn) {
         lyraBtn.disabled = locked;
@@ -2002,6 +2263,7 @@ function setInputLock(locked) {
             inputSection.classList.remove('is-generating');
         }
     }
+    updateComposerSendButton();
 }
 
 function startTriggerTimer() {
@@ -2026,11 +2288,29 @@ function startTriggerTimer() {
 }
 
 // Send message main function
-async function sendMessage() {
-    const message = userInput.value.trim();
-    if ((!message && !attachedImages.length && !attachedDocuments.length && !attachedVideos.length) || isGenerating) return;
+async function sendMessage(overridePayload = null) {
+    if (!overridePayload && isGenerating) {
+        await enqueueCurrentComposer();
+        return;
+    }
 
-    clearTimeout(triggerTimer); 
+    const message = overridePayload
+        ? String(overridePayload.message || '').trim()
+        : (userInput ? userInput.value.trim() : '');
+    const sendingImages = overridePayload
+        ? [...(overridePayload.images || [])]
+        : [...attachedImages];
+    const sendingDocs = overridePayload
+        ? [...(overridePayload.documents || [])]
+        : [...attachedDocuments];
+    const sendingVideos = overridePayload
+        ? [...(overridePayload.videos || [])]
+        : [...attachedVideos];
+
+    if ((!message && !sendingImages.length && !sendingDocs.length && !sendingVideos.length) || isGenerating) return;
+
+    clearTimeout(triggerTimer);
+    lastGenerationAborted = false;
     isGenerating = true;
     isUserScrolledUp = false;
     if (scrollBottomBtn) {
@@ -2038,19 +2318,21 @@ async function sendMessage() {
         scrollBottomBtn.classList.remove('is-streaming');
     }
     setInputLock(true);
-    
-    const sendingImages = [...attachedImages];
+
     const sendingImage = sendingImages[0] || null;
     const currentImgUrl = sendingImage ? sendingImage.dataUrl : null;
-    const sendingDocs = [...attachedDocuments];
     const sendingDoc = sendingDocs[0] || null;
-    const sendingVideos = [...attachedVideos];
-    
-    userInput.value = '';
-    adjustInputHeight();
-    clearAttachedImage();
-    clearAttachedDocument();
-    clearAttachedVideo();
+
+    if (!overridePayload) {
+        if (userInput) {
+            userInput.value = '';
+            adjustInputHeight();
+        }
+        clearAttachedImage();
+        clearAttachedDocument();
+        clearAttachedVideo();
+    }
+    updateComposerSendButton();
     
     let displayMsg = message;
     if (!displayMsg) {
@@ -2387,10 +2669,18 @@ async function sendMessage() {
                                 createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, evData.pending_action);
                                 status.textContent = 'Menunggu persetujuan Anda...';
                                 updateTypingStatus('Menunggu persetujuan pengguna...');
+                            } else if (evData.type === 'reset_stream') {
+                                streamText = '';
+                                if (assistantTextEl) {
+                                    assistantTextEl.innerHTML = '';
+                                }
                             } else if (evData.type === 'agent_action') {
                                 activeAgentAction = evData.agent_action;
                                 if (activeAgentAction && activeAgentAction.image_url) {
                                     activeAssistantImgUrl = activeAgentAction.image_url;
+                                }
+                                if (assistantMsgEl && activeAgentAction) {
+                                    syncWebSourcesInMsg(assistantMsgEl, activeAgentAction);
                                 }
                                 const toolTitle = activeAgentAction ? (activeAgentAction.tool || 'eksekusi') : 'eksekusi';
                                 updateTypingStatus(`Selesai menjalankan ${toolTitle} · Menyusun jawaban...`);
@@ -2479,6 +2769,10 @@ async function sendMessage() {
                             is_running: false,
                             force_open: false
                         });
+                    }
+                    const finalActionObj = (finalData && finalData.agent_action) || activeAgentAction;
+                    if (finalActionObj) {
+                        syncWebSourcesInMsg(assistantMsgEl, finalActionObj);
                     }
                     if (liveArtifacts && liveArtifacts.length) {
                         syncArtifactsInMsg(assistantMsgEl, liveArtifacts);
@@ -2587,6 +2881,7 @@ async function sendMessage() {
         }
         clearPipelineSimulation();
         if (error.name === 'AbortError') {
+            lastGenerationAborted = true;
             console.log('Request stopped by user');
             showTyping(false);
             status.textContent = t('status_stopped');
@@ -2596,8 +2891,10 @@ async function sendMessage() {
                 if (runningThought) {
                     runningThought.classList.remove('is-running');
                     runningThought.classList.add('is-done');
-                    runningThought.querySelectorAll('.ph-spinner').forEach(ic => {
-                        ic.className = 'ph ph-sparkle';
+                    runningThought.querySelectorAll('.ph-spinner, .ag-spinner-ring').forEach(ic => {
+                        const sp = document.createElement('i');
+                        sp.className = 'ph ph-sparkle';
+                        ic.replaceWith(sp);
                     });
                     const titleSp = runningThought.querySelector('.ag-thought-title');
                     if (titleSp) titleSp.textContent = 'Analysis stopped';
@@ -2634,13 +2931,22 @@ async function sendMessage() {
         }
         clearPipelineSimulation();
         if (pipelineNavDot) pipelineNavDot.classList.add('hidden');
+        const wasAborted = lastGenerationAborted;
         isGenerating = false;
         if (scrollBottomBtn) {
             scrollBottomBtn.classList.remove('is-streaming');
             updateScrollBottomBtnVisibility();
         }
         setInputLock(false);
-        if (userInput) userInput.focus();
+        if (!wasAborted && queuedMessages.length > 0) {
+            const nextQueued = queuedMessages.shift();
+            renderQueuedMessagesPanel();
+            setTimeout(() => {
+                sendMessage(nextQueued);
+            }, 80);
+        } else if (userInput) {
+            userInput.focus();
+        }
     }
 }
 
@@ -2773,6 +3079,10 @@ async function resetMemory() {
         if (data.success) {
             clearAttachedDocument();
             clearAttachedImage();
+            clearAttachedVideo();
+            queuedMessages = [];
+            renderQueuedMessagesPanel();
+            updateComposerSendButton();
             chatMessages.innerHTML = `
                 <div class="message assistant">
                     <div class="avatar shiro-avatar">${renderAvatarContent(aiProfile, 'S')}</div>
@@ -2820,6 +3130,7 @@ function renderMessagesList(messages) {
                     thought_duration_sec: msg.thought_duration_sec ?? null,
                     agent_steps: msg.agent_steps || [],
                     artifacts: msg.artifacts || [],
+                    agent_action: msg.agent_action || null,
                     documents: msg.documents || [],
                     images: msg.images || [],
                     videos: msg.videos || [],
@@ -2998,6 +3309,10 @@ async function createNewSession() {
 
             clearAttachedDocument();
             clearAttachedImage();
+            clearAttachedVideo();
+            queuedMessages = [];
+            renderQueuedMessagesPanel();
+            updateComposerSendButton();
 
             chatMessages.innerHTML = `
                 <div class="message assistant">
@@ -3046,6 +3361,10 @@ async function switchSession(sessionId, force = false) {
 
             clearAttachedDocument();
             clearAttachedImage();
+            clearAttachedVideo();
+            queuedMessages = [];
+            renderQueuedMessagesPanel();
+            updateComposerSendButton();
 
             renderMessagesList(data.messages || []);
             await loadSessions();
@@ -3110,6 +3429,10 @@ async function deleteSessionById(sessionId, title) {
             activeSessionId = data.active_session_id;
             clearAttachedDocument();
             clearAttachedImage();
+            clearAttachedVideo();
+            queuedMessages = [];
+            renderQueuedMessagesPanel();
+            updateComposerSendButton();
 
             renderMessagesList(data.messages || []);
             await loadSessions();
@@ -3918,10 +4241,6 @@ function adjustInputHeight() {
 }
 
 userInput.addEventListener('keydown', (e) => {
-    if (isGenerating) {
-        e.preventDefault();
-        return;
-    }
     if (e.key === 'Enter') {
         if (e.shiftKey) {
             setTimeout(adjustInputHeight, 0);
@@ -3934,6 +4253,7 @@ userInput.addEventListener('keydown', (e) => {
 
 userInput.addEventListener('input', () => {
     adjustInputHeight();
+    updateComposerSendButton();
     clearTimeout(triggerTimer);
     startTriggerTimer();
 });
@@ -4360,6 +4680,7 @@ function renderAttachmentPreviewBars() {
     renderAttachmentChipList(imagePreviewBar, attachedImages, 'image');
     renderAttachmentChipList(docPreviewBar, attachedDocuments, 'document');
     renderAttachmentChipList(document.getElementById('video-preview-bar'), attachedVideos, 'video');
+    updateComposerSendButton();
 }
 
 function setAttachedImage(dataUrl, name = 'visual_input.jpg') {
@@ -4468,72 +4789,90 @@ async function uploadMixedFiles(fileList, { preferVideo = false } = {}) {
     const files = Array.from(fileList || []).filter(Boolean);
     if (files.length === 0) return;
 
-    const localImages = [];
-    const serverFiles = [];
+    const uploadTaskPromise = (async () => {
+        inFlightUploadsCount += 1;
+        updateComposerSendButton();
+        const localImages = [];
+        const serverFiles = [];
 
-    for (const file of files) {
-        if (!preferVideo && isImageFileObj(file)) {
-            localImages.push(file);
-        } else {
-            serverFiles.push(file);
-        }
-    }
-
-    if (localImages.length > 0) {
-        status.textContent = currentLang === 'en'
-            ? `Loading ${localImages.length} image(s)...`
-            : `Memuat ${localImages.length} gambar...`;
-        for (const imgFile of localImages) {
-            try {
-                const dataUrl = await readFileAsDataUrl(imgFile);
-                setAttachedImage(dataUrl, imgFile.name);
-            } catch (err) {
-                console.error('Image read error:', err);
-                showToast(`${imgFile.name}: ${err.message || 'Gagal membaca gambar'}`);
+        for (const file of files) {
+            if (!preferVideo && isImageFileObj(file)) {
+                localImages.push(file);
+            } else {
+                serverFiles.push(file);
             }
         }
-    }
-
-    if (serverFiles.length > 0) {
-        const formData = new FormData();
-        serverFiles.forEach((file) => formData.append('files', file));
-
-        const hasVideo = serverFiles.some((f) => isVideoFileObj(f, preferVideo));
-        status.textContent = hasVideo
-            ? (currentLang === 'en' ? `Extracting frames & files (${serverFiles.length})...` : `Mengekstrak frame video & ${serverFiles.length} berkas...`)
-            : (currentLang === 'en' ? `Reading ${serverFiles.length} file(s)...` : `Membaca ${serverFiles.length} berkas...`);
 
         try {
-            const res = await fetch('/api/upload/documents', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await res.json();
-            if (data.success) {
-                (data.documents || []).forEach((doc) => setAttachedDocument(doc));
-                (data.images || []).forEach((img) => {
-                    if (img && (img.dataUrl || img.data_url)) {
-                        setAttachedImage(img.dataUrl || img.data_url, img.name || img.filename || 'image.png');
+            if (localImages.length > 0) {
+                status.textContent = currentLang === 'en'
+                    ? `Loading ${localImages.length} image(s)...`
+                    : `Memuat ${localImages.length} gambar...`;
+                for (const imgFile of localImages) {
+                    try {
+                        const dataUrl = await readFileAsDataUrl(imgFile);
+                        setAttachedImage(dataUrl, imgFile.name);
+                    } catch (err) {
+                        console.error('Image read error:', err);
+                        showToast(`${imgFile.name}: ${err.message || 'Gagal membaca gambar'}`);
                     }
-                });
-                (data.videos || []).forEach((vid) => setAttachedVideo(vid));
-                if (Array.isArray(data.errors) && data.errors.length > 0) {
-                    const previewErr = data.errors.slice(0, 2).join('; ');
-                    showToast((currentLang === 'en' ? 'Some files could not be read: ' : 'Sebagian berkas gagal dibaca: ') + previewErr);
                 }
-            } else {
-                showToast(`${currentLang === 'en' ? 'Upload failed' : 'Gagal mengunggah berkas'}: ${data.error || 'Format tidak didukung'}`);
             }
-        } catch (err) {
-            console.error('Multi-file upload error:', err);
-            showToast((currentLang === 'en' ? 'Failed to upload files: ' : 'Gagal mengunggah berkas: ') + (err.message || 'Koneksi bermasalah'));
-        }
-    }
 
-    const totalCount = attachedDocuments.length + attachedImages.length + attachedVideos.length;
-    status.textContent = totalCount > 0
-        ? (currentLang === 'en' ? `${totalCount} attachment(s) ready` : `${totalCount} lampiran siap`)
-        : t('status_ready');
+            if (serverFiles.length > 0) {
+                const formData = new FormData();
+                serverFiles.forEach((file) => formData.append('files', file));
+
+                const hasVideo = serverFiles.some((f) => isVideoFileObj(f, preferVideo));
+                status.textContent = hasVideo
+                    ? (currentLang === 'en' ? `Extracting frames & files (${serverFiles.length})...` : `Mengekstrak frame video & ${serverFiles.length} berkas...`)
+                    : (currentLang === 'en' ? `Reading ${serverFiles.length} file(s)...` : `Membaca ${serverFiles.length} berkas...`);
+
+                try {
+                    const res = await fetch('/api/upload/documents', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        (data.documents || []).forEach((doc) => setAttachedDocument(doc));
+                        (data.images || []).forEach((img) => {
+                            if (img && (img.dataUrl || img.data_url)) {
+                                setAttachedImage(img.dataUrl || img.data_url, img.name || img.filename || 'image.png');
+                            }
+                        });
+                        (data.videos || []).forEach((vid) => setAttachedVideo(vid));
+                        if (Array.isArray(data.errors) && data.errors.length > 0) {
+                            const previewErr = data.errors.slice(0, 2).join('; ');
+                            showToast((currentLang === 'en' ? 'Some files could not be read: ' : 'Sebagian berkas gagal dibaca: ') + previewErr);
+                        }
+                    } else {
+                        showToast(`${currentLang === 'en' ? 'Upload failed' : 'Gagal mengunggah berkas'}: ${data.error || 'Format tidak didukung'}`);
+                    }
+                } catch (err) {
+                    console.error('Multi-file upload error:', err);
+                    showToast((currentLang === 'en' ? 'Failed to upload files: ' : 'Gagal mengunggah berkas: ') + (err.message || 'Koneksi bermasalah'));
+                }
+            }
+        } finally {
+            inFlightUploadsCount = Math.max(0, inFlightUploadsCount - 1);
+            const totalCount = attachedDocuments.length + attachedImages.length + attachedVideos.length;
+            if (!isGenerating) {
+                status.textContent = totalCount > 0
+                    ? (currentLang === 'en' ? `${totalCount} attachment(s) ready` : `${totalCount} lampiran siap`)
+                    : t('status_ready');
+            }
+            updateComposerSendButton();
+        }
+    })();
+
+    activeUploadPromises.push(uploadTaskPromise);
+    try {
+        await uploadTaskPromise;
+    } finally {
+        const idxP = activeUploadPromises.indexOf(uploadTaskPromise);
+        if (idxP >= 0) activeUploadPromises.splice(idxP, 1);
+    }
 }
 
 async function uploadDocumentFile(file) {
@@ -4543,7 +4882,6 @@ async function uploadDocumentFile(file) {
 
 if (uploadDocBtn && docFileInput) {
     uploadDocBtn.addEventListener('click', () => {
-        if (isGenerating) return;
         docFileInput.click();
     });
 
@@ -4640,10 +4978,6 @@ function handleLongPaste(text) {
 
 if (userInput) {
     userInput.addEventListener('paste', (e) => {
-        if (isGenerating) {
-            e.preventDefault();
-            return;
-        }
         const items = (e.clipboardData || window.clipboardData)?.items;
         if (items) {
             for (let i = 0; i < items.length; i++) {
@@ -4676,7 +5010,6 @@ if (userInput) {
 
 if (uploadImageBtn && imageFileInput) {
     uploadImageBtn.addEventListener('click', () => {
-        if (isGenerating) return;
         imageFileInput.click();
     });
 
@@ -4694,7 +5027,6 @@ const uploadVideoBtn = document.getElementById('upload-video-btn');
 const videoFileInput = document.getElementById('video-file-input');
 if (uploadVideoBtn && videoFileInput) {
     uploadVideoBtn.addEventListener('click', () => {
-        if (isGenerating) return;
         videoFileInput.click();
     });
 
@@ -4708,12 +5040,11 @@ if (uploadVideoBtn && videoFileInput) {
     });
 }
 
-// Drag & Drop multi-file / image / video upload support
+// Drag & Drop multi-file / image / video upload support (aktif juga saat Shiro sedang bekerja)
 const composerInputCard = document.getElementById('composer-input-card');
 [composerInputCard, chatViewport].filter(Boolean).forEach((dropZone) => {
     let dragCounter = 0;
     dropZone.addEventListener('dragenter', (e) => {
-        if (isGenerating) return;
         if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
             e.preventDefault();
             dragCounter += 1;
@@ -4721,7 +5052,6 @@ const composerInputCard = document.getElementById('composer-input-card');
         }
     });
     dropZone.addEventListener('dragover', (e) => {
-        if (isGenerating) return;
         if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'copy';
@@ -4739,7 +5069,6 @@ const composerInputCard = document.getElementById('composer-input-card');
     dropZone.addEventListener('drop', (e) => {
         dragCounter = 0;
         if (composerInputCard) composerInputCard.classList.remove('is-drag-over');
-        if (isGenerating) return;
         const files = e.dataTransfer && e.dataTransfer.files;
         if (files && files.length > 0) {
             e.preventDefault();
@@ -4796,7 +5125,6 @@ function closeCamera() {
 }
 
 if (openCameraBtn) openCameraBtn.addEventListener('click', () => {
-    if (isGenerating) return;
     startCamera();
 });
 if (closeCameraModalBtn) closeCameraModalBtn.addEventListener('click', closeCamera);

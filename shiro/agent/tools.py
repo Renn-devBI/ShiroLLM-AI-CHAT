@@ -192,14 +192,103 @@ def check_weather(locations: List[str]) -> Dict[str, Any]:
         "data": structured_data
     }
 
-def search_google_web(query: str, max_results: int = 5) -> Dict[str, Any]:
+def search_web_images(query: str, max_images: int = 4) -> List[Dict[str, str]]:
     """
-    Melakukan pencarian web komprehensif menggunakan Bing HTML, Google News RSS,
-    dan Wikipedia melalui header Mozilla dan resolusi Cloudflare 1.1.1.1.
+    Mencari URL gambar yang relevan di web (Bing Images dengan fallback Wikimedia Commons)
+    untuk disajikan sebagai referensi visual atau disematkan dalam jawaban AI Agent.
+    """
+    clean_q = (query or "").strip()
+    if not clean_q:
+        return []
+
+    images: List[Dict[str, str]] = []
+    seen_urls = set()
+    session = get_agent_session()
+
+    def _is_valid_img_url(u: str) -> bool:
+        if not u or not isinstance(u, str):
+            return False
+        lu = u.strip().lower()
+        if not (lu.startswith("http://") or lu.startswith("https://")):
+            return False
+        if any(bad in lu for bad in ("bing.net/th?id=oip", "data:image", ".svg", "favicon", "logo-small", "1x1.")):
+            # Bing th?id=OIP sebenarnya thumbnail valid, hanya hindari data:image & icon/1x1
+            if "bing.net/th?id=oip" not in lu:
+                return False
+        return True
+
+    # 1. Bing Images HTML (iusc JSON metadata -> murl/purl/t)
+    try:
+        img_url = f"https://www.bing.com/images/search?q={urllib.parse.quote(clean_q)}&form=HDRSC2&first=1"
+        resp = session.get(img_url, timeout=5)
+        if resp.status_code == 200 and BeautifulSoup:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for a_el in soup.select("a.iusc"):
+                m_raw = a_el.get("m")
+                if not m_raw:
+                    continue
+                try:
+                    meta = json.loads(m_raw)
+                except Exception:
+                    continue
+                murl = str(meta.get("murl") or meta.get("turl") or "").strip()
+                purl = str(meta.get("purl") or "").strip()
+                title = str(meta.get("t") or clean_q).strip()
+                if _is_valid_img_url(murl) and murl not in seen_urls:
+                    seen_urls.add(murl)
+                    images.append({
+                        "url": murl,
+                        "title": title[:120] or clean_q,
+                        "source_url": purl,
+                        "source": "Bing Images",
+                    })
+                    if len(images) >= max_images:
+                        return images
+    except Exception:
+        pass
+
+    # 2. Fallback Wikimedia Commons API (open web image metadata)
+    if len(images) < max_images:
+        try:
+            wm_url = (
+                "https://commons.wikimedia.org/w/api.php?action=query&generator=search"
+                f"&gsrsearch={urllib.parse.quote(clean_q)}&gsrnamespace=6&gsrlimit={max_images}"
+                "&prop=imageinfo&iiprop=url|mime&format=json"
+            )
+            r_wm = session.get(wm_url, timeout=5)
+            if r_wm.status_code == 200:
+                pages = (r_wm.json().get("query") or {}).get("pages") or {}
+                for page in pages.values():
+                    infos = page.get("imageinfo") or []
+                    if not infos:
+                        continue
+                    i0 = infos[0]
+                    mime = str(i0.get("mime") or "").lower()
+                    u = str(i0.get("url") or "").strip()
+                    if mime.startswith("image/") and "svg" not in mime and _is_valid_img_url(u) and u not in seen_urls:
+                        seen_urls.add(u)
+                        images.append({
+                            "url": u,
+                            "title": str(page.get("title") or clean_q).replace("File:", "").strip()[:120],
+                            "source_url": str(i0.get("descriptionurl") or u),
+                            "source": "Wikimedia Commons",
+                        })
+                        if len(images) >= max_images:
+                            break
+        except Exception:
+            pass
+
+    return images
+
+
+def search_google_web(query: str, max_results: int = 6, include_images: bool = True) -> Dict[str, Any]:
+    """
+    Melakukan pencarian web & browser komprehensif menggunakan Bing HTML, DuckDuckGo HTML,
+    Google News RSS, Wikipedia, serta pencarian gambar web melalui header Mozilla dan Cloudflare 1.1.1.1.
     """
     clean_q = query.strip()
     if not clean_q:
-        return {"success": False, "summary": "Query pencarian kosong", "results": []}
+        return {"success": False, "summary": "Query pencarian kosong", "results": [], "images": []}
 
     results = []
     session = get_agent_session()
@@ -225,8 +314,38 @@ def search_google_web(query: str, max_results: int = 5) -> Dict[str, Any]:
                             "snippet": snippet,
                             "source": "Bing Search"
                         })
-    except Exception as e_bing:
+    except Exception:
         pass
+
+    # 1b. DuckDuckGo HTML fallback jika Bing memberi sedikit hasil
+    if len(results) < 2:
+        try:
+            ddg_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(clean_q)}"
+            resp_ddg = session.get(ddg_url, timeout=6)
+            if resp_ddg.status_code == 200 and BeautifulSoup:
+                soup_ddg = BeautifulSoup(resp_ddg.text, "html.parser")
+                for res_el in soup_ddg.select(".result"):
+                    if len(results) >= max_results:
+                        break
+                    a_el = res_el.select_one("a.result__a")
+                    sn_el = res_el.select_one(".result__snippet")
+                    if not a_el:
+                        continue
+                    title = a_el.get_text(" ", strip=True)
+                    raw_href = a_el.get("href", "")
+                    if "uddg=" in raw_href:
+                        qs = urllib.parse.parse_qs(urllib.parse.urlparse(raw_href).query)
+                        raw_href = (qs.get("uddg") or [raw_href])[0]
+                    snippet = sn_el.get_text(" ", strip=True) if sn_el else ""
+                    if title and raw_href.startswith("http") and not any(r["url"] == raw_href for r in results):
+                        results.append({
+                            "title": title,
+                            "url": raw_href,
+                            "snippet": snippet,
+                            "source": "DuckDuckGo"
+                        })
+        except Exception:
+            pass
 
     # 2. Google News RSS Search untuk informasi real-time dan jadwal rilis
     try:
@@ -272,47 +391,101 @@ def search_google_web(query: str, max_results: int = 5) -> Dict[str, Any]:
         except Exception:
             pass
 
+    images: List[Dict[str, str]] = []
+    if include_images:
+        try:
+            images = search_web_images(clean_q, max_images=4)
+        except Exception:
+            images = []
+
     # Format ringkasan hasil
-    if results:
-        lines = [f"Ditemukan {len(results)} informasi dari web untuk: '{clean_q}':"]
+    if results or images:
+        lines = [f"Ditemukan {len(results)} sumber web untuk: '{clean_q}':"]
         for i, res in enumerate(results, 1):
             lines.append(f"{i}. [{res['title']}]({res['url']}) ({res['source']})")
             if res['snippet']:
                 lines.append(f"   {res['snippet']}")
+        if images:
+            lines.append("\nGambar terkait dari web:")
+            for im in images[:4]:
+                lines.append(f"- ![{im['title']}]({im['url']})")
         summary_text = "\n".join(lines)
         return {
             "success": True,
             "summary": summary_text,
-            "results": results
+            "results": results,
+            "images": images,
         }
     else:
         return {
             "success": False,
             "summary": f"Pencarian web untuk '{clean_q}' tidak menghasilkan data relevan.",
-            "results": []
+            "results": [],
+            "images": [],
         }
 
 def open_and_read_webpage(url: str, max_chars: int = 3500) -> Dict[str, Any]:
     """
-    Membuka halaman web dan mengekstrak teks bersih bebas iklan/skrip HTML
-    menggunakan header Mozilla dan pembersihan DOM BeautifulSoup.
+    Membuka halaman web dan mengekstrak teks bersih beserta gambar relevan
+    menggunakan header Mozilla, BeautifulSoup, serta fallback browser headless bila halaman JS-rendered.
     """
     ok, html, err = fetch_html_content(url, timeout=12)
+    if (not ok or not html or len(html) < 250):
+        # Fallback opsional menggunakan browser headless jika terpasang untuk halaman JS-rendered
+        browser_bin = find_available_browser()
+        if browser_bin:
+            try:
+                res_dom = subprocess.run(
+                    [browser_bin, "--headless", "--disable-gpu", "--no-sandbox", "--dump-dom", url],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if res_dom.returncode == 0 and res_dom.stdout and len(res_dom.stdout) > len(html or ""):
+                    html = res_dom.stdout
+                    ok = True
+            except Exception:
+                pass
+
     if not ok or not html:
         return {
             "success": False,
             "url": url,
             "title": "Gagal Membuka",
-            "content": f"Tidak dapat memuat halaman ({err or 'Koneksi gagal'})."
+            "content": f"Tidak dapat memuat halaman ({err or 'Koneksi gagal'}).",
+            "images": [],
         }
 
     title = "Halaman Web"
     content = ""
+    page_images: List[Dict[str, str]] = []
+    seen_imgs = set()
 
     if BeautifulSoup:
         soup = BeautifulSoup(html, "html.parser")
         if soup.title and soup.title.string:
             title = soup.title.string.strip()
+
+        # Ekstrak og:image / twitter:image & img relevan sebelum elemen noise dihapus
+        for meta_prop in [("meta", {"property": "og:image"}), ("meta", {"name": "twitter:image"})]:
+            m_tag = soup.find(meta_prop[0], meta_prop[1])
+            if m_tag and m_tag.get("content"):
+                abs_u = urllib.parse.urljoin(url, str(m_tag.get("content")).strip())
+                if abs_u.startswith(("http://", "https://")) and abs_u not in seen_imgs:
+                    seen_imgs.add(abs_u)
+                    page_images.append({"url": abs_u, "title": title[:100], "source_url": url})
+
+        for img_tag in soup.select("article img, main img, img"):
+            if len(page_images) >= 4:
+                break
+            src = (img_tag.get("src") or img_tag.get("data-src") or "").strip()
+            if not src or src.startswith("data:") or any(bad in src.lower() for bad in ("icon", "avatar", "sprite", "logo", ".svg")):
+                continue
+            abs_u = urllib.parse.urljoin(url, src)
+            if abs_u.startswith(("http://", "https://")) and abs_u not in seen_imgs:
+                seen_imgs.add(abs_u)
+                alt_txt = str(img_tag.get("alt") or title or "Web Image").strip()[:100]
+                page_images.append({"url": abs_u, "title": alt_txt, "source_url": url})
 
         # Hilangkan elemen noise
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "svg", "noscript", "form", "button"]):
@@ -338,7 +511,8 @@ def open_and_read_webpage(url: str, max_chars: int = 3500) -> Dict[str, Any]:
         "success": True,
         "url": url,
         "title": title,
-        "content": content
+        "content": content,
+        "images": page_images,
     }
 
 def calculate_math(expression: str) -> Dict[str, Any]:
@@ -817,11 +991,11 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
 
     # 3. Deteksi Perhitungan Matematika
     # Contoh: "hitung 15 * 25", "berapa (1540 * 25) + 380", "1500 + 400"
-    math_match = re.search(r'(?:hitung|berapa\s+hasil\s+dari|kalkulasi)?\s*([0-9\s()+\-*/.^x:]{4,}[0-9])', text_lower)
+    math_match = re.search(r'(?:hitung|berapa\s+hasil\s+dari|kalkulasi)?\s*([0-9(][0-9\s()+\-*/.^x:]{2,}[0-9)])', text_lower)
     if math_match:
         expr = math_match.group(1).strip()
-        # Pastikan ada operator aritmatika
-        if any(op in expr for op in ["+", "-", "*", "/", "x", ":", "^"]):
+        # Pastikan operator aritmatika diapit angka/kurung (cegah salah deteksi seperti 'RTX 5090' -> 'x 5090')
+        if re.search(r'[0-9)]\s*[+\-*/^x:]\s*[0-9(]', expr):
             # Pastikan bukan sekadar tanggal seperti 2024-10-12
             if not re.match(r'^\d{4}-\d{2}-\d{2}$', expr):
                 return {
@@ -853,22 +1027,60 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
             "params": {}
         }
 
-    # 5. Deteksi Pencarian Web / Google (Fallback eksplisit)
-    search_triggers = [
-        "cari di web", "cari di google", "googling", "search", "cari info",
-        "cari informasi", "browsing", "berita tentang", "cek di internet",
-        "cek info", "siapa itu", "apa itu", "kapan rilis", "siapa pemenang",
-        "harga sekarang", "kurs dollar", "harga bitcoin"
+    # 5. Deteksi Pencarian Web / Gambar / Informasi Umum Otomatis
+    # Hindari salah deteksi sebagai pencarian web jika user sedang curhat pribadi atau meminta membuat/mengedit kode UI/file
+    is_coding_or_chat_personal = bool(
+        re.search(r'\b(buatkan\s+(?:website|aplikasi|program|kode|script|skrip|login|halaman|video)|perbaiki\s+(?:kode|bug|error|tampilan|file)|edit\s+file|curhat|aku\s+(?:sedih|capek|lelah|galau))\b', text_lower)
+    )
+
+    image_search_triggers = [
+        "cari gambar", "carikan gambar", "cariin gambar", "cari foto", "carikan foto", "cariin foto",
+        "find image", "find picture", "search image", "gambar tentang", "foto tentang",
     ]
-    for st in search_triggers:
-        if st in text_lower:
-            # Ekstrak query pencarian
-            q = re.sub(rf".*?{re.escape(st)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
-            if not q or len(q) < 3:
-                q = text.strip()
+    for ist in image_search_triggers:
+        if ist in text_lower and not is_coding_or_chat_personal:
+            q_img = re.sub(rf".*?{re.escape(ist)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
+            q_img = re.sub(r'\b(dong|ya|kak|shiro)\b', '', q_img, flags=re.IGNORECASE).strip(" :?,.!")
+            if not q_img or len(q_img) < 2:
+                q_img = text.strip()
             return {
                 "intent": "search",
-                "params": {"query": q}
+                "params": {"query": q_img, "wants_images": True}
+            }
+
+    search_triggers = [
+        "cari di web", "cari di google", "cari di browser", "cek di browser", "buka browser",
+        "googling", "search the web", "search online", "search", "cari info",
+        "cari informasi", "carikan informasi", "cariin informasi", "carikan info", "cariin info",
+        "carikan sumber", "cari sumber", "cari source", "carikan source", "cari referensi", "carikan referensi",
+        "cari link", "carikan link", "cari tahu tentang", "carikan berita", "cari berita",
+        "browsing", "berita tentang", "cek di internet", "cek info",
+        "spesifikasi", "spek ", "siapa itu", "siapa presiden", "siapa penemu",
+        "apa itu", "kapan rilis", "siapa pemenang", "harga sekarang", "kurs dollar",
+        "harga bitcoin", "fakta tentang", "sejarah tentang", "profil tentang",
+        "look up", "search for", "find info", "who is", "what is the latest"
+    ]
+    if not is_coding_or_chat_personal:
+        for st in search_triggers:
+            if st in text_lower:
+                # Ekstrak query pencarian
+                q = re.sub(rf".*?{re.escape(st)}", "", text, flags=re.IGNORECASE).strip(" :?,.!")
+                if st in ("spesifikasi", "spek ", "siapa itu", "apa itu", "kapan rilis", "siapa pemenang", "siapa presiden", "siapa penemu"):
+                    q = text.strip(" ?.!").strip()
+                elif not q or len(q) < 3:
+                    q = text.strip()
+                return {
+                    "intent": "search",
+                    "params": {"query": q, "wants_images": any(k in text_lower for k in ("gambar", "foto", "image", "visual"))}
+                }
+
+        # Fallback: permintaan "cari ..." / "carikan ..." umum yang tidak menyebut file/coding
+        m_generic_cari = re.match(r'^(?:tolong\s+|coba\s+|shiro[,\s]+)?(?:carikan|cariin|cari)\s+(.{3,})$', text_lower)
+        if m_generic_cari and not any(fc in text_lower for fc in ("file", "berkas", "bug", "error", "kode", "syntax")):
+            q_gen = m_generic_cari.group(1).strip(" :?,.!")
+            return {
+                "intent": "search",
+                "params": {"query": q_gen, "wants_images": any(k in text_lower for k in ("gambar", "foto", "image", "visual"))}
             }
 
     return {"intent": "none", "params": {}}

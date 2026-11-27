@@ -430,10 +430,15 @@ def chat():
             thought_duration_sec = details.get("thought_duration_sec") if isinstance(details, dict) else None
             agent_steps = details.get("agent_steps") if isinstance(details, dict) else None
             artifacts = details.get("artifacts") if isinstance(details, dict) else None
+            saved_agent_action = (
+                details.get("agent_action")
+                if (isinstance(details, dict) and details.get("agent_action"))
+                else (trace.get("agent_action") if isinstance(trace, dict) else None)
+            )
             
             assistant_img_url = None
-            if trace and isinstance(trace.get("agent_action"), dict):
-                assistant_img_url = trace["agent_action"].get("image_url")
+            if isinstance(saved_agent_action, dict):
+                assistant_img_url = saved_agent_action.get("image_url")
 
             with memory.lock:
                 assistant_msg_id = memory.add_message(
@@ -444,6 +449,7 @@ def chat():
                     thought_duration_sec=thought_duration_sec,
                     agent_steps=agent_steps,
                     artifacts=artifacts,
+                    agent_action=saved_agent_action,
                 )
                 memory.update_emotional_state_from_response(reply)
                 memory.update_mood_from_emotions()
@@ -629,7 +635,11 @@ def chat():
                                 agent_steps = event.get("agent_steps")
                             if event.get("artifacts"):
                                 artifacts = event.get("artifacts")
+                            if event.get("agent_action"):
+                                agent_action = event.get("agent_action")
                             if trace and isinstance(trace.get("agent_action"), dict):
+                                if not agent_action:
+                                    agent_action = trace.get("agent_action")
                                 assistant_img_url = trace["agent_action"].get("image_url")
             except (GeneratorExit, BrokenPipeError, ConnectionResetError):
                 client_disconnected = True
@@ -656,6 +666,7 @@ def chat():
                 try:
                     if full_reply and full_reply.strip():
                         with memory.lock:
+                            resolved_action = agent_action or (trace.get("agent_action") if trace else None)
                             assistant_msg_id = memory.add_message(
                                 "assistant",
                                 full_reply,
@@ -664,6 +675,7 @@ def chat():
                                 thought_duration_sec=thought_duration_sec,
                                 agent_steps=agent_steps,
                                 artifacts=artifacts,
+                                agent_action=resolved_action,
                             )
                             memory.update_emotional_state_from_response(full_reply)
                             memory.update_mood_from_emotions()

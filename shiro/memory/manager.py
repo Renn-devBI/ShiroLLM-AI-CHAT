@@ -592,7 +592,8 @@ class AdvancedMemoryManager:
         thought_content: Optional[str] = None,
         thought_duration_sec: Optional[float] = None,
         agent_steps: Optional[List[Dict[str, Any]]] = None,
-        artifacts: Optional[List[Dict[str, Any]]] = None
+        artifacts: Optional[List[Dict[str, Any]]] = None,
+        agent_action: Optional[Dict[str, Any]] = None
     ) -> str:
         """Add message to short-term history and self-learn from conversation & response"""
         with self.lock:
@@ -660,6 +661,38 @@ class AdvancedMemoryManager:
                 message["agent_steps"] = list(agent_steps)
             if artifacts:
                 message["artifacts"] = list(artifacts)
+            if isinstance(agent_action, dict) and agent_action.get("tool"):
+                details_obj = agent_action.get("details") if isinstance(agent_action.get("details"), dict) else {}
+                compact_action = {
+                    "tool": agent_action.get("tool"),
+                    "description": str(agent_action.get("description") or "")[:300],
+                    "status": agent_action.get("status", "success"),
+                    "execution_time_sec": agent_action.get("execution_time_sec"),
+                    "image_url": agent_action.get("image_url"),
+                }
+                sources_list = agent_action.get("sources") or details_obj.get("sources") or []
+                web_imgs_list = agent_action.get("web_images") or details_obj.get("images") or []
+                if isinstance(sources_list, list) and sources_list:
+                    compact_action["sources"] = [
+                        {
+                            "title": str(s.get("title") or s.get("domain") or "Sumber")[:140],
+                            "url": str(s.get("url") or ""),
+                            "domain": str(s.get("domain") or "")[:80],
+                        }
+                        for s in sources_list[:8]
+                        if isinstance(s, dict) and s.get("url")
+                    ]
+                if isinstance(web_imgs_list, list) and web_imgs_list:
+                    compact_action["web_images"] = [
+                        {
+                            "title": str(im.get("title") or "Gambar Web")[:120],
+                            "url": str(im.get("url") or ""),
+                            "source_url": str(im.get("source_url") or ""),
+                        }
+                        for im in web_imgs_list[:4]
+                        if isinstance(im, dict) and im.get("url")
+                    ]
+                message["agent_action"] = compact_action
             
             if role == "assistant":
                 message["actions"] = self._extract_actions(content)

@@ -1048,6 +1048,8 @@ class ResearchResult:
     all_documents: List[FetchedDocument]
     prompt_block: str
     summary_text: str
+    sources: List[Dict[str, str]] = field(default_factory=list)
+    images: List[Dict[str, str]] = field(default_factory=list)
 
     def storable_facts(self) -> List[Dict[str, Any]]:
         """
@@ -1074,10 +1076,12 @@ def build_research_prompt_block(
     topic: str,
     verified_facts: List[VerifiedFact],
     confidence: float,
-    independent_sources_count: int
+    independent_sources_count: int,
+    sources: Optional[List[Dict[str, str]]] = None,
+    images: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """
-    Menyusun blok fakta yang akan disuntikkan ke prompt neural LLM.
+    Menyusun blok fakta, tautan sumber, dan gambar terkait yang akan disuntikkan ke prompt neural LLM.
     """
     lines = [f"[Hasil Riset Nyata Web & Verifikasi Silang Real-Time]:"]
     lines.append(f"- Topik: {topic}")
@@ -1107,14 +1111,31 @@ def build_research_prompt_block(
             lines.append(f"- Menurut {src_str}: {sf.claim}")
         lines.append("-> Instruksi: Karena baru dari 1 sumber, sebutkan secara jujur 'menurut kabar dari <sumber>...'.")
 
-    if not verified and not singles:
+    if sources:
+        lines.append("\n[SUMBER & TAUTAN WEB VALID (Boleh dikutip dengan link Markdown)]:")
+        for idx_s, s_item in enumerate(sources[:6], 1):
+            s_title = (s_item.get("title") or s_item.get("domain") or "Sumber").strip()
+            s_url = (s_item.get("url") or "").strip()
+            if s_url:
+                lines.append(f"{idx_s}. [{s_title}]({s_url})")
+
+    if images:
+        lines.append("\n[GAMBAR TERKAIT DARI WEB (Sematkan memakai `![Judul](url)` bila relevan atau diminta)]:")
+        for im_item in images[:4]:
+            im_title = (im_item.get("title") or topic or "Gambar Web").strip()
+            im_url = (im_item.get("url") or "").strip()
+            if im_url:
+                lines.append(f"- ![{im_title}]({im_url})")
+
+    if not verified and not singles and not sources:
         lines.append("\n[STATUS: Tidak ditemukan informasi yang cukup terkonfirmasi di internet saat ini.]")
         lines.append("-> Instruksi: Sampaikan dengan jujur bahwa informasinya belum bisa dipastikan.")
 
-    lines.append("\n[Instruksi Karakter Shiro]:")
-    lines.append("1. Gunakan fakta terverifikasi di atas untuk menjawab Kakak secara tepat dan percaya diri.")
-    lines.append("2. JANGAN sebut nama tool, browser Mozilla, Cloudflare, atau format teknis.")
-    lines.append("3. Tetap gunakan nada bicara manis, hangat, dan alami khas Shiro.")
+    lines.append("\n[Instruksi Agen Riset]:")
+    lines.append("1. Jawab langsung secara komprehensif berdasarkan fakta & sumber di atas tanpa basa-basi bot.")
+    lines.append("2. Sertakan tautan sumber valid dalam format Markdown `[Judul](URL)` sebagai rujukan saat memberi informasi.")
+    lines.append("3. Jika gambar relevan atau user meminta gambar/foto, sematkan memakai sintaks `![Deskripsi](URL_gambar_dari_atas)` (hanya gunakan URL yang persis tercantum).")
+    lines.append("4. Tetap gunakan nada bicara alami, cerdas, dan hangat khas Shiro tanpa menyebut nama mesin internal (Cloudflare/Mozilla/tool).")
 
     return "\n".join(lines)
 
@@ -1127,7 +1148,8 @@ def research(
     search_fn: Callable[[str, str, int], List[RawSearchResult]],
     fetch_fn: Callable[[str], str],
     cfg: Optional[ResearchConfig] = None,
-    llm_rewrite: Optional[Callable[[str, str], str]] = None
+    llm_rewrite: Optional[Callable[[str, str], str]] = None,
+    image_search_fn: Optional[Callable[[str], List[Dict[str, str]]]] = None,
 ) -> ResearchResult:
     """
     Menjalankan alur pencarian multi-sumber adaptif:
@@ -1161,7 +1183,13 @@ def research(
             continue
 
     if not all_raw_candidates:
-        empty_prompt = build_research_prompt_block(user_query, [], 0.0, 0)
+        discovered_imgs: List[Dict[str, str]] = []
+        if image_search_fn:
+            try:
+                discovered_imgs = list(image_search_fn(queries[0].query) or [])[:4]
+            except Exception:
+                discovered_imgs = []
+        empty_prompt = build_research_prompt_block(user_query, [], 0.0, 0, sources=[], images=discovered_imgs)
         return ResearchResult(
             topic=user_query,
             verified_facts=[],
@@ -1169,7 +1197,9 @@ def research(
             independent_sources_count=0,
             all_documents=[],
             prompt_block=empty_prompt,
-            summary_text="Tidak ada hasil pencarian ditemukan."
+            summary_text="Tidak ada hasil pencarian ditemukan.",
+            sources=[],
+            images=discovered_imgs,
         )
 
     # 2. Filter 1 domain = 1 kandidat terbaik (RRF + Kredibilitas)
@@ -1249,11 +1279,41 @@ def research(
         else:
             break
 
+    collected_sources: List[Dict[str, str]] = []
+    seen_src_urls: Set[str] = set()
+    for d_item in fetched_docs:
+        if d_item.url and d_item.url not in seen_src_urls:
+            seen_src_urls.add(d_item.url)
+            collected_sources.append({
+                "title": d_item.title or d_item.domain,
+                "url": d_item.url,
+                "domain": d_item.domain,
+                "snippet": (d_item.snippet or "")[:220],
+            })
+    for cand_r in ranked_candidates[:6]:
+        if cand_r.url and cand_r.url not in seen_src_urls and len(collected_sources) < 8:
+            seen_src_urls.add(cand_r.url)
+            collected_sources.append({
+                "title": cand_r.title or extract_domain(cand_r.url),
+                "url": cand_r.url,
+                "domain": extract_domain(cand_r.url),
+                "snippet": (cand_r.snippet or "")[:220],
+            })
+
+    collected_images: List[Dict[str, str]] = []
+    if image_search_fn:
+        try:
+            collected_images = list(image_search_fn(queries[0].query) or [])[:4]
+        except Exception:
+            collected_images = []
+
     prompt_blk = build_research_prompt_block(
         user_query,
         verified_facts,
         confidence,
-        len(independent_domains)
+        len(independent_domains),
+        sources=collected_sources,
+        images=collected_images,
     )
 
     summary = (
@@ -1269,7 +1329,9 @@ def research(
         independent_sources_count=len(independent_domains),
         all_documents=fetched_docs,
         prompt_block=prompt_blk,
-        summary_text=summary
+        summary_text=summary,
+        sources=collected_sources,
+        images=collected_images,
     )
 
 # ---------------------------------------------------------------------------
