@@ -738,6 +738,18 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
                 "params": {"command": cmd_extracted}
             }
 
+    # 2b. Deteksi Permintaan Pengemasan / Kompresi File (.zip, .tar.gz, .7z, .tar, dll.)
+    try:
+        from shiro.agent.packager import detect_archive_request
+        arch_req = detect_archive_request(text)
+        if arch_req:
+            return {
+                "intent": "archive",
+                "params": arch_req
+            }
+    except Exception:
+        pass
+
     # 3. Deteksi URL langsung untuk dibaca kontennya (browse)
     if urls:
         target_url = urls[0].rstrip(".,;:!?)'\"")

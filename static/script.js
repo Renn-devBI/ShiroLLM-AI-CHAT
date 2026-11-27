@@ -737,6 +737,100 @@ function applyMermaidTheme() {
 
 let mermaidCounter = 0;
 
+function looksLikeCodeFilename(cand) {
+    if (!cand) return false;
+    const cleaned = String(cand).trim().replace(/^[`"'\(\[]+|[`"'\)\],.;:]+$/g, '');
+    if (!cleaned || cleaned.startsWith('http://') || cleaned.startsWith('https://')) return false;
+    const base = cleaned.split(/[\/\\]/).pop();
+    if (!base) return false;
+    if (base === 'Dockerfile' || base === 'Makefile' || base.startsWith('.env')) return true;
+    if (!base.includes('.')) return false;
+    const ext = base.split('.').pop().toLowerCase();
+    if (['com', 'org', 'net', 'io', 'id', 'ai', 'dev'].includes(ext) && !cleaned.includes('/')) return false;
+    if (/^\d+$/.test(ext)) return false;
+    return ext.length >= 1 && ext.length <= 12 && base.length <= 120;
+}
+
+function sanitizeDownloadFilename(name) {
+    return String(name || '')
+        .trim()
+        .replace(/^[`"']+|[`"']+$/g, '')
+        .split(/[\/\\]/)
+        .pop()
+        .replace(/[<>:"|?*]/g, '');
+}
+
+function extractFilenameForCodeBlock(fenceInfo, precedingText, rawCode) {
+    const info = (fenceInfo || '').trim();
+    let cleanLang = '';
+    let detectedFile = '';
+
+    // 1. Cek fence header (mis. ```python:login.app, ```login.app, ```html filename="index.html")
+    const attrM = info.match(/(?:filename|file|title|name)\s*=\s*["']?([^\s"']+)["']?/i);
+    if (attrM && looksLikeCodeFilename(attrM[1])) {
+        detectedFile = attrM[1].trim();
+        const firstTok = info.split(/\s+/)[0].split(':')[0].toLowerCase();
+        cleanLang = firstTok.includes('.') ? '' : firstTok;
+    } else if (info.includes(':')) {
+        const idxCol = info.indexOf(':');
+        const left = info.slice(0, idxCol).trim().toLowerCase();
+        const right = info.slice(idxCol + 1).trim();
+        if (looksLikeCodeFilename(right)) {
+            detectedFile = right;
+            cleanLang = left;
+        }
+    } else if (info) {
+        const parts = info.split(/\s+/);
+        if (looksLikeCodeFilename(parts[0])) {
+            detectedFile = parts[0].trim();
+            cleanLang = parts[0].includes('.') ? parts[0].split('.').pop().toLowerCase() : '';
+        } else {
+            cleanLang = parts[0].toLowerCase();
+            if (parts[1] && looksLikeCodeFilename(parts[1])) {
+                detectedFile = parts[1].trim();
+            }
+        }
+    }
+
+    // 2. Cek 4 baris teks tepat di atas blok kode (mis. ### File: login.app, `login.app`, **login.app**)
+    if (!detectedFile && precedingText) {
+        const prevLines = precedingText.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(-4);
+        for (let i = prevLines.length - 1; i >= 0; i--) {
+            const line = prevLines[i];
+            const mExplicit = line.match(/(?:SHIRO_FILE|filename|file|berkas|simpan\s+sebagai|save\s+as|nama\s+file)\s*[:=]\s*`?([A-Za-z0-9_.\-\/\\]+)`?/i);
+            if (mExplicit && looksLikeCodeFilename(mExplicit[1])) {
+                detectedFile = mExplicit[1].trim();
+                break;
+            }
+            const mBacktick = line.match(/`([A-Za-z0-9_.\-\/\\]+?\.[A-Za-z0-9]{1,12}|Dockerfile|Makefile|\.env(?:\.[A-Za-z0-9_]+)?)`/);
+            if (mBacktick && looksLikeCodeFilename(mBacktick[1])) {
+                detectedFile = mBacktick[1].trim();
+                break;
+            }
+            const mHeading = line.match(/^(?:#{1,6}\s*|(?:\d+[\.\)]\s*)?(?:\*\*|__)?(?:File\s*\d*\s*[:\-]?\s*)?)([A-Za-z0-9_.\-\/\\]+?\.[A-Za-z0-9]{1,12})(?:\*\*|__)?\s*:?\s*$/i);
+            if (mHeading && looksLikeCodeFilename(mHeading[1])) {
+                detectedFile = mHeading[1].trim();
+                break;
+            }
+        }
+    }
+
+    // 3. Cek komentar 5 baris pertama di dalam isi kode
+    if (!detectedFile && rawCode) {
+        const firstLines = rawCode.split('\n').slice(0, 5).join('\n');
+        const fnMatch = firstLines.match(/(?:SHIRO_FILE|filename|file|nama\s+berkas|name)\s*[:=]\s*([a-zA-Z0-9_\-\.\/\\]+)/i)
+                     || firstLines.match(/^(?:(?:\/\/|#|<!--|\/\*|--)\s*)([a-zA-Z0-9_\-\/\\]+\.[a-zA-Z0-9]{1,12})(?:\s*(?:-->|\*\/))?\s*$/m);
+        if (fnMatch && fnMatch[1] && looksLikeCodeFilename(fnMatch[1])) {
+            detectedFile = fnMatch[1].trim();
+        }
+    }
+
+    return {
+        lang: cleanLang,
+        filename: detectedFile ? sanitizeDownloadFilename(detectedFile) : ''
+    };
+}
+
 // Parse message formatting: Markdown, Syntax Highlighting, Mermaid, Sanitization
 function parseMessageContent(text) {
     if (!text) return '';
@@ -750,10 +844,14 @@ function parseMessageContent(text) {
 
     const codeBlocks = [];
 
-    // 1. Ekstrak Fenced Code Blocks: ```lang ... ```
-    let content = normalizedText.replace(/```([a-zA-Z0-9_\-\.]*)\s*\n?([\s\S]*?)```/g, function(match, lang, code) {
-        const cleanLang = (lang || '').trim().toLowerCase();
-        const rawCode = (code || '').trim();
+    // 1. Ekstrak Fenced Code Blocks beserta deteksi nama berkas persis (mis. login.app)
+    let content = normalizedText.replace(/```([^\r\n`]*)\r?\n([\s\S]*?)```|```([a-zA-Z0-9_\-\.:\/]*)\s*([\s\S]*?)```/g, function(match, info1, code1, info2, code2, offset) {
+        const fenceInfo = (info1 !== undefined ? info1 : (info2 || '')).trim();
+        const rawCode = (info1 !== undefined ? (code1 || '') : (code2 || '')).trim();
+        const precedingSlice = normalizedText.slice(Math.max(0, (offset || 0) - 420), offset || 0);
+        const extractedMeta = extractFilenameForCodeBlock(fenceInfo, precedingSlice, rawCode);
+        const cleanLang = extractedMeta.lang || '';
+        const detectedFilename = extractedMeta.filename || '';
         const placeholder = `___SHIRO_BLOCK_${codeBlocks.length}___`;
 
         const escapedCode = rawCode
@@ -780,12 +878,15 @@ function parseMessageContent(text) {
                 </div>
             `);
         } else {
-            const displayLang = cleanLang || 'kode';
+            const displayLang = cleanLang || (detectedFilename.includes('.') ? detectedFilename.split('.').pop().toLowerCase() : 'kode');
             const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
+            const headerLabelHTML = detectedFilename
+                ? `<span class="code-filename-badge" title="${escapeHtml(detectedFilename)}">${escapeHtml(detectedFilename)}</span>${cleanLang && cleanLang !== detectedFilename.toLowerCase() ? `<span class="code-lang-sub">${escapeHtml(cleanLang)}</span>` : ''}`
+                : `${escapeHtml(displayLang)}`;
             codeBlocks.push(`
-                <div class="code-block-wrapper" data-lang="${cleanLang || 'txt'}">
+                <div class="code-block-wrapper" data-lang="${escapeHtml(cleanLang || 'txt')}" data-filename="${escapeHtml(detectedFilename)}">
                     <div class="code-block-header">
-                        <span class="code-lang-label">${displayLang}</span>
+                        <span class="code-lang-label">${headerLabelHTML}</span>
                         <div class="code-block-actions">
                             <button type="button" class="btn-code-action btn-download-code" onclick="downloadCodeSnippet(this)" title="${t('download_code_tooltip')}" aria-label="Unduh Berkas Kode">
                                 <i class="ph ph-download-simple"></i> <span>${t('download_code')}</span>
@@ -856,8 +957,8 @@ function parseMessageContent(text) {
     if (typeof DOMPurify !== 'undefined') {
         try {
             content = DOMPurify.sanitize(content, {
-                ADD_TAGS: ['svg', 'path', 'marker', 'g', 'rect', 'circle', 'line', 'polygon', 'text', 'tspan', 'style', 'defs'],
-                ADD_ATTR: ['target', 'rel', 'onclick', 'data-*', 'class', 'id', 'd', 'fill', 'stroke', 'viewBox', 'width', 'height', 'style', 'title']
+                ADD_TAGS: ['svg', 'path', 'marker', 'g', 'rect', 'circle', 'line', 'polygon', 'text', 'tspan', 'style', 'defs', 'details', 'summary', 'hr'],
+                ADD_ATTR: ['target', 'rel', 'onclick', 'data-*', 'data-filename', 'data-lang', 'download', 'class', 'id', 'd', 'fill', 'stroke', 'viewBox', 'width', 'height', 'style', 'title']
             });
         } catch (pErr) {
             console.warn('[DOMPurify Warning]:', pErr);
@@ -968,14 +1069,18 @@ function downloadCodeSnippet(btn) {
     const rawLang = (wrapper.dataset.lang || '').trim().toLowerCase();
     const ext = CODE_LANG_EXT_MAP[rawLang] || (rawLang && /^[a-z0-9]+$/.test(rawLang) ? rawLang : 'txt');
 
-    // 1. Deteksi nama berkas dari komentar baris pertama (misal: // index.html atau <!-- file: App.vue -->)
-    let filename = '';
-    const firstLines = text.split('\n').slice(0, 4).join('\n');
-    const fnMatch = firstLines.match(/(?:filename|file|nama berkas|name)\s*[:=]\s*([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)/i)
-                 || firstLines.match(/^(?:(?:\/\/|#|<!--|\/\*)\s*)([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)/m);
-
-    if (fnMatch && fnMatch[1]) {
-        filename = fnMatch[1].split(/[\/\\]/).pop().trim();
+    // 1. Gunakan nama berkas persis dari atribut data-filename (misal login.app) atau komentar kode
+    let filename = sanitizeDownloadFilename(wrapper.dataset.filename || '');
+    if (!filename) {
+        const firstLines = text.split('\n').slice(0, 5).join('\n');
+        const fnMatch = firstLines.match(/(?:SHIRO_FILE|filename|file|nama\s+berkas|name)\s*[:=]\s*([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)/i)
+                     || firstLines.match(/^(?:(?:\/\/|#|<!--|\/\*|--)\s*)([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)/m);
+        if (fnMatch && fnMatch[1]) {
+            filename = sanitizeDownloadFilename(fnMatch[1]);
+        }
+    }
+    if (!filename && looksLikeCodeFilename(rawLang)) {
+        filename = sanitizeDownloadFilename(rawLang);
     }
 
     // 2. Default nama file ala ChatGPT
@@ -1171,10 +1276,195 @@ const CODE_EXTENSIONS_SET = new Set([
     'ini', 'cfg', 'conf', 'config', 'properties', 'env', 'proto', 'makefile', 'cmake'
 ]);
 
+function toggleAgThought(btn) {
+    const block = btn ? btn.closest('.ag-thought-block') : null;
+    if (!block) return;
+    block.dataset.userToggled = 'true';
+    block.classList.toggle('is-open');
+}
+
+function buildAgentStepsHTML(steps) {
+    if (!Array.isArray(steps) || !steps.length) return '';
+    return steps.map(st => {
+        const statusVal = st.status || 'done';
+        let iconCls = 'ph-check-circle';
+        if (statusVal === 'running') iconCls = 'ph-spinner ph-spin';
+        else if (statusVal === 'failed') iconCls = 'ph-x-circle';
+        const titleStr = escapeHtml(st.title || '');
+        const fbStr = st.feedback ? `<div class="ag-trace-step-feedback">${escapeHtml(st.feedback)}</div>` : '';
+        return `
+            <div class="ag-trace-step status-${escapeHtml(statusVal)}">
+                <span class="ag-trace-step-icon"><i class="ph ${iconCls}"></i></span>
+                <div class="ag-trace-step-content">
+                    <div class="ag-trace-step-title">${titleStr}</div>
+                    ${fbStr}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderAgentThoughtHTML(meta) {
+    if (!meta) return '';
+    const steps = Array.isArray(meta.agent_steps) ? meta.agent_steps : [];
+    const thoughtText = (meta.thought_content || '').trim();
+    const isRunning = Boolean(meta.is_running);
+    if (!steps.length && !thoughtText && !isRunning) return '';
+
+    const isOpen = isRunning || Boolean(meta.force_open);
+    const dur = meta.thought_duration_sec;
+    let titleLabel = 'Analyzing request...';
+    if (!isRunning) {
+        if (dur !== null && dur !== undefined) {
+            titleLabel = `Thought for ${dur}s${steps.length ? ` · ${steps.length} steps` : ''}`;
+        } else if (steps.length) {
+            titleLabel = `Agent analysis · ${steps.length} step${steps.length > 1 ? 's' : ''}`;
+        } else {
+            titleLabel = 'Agent analysis';
+        }
+    } else if (steps.length) {
+        const runningStep = steps.find(s => s.status === 'running') || steps[steps.length - 1];
+        if (runningStep && runningStep.title) {
+            titleLabel = runningStep.title + '...';
+        }
+    }
+
+    const iconHtml = isRunning
+        ? '<i class="ph ph-spinner ph-spin"></i>'
+        : '<i class="ph ph-sparkle"></i>';
+
+    const reasoningHTML = thoughtText ? `
+        <div class="ag-thought-reasoning">
+            <div class="ag-thought-reasoning-label">AGENT ANALYSIS · EN</div>
+            <div class="ag-thought-reasoning-text">${escapeHtml(thoughtText)}</div>
+        </div>
+    ` : '';
+
+    return `
+        <div class="ag-thought-block ${isOpen ? 'is-open' : ''} ${isRunning ? 'is-running' : 'is-done'}">
+            <button type="button" class="ag-thought-toggle" onclick="toggleAgThought(this)">
+                <span class="ag-thought-rule"></span>
+                <span class="ag-thought-pill">
+                    ${iconHtml}
+                    <span class="ag-thought-title">${escapeHtml(titleLabel)}</span>
+                    <i class="ph ph-caret-down ag-thought-caret"></i>
+                </span>
+                <span class="ag-thought-rule"></span>
+            </button>
+            <div class="ag-thought-body">
+                <div class="ag-trace-steps">${buildAgentStepsHTML(steps)}</div>
+                ${reasoningHTML}
+            </div>
+        </div>
+    `;
+}
+
+function syncAgThoughtInMsg(msgEl, meta) {
+    if (!msgEl || !meta) return;
+    const container = msgEl.querySelector('.bubble-container');
+    if (!container) return;
+    const existing = container.querySelector('.ag-thought-block');
+    const prevUserToggled = existing ? existing.dataset.userToggled === 'true' : false;
+    const prevWasOpen = existing ? existing.classList.contains('is-open') : false;
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = renderAgentThoughtHTML(meta);
+    const nextBlock = wrapper.firstElementChild;
+    if (!nextBlock) return;
+
+    if (prevUserToggled) {
+        nextBlock.dataset.userToggled = 'true';
+        if (prevWasOpen) nextBlock.classList.add('is-open');
+        else nextBlock.classList.remove('is-open');
+    }
+
+    const rBox = nextBlock.querySelector('.ag-thought-reasoning-text');
+    if (existing) {
+        existing.replaceWith(nextBlock);
+    } else {
+        const bubble = container.querySelector('.bubble');
+        if (bubble) container.insertBefore(nextBlock, bubble);
+        else container.prepend(nextBlock);
+    }
+    if (rBox) rBox.scrollTop = rBox.scrollHeight;
+}
+
+function renderArtifactsHTML(artifacts) {
+    if (!Array.isArray(artifacts) || !artifacts.length) return '';
+    const cards = artifacts.map(art => {
+        if (!art || !art.filename || !art.download_url) return '';
+        const isArch = art.kind === 'archive';
+        const iconCls = isArch ? 'ph-file-zip' : 'ph-file-code';
+        const fmtBadge = (art.format || 'file').toUpperCase();
+        const countStr = isArch && art.file_count ? ` · ${art.file_count} berkas` : '';
+        const metaLine = `${fmtBadge} · ${art.size_label || ''}${countStr}`;
+        const safeName = escapeHtml(art.filename);
+        const safeUrl = escapeHtml(art.download_url);
+
+        let subFilesHTML = '';
+        if (isArch && Array.isArray(art.individual_files) && art.individual_files.length) {
+            const links = art.individual_files.map(sf => `
+                <a class="ag-artifact-subfile-link" href="${escapeHtml(sf.download_url)}" download="${escapeHtml(sf.filename)}" title="Unduh ${escapeHtml(sf.rel_path || sf.filename)}">
+                    <i class="ph ph-download-simple"></i>
+                    <span>${escapeHtml(sf.rel_path || sf.filename)}</span>
+                </a>
+            `).join('');
+            subFilesHTML = `
+                <details class="ag-artifact-files-details">
+                    <summary>Lihat &amp; unduh berkas di dalam (${art.individual_files.length})</summary>
+                    <div class="ag-artifact-files-list">${links}</div>
+                </details>
+            `;
+        }
+        const noteHTML = art.note ? `<div class="ag-artifact-note"><i class="ph ph-info"></i> ${escapeHtml(art.note)}</div>` : '';
+
+        return `
+            <div class="ag-artifact-card">
+                <div class="ag-artifact-main">
+                    <div class="ag-artifact-info">
+                        <span class="ag-artifact-icon"><i class="ph ${iconCls}"></i></span>
+                        <div class="ag-artifact-meta">
+                            <div class="ag-artifact-name">${safeName}</div>
+                            <div class="ag-artifact-sub">${escapeHtml(metaLine)}</div>
+                        </div>
+                    </div>
+                    <a class="ag-artifact-dl-btn" href="${safeUrl}" download="${safeName}">
+                        <i class="ph ph-download-simple"></i>
+                        <span>Unduh ${safeName}</span>
+                    </a>
+                </div>
+                ${subFilesHTML}
+                ${noteHTML}
+            </div>
+        `;
+    }).filter(Boolean).join('');
+
+    return cards ? `<div class="ag-artifacts-wrap">${cards}</div>` : '';
+}
+
+function syncArtifactsInMsg(msgEl, artifacts) {
+    if (!msgEl || !Array.isArray(artifacts) || !artifacts.length) return;
+    const container = msgEl.querySelector('.bubble-container');
+    if (!container) return;
+    const oldWrap = container.querySelector('.ag-artifacts-wrap');
+    const holder = document.createElement('div');
+    holder.innerHTML = renderArtifactsHTML(artifacts);
+    const nextWrap = holder.firstElementChild;
+    if (!nextWrap) return;
+    if (oldWrap) {
+        oldWrap.replaceWith(nextWrap);
+    } else {
+        const actionsBar = container.querySelector('.msg-actions-bar');
+        if (actionsBar) container.insertBefore(nextWrap, actionsBar);
+        else container.appendChild(nextWrap);
+    }
+}
+
 // Add message ke chat
-function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null, agentActionData = null, msgId = null, isPinned = false) {
+function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null, agentActionData = null, msgId = null, isPinned = false, meta = null) {
     const hasText = content !== null && content !== undefined && String(content).trim().length > 0;
-    if (!hasText && !imageUrl && !docName && !docText && !agentActionData) {
+    const hasMeta = Boolean(meta && ((meta.agent_steps && meta.agent_steps.length) || meta.thought_content || (meta.artifacts && meta.artifacts.length) || meta.is_running));
+    if (!hasText && !imageUrl && !docName && !docText && !agentActionData && !hasMeta) {
         // Jangan pernah merender pesan hantu atau bubble kosong tanpa konten
         return null;
     }
@@ -1292,6 +1582,9 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         } else if (tool === 'realtime_clock') {
             toolIcon = 'ph-clock';
             toolTitle = 'Jam Dunia';
+        } else if (tool === 'archive_packager') {
+            toolIcon = 'ph-file-zip';
+            toolTitle = 'Agent Archive Packager';
         } else if (tool === 'local_autonomous_agent') {
             toolIcon = 'ph-terminal-window';
             toolTitle = 'Antigravity Local Agent';
@@ -1355,6 +1648,13 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         `;
     }
 
+    let agThoughtHTML = '';
+    let artifactsHTML = '';
+    if (role === 'assistant' && meta) {
+        agThoughtHTML = renderAgentThoughtHTML(meta);
+        artifactsHTML = renderArtifactsHTML(meta.artifacts);
+    }
+
     let innerBubbleHTML = '';
     innerBubbleHTML += `<div class="msg-pin-indicator ${pinnedState ? '' : 'hidden'}"><i class="ph-fill ph-push-pin"></i> <span data-i18n="pinned_badge">${t('pinned_badge')}</span></div>`;
     if (attachmentHTML) {
@@ -1366,7 +1666,9 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         ${role === 'assistant' ? avatarHTML : ''}
         <div class="bubble-container">
             ${statusCardHTML}
-            <div class="bubble" data-original-text="${escapedContent}">${innerBubbleHTML}</div>
+            ${agThoughtHTML}
+            <div class="bubble${!hasText && !attachmentHTML ? ' hidden' : ''}" data-original-text="${escapedContent}">${innerBubbleHTML}</div>
+            ${artifactsHTML}
             ${actionsBarHTML}
         </div>
         ${role === 'user' ? avatarHTML : ''}
@@ -1818,19 +2120,29 @@ async function sendMessage() {
             let activeAgentAction = null;
             let activeAssistantImgUrl = null;
             let lastRenderTime = 0;
+            let lastThoughtRenderTime = 0;
             let awaitingApproval = false;
             let lastAgentTaskId = null;
+            let liveThoughtText = '';
+            let liveThoughtDuration = null;
+            let liveAgentSteps = [];
+            let liveArtifacts = [];
 
-            const updateAssistantUI = (text, isDone = false) => {
-                const trimmedText = (text || '').trim();
+            const upsertLiveStep = (stepObj) => {
+                if (!stepObj || !stepObj.id) return;
+                const idx = liveAgentSteps.findIndex(s => s.id === stepObj.id);
+                if (idx >= 0) {
+                    liveAgentSteps[idx] = { ...liveAgentSteps[idx], ...stepObj };
+                } else {
+                    liveAgentSteps.push(stepObj);
+                }
+            };
+
+            const ensureAssistantMsgEl = () => {
                 if (!assistantMsgEl) {
-                    if (!trimmedText && !isDone) {
-                        // Jangan sembunyikan animasi loading jika token yang datang masih spasi/kosong
-                        return;
-                    }
                     assistantMsgEl = addMessage(
                         'assistant',
-                        trimmedText || text || '...',
+                        '',
                         activeAssistantImgUrl,
                         null,
                         null,
@@ -1838,13 +2150,34 @@ async function sendMessage() {
                         null,
                         activeAgentAction,
                         finalData ? finalData.assistant_message_id : null,
-                        false
+                        false,
+                        {
+                            agent_steps: liveAgentSteps,
+                            thought_content: liveThoughtText,
+                            thought_duration_sec: liveThoughtDuration,
+                            artifacts: liveArtifacts,
+                            is_running: true
+                        }
                     );
                     if (assistantMsgEl) {
                         showTyping(false);
                         assistantBubble = assistantMsgEl.querySelector('.bubble');
                         assistantTextEl = assistantMsgEl.querySelector('.msg-text');
                     }
+                }
+                return assistantMsgEl;
+            };
+
+            const updateAssistantUI = (text, isDone = false) => {
+                const trimmedText = (text || '').trim();
+                if (!assistantMsgEl) {
+                    if (!trimmedText && !isDone) {
+                        return;
+                    }
+                    ensureAssistantMsgEl();
+                }
+                if (assistantBubble && (trimmedText || activeAssistantImgUrl || isDone)) {
+                    assistantBubble.classList.remove('hidden');
                 }
                 if (!assistantTextEl && assistantBubble) {
                     let existingTextEl = assistantBubble.querySelector('.msg-text');
@@ -1935,6 +2268,56 @@ async function sendMessage() {
                                     updateTypingStatus(evData.status);
                                     if (status) status.textContent = evData.status;
                                 }
+                            } else if (evData.type === 'agent_trace_step') {
+                                if (evData.step) {
+                                    serverStatusReceived = true;
+                                    upsertLiveStep(evData.step);
+                                    ensureAssistantMsgEl();
+                                    syncAgThoughtInMsg(assistantMsgEl, {
+                                        agent_steps: liveAgentSteps,
+                                        thought_content: liveThoughtText,
+                                        thought_duration_sec: liveThoughtDuration,
+                                        is_running: true
+                                    });
+                                    if (evData.step.title && status) {
+                                        status.textContent = evData.step.title + '...';
+                                    }
+                                    scrollToBottom(false);
+                                }
+                            } else if (evData.type === 'thought') {
+                                serverStatusReceived = true;
+                                liveThoughtText += (evData.token || '');
+                                ensureAssistantMsgEl();
+                                const nowTh = Date.now();
+                                if (nowTh - lastThoughtRenderTime > 55) {
+                                    lastThoughtRenderTime = nowTh;
+                                    syncAgThoughtInMsg(assistantMsgEl, {
+                                        agent_steps: liveAgentSteps,
+                                        thought_content: liveThoughtText,
+                                        thought_duration_sec: liveThoughtDuration,
+                                        is_running: true
+                                    });
+                                    scrollToBottom(false);
+                                }
+                            } else if (evData.type === 'thought_done') {
+                                if (evData.duration_sec !== undefined) {
+                                    liveThoughtDuration = evData.duration_sec;
+                                }
+                                if (assistantMsgEl) {
+                                    syncAgThoughtInMsg(assistantMsgEl, {
+                                        agent_steps: liveAgentSteps,
+                                        thought_content: liveThoughtText,
+                                        thought_duration_sec: liveThoughtDuration,
+                                        is_running: true
+                                    });
+                                }
+                            } else if (evData.type === 'artifacts') {
+                                if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
+                                    liveArtifacts = evData.artifacts;
+                                    ensureAssistantMsgEl();
+                                    syncArtifactsInMsg(assistantMsgEl, liveArtifacts);
+                                    scrollToBottom(false);
+                                }
                             } else if (evData.type === 'agent_plan') {
                                 lastAgentTaskId = evData.task_id;
                                 createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, null);
@@ -1987,6 +2370,18 @@ async function sendMessage() {
                                 if (evData.agent_action) {
                                     activeAgentAction = evData.agent_action;
                                 }
+                                if (evData.thought_content) {
+                                    liveThoughtText = evData.thought_content;
+                                }
+                                if (evData.thought_duration_sec !== undefined && evData.thought_duration_sec !== null) {
+                                    liveThoughtDuration = evData.thought_duration_sec;
+                                }
+                                if (Array.isArray(evData.agent_steps) && evData.agent_steps.length) {
+                                    liveAgentSteps = evData.agent_steps;
+                                }
+                                if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
+                                    liveArtifacts = evData.artifacts;
+                                }
                             }
                         } catch (errParse) {
                             console.warn('[Stream JSON Parse Error]:', errParse, jsonStr);
@@ -2020,6 +2415,19 @@ async function sendMessage() {
             }
             updateAssistantUI(streamText, true);
                 if (assistantMsgEl) {
+                    if (liveAgentSteps.length || liveThoughtText) {
+                        liveAgentSteps = liveAgentSteps.map(s => s.status === 'running' ? { ...s, status: 'done' } : s);
+                        syncAgThoughtInMsg(assistantMsgEl, {
+                            agent_steps: liveAgentSteps,
+                            thought_content: liveThoughtText,
+                            thought_duration_sec: liveThoughtDuration,
+                            is_running: false,
+                            force_open: false
+                        });
+                    }
+                    if (liveArtifacts && liveArtifacts.length) {
+                        syncArtifactsInMsg(assistantMsgEl, liveArtifacts);
+                    }
                     if (finalData && finalData.assistant_message_id) {
                         assistantMsgEl.dataset.msgId = finalData.assistant_message_id;
                     }
@@ -2092,7 +2500,14 @@ async function sendMessage() {
                 null,
                 data.agent_action,
                 data.assistant_message_id || null,
-                false
+                false,
+                {
+                    thought_content: data.thought_content || null,
+                    thought_duration_sec: data.thought_duration_sec ?? null,
+                    agent_steps: data.agent_steps || [],
+                    artifacts: data.artifacts || [],
+                    is_running: false
+                }
             );
             clearPipelineSimulation();
             
@@ -2121,7 +2536,26 @@ async function sendMessage() {
             showTyping(false);
             status.textContent = t('status_stopped');
             const lastAssistantMsg = chatMessages ? chatMessages.querySelector('.message.assistant:last-child') : null;
-            if (!lastAssistantMsg || lastAssistantMsg.classList.contains('user')) {
+            if (lastAssistantMsg) {
+                const runningThought = lastAssistantMsg.querySelector('.ag-thought-block.is-running');
+                if (runningThought) {
+                    runningThought.classList.remove('is-running');
+                    runningThought.classList.add('is-done');
+                    runningThought.querySelectorAll('.ph-spinner').forEach(ic => {
+                        ic.className = 'ph ph-sparkle';
+                    });
+                    const titleSp = runningThought.querySelector('.ag-thought-title');
+                    if (titleSp) titleSp.textContent = 'Analysis stopped';
+                }
+                const lastBubble = lastAssistantMsg.querySelector('.bubble');
+                if (lastBubble && lastBubble.classList.contains('hidden')) {
+                    lastBubble.classList.remove('hidden');
+                    const mt = lastBubble.querySelector('.msg-text');
+                    if (mt && !mt.textContent.trim()) {
+                        mt.innerHTML = parseMessageContent('*Respons dihentikan oleh pengguna.*');
+                    }
+                }
+            } else {
                 addMessage('assistant', '*Respons dihentikan oleh pengguna.*');
             }
             if (lastAssistantMsg && typeof hljs !== 'undefined') {
@@ -2310,7 +2744,8 @@ function renderMessagesList(messages) {
     chatMessages.innerHTML = '';
     const validMessages = (messages || []).filter(msg => {
         const hasContent = msg.content !== null && msg.content !== undefined && String(msg.content).trim().length > 0;
-        return Boolean(hasContent || msg.image || msg.document_name || msg.document_text);
+        const hasArtifacts = Array.isArray(msg.artifacts) && msg.artifacts.length > 0;
+        return Boolean(hasContent || msg.image || msg.document_name || msg.document_text || hasArtifacts);
     });
     if (validMessages.length > 0) {
         validMessages.forEach(msg => {
@@ -2324,7 +2759,14 @@ function renderMessagesList(messages) {
                 msg.document_text || null,
                 null,
                 msg.id || null,
-                Boolean(msg.pinned)
+                Boolean(msg.pinned),
+                {
+                    thought_content: msg.thought_content || null,
+                    thought_duration_sec: msg.thought_duration_sec ?? null,
+                    agent_steps: msg.agent_steps || [],
+                    artifacts: msg.artifacts || [],
+                    is_running: false
+                }
             );
         });
     } else {

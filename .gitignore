@@ -22,9 +22,10 @@ model/*.bin
 .DS_Store
 Thumbs.db
 
-# Private user uploads
+# Private user uploads & generated agent artifacts
 *.log
 data/uploads/
+data/generated_files/
 clean_and_disable_winupdate.ps1
 
 # Node.js

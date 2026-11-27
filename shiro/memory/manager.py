@@ -585,12 +585,16 @@ class AdvancedMemoryManager:
         document_name: Optional[str] = None,
         document_url: Optional[str] = None,
         document_type: Optional[str] = None,
-        document_text: Optional[str] = None
+        document_text: Optional[str] = None,
+        thought_content: Optional[str] = None,
+        thought_duration_sec: Optional[float] = None,
+        agent_steps: Optional[List[Dict[str, Any]]] = None,
+        artifacts: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """Add message to short-term history and self-learn from conversation & response"""
         with self.lock:
             # Cegah penyimpanan pesan kosong/ghost asisten ke memori
-            if role == "assistant" and not (content or "").strip() and not image_path:
+            if role == "assistant" and not (content or "").strip() and not image_path and not artifacts:
                 return ""
             now_iso = datetime.now().isoformat()
             raw_id = f"{now_iso}:{role}:{(content or '')[:40]}:{len(self.short_term_history)}"
@@ -614,6 +618,17 @@ class AdvancedMemoryManager:
                 message["document_type"] = document_type
             if document_text:
                 message["document_text"] = document_text[:5000]
+            if thought_content and str(thought_content).strip():
+                message["thought_content"] = str(thought_content).strip()[:16000]
+            if thought_duration_sec is not None:
+                try:
+                    message["thought_duration_sec"] = round(float(thought_duration_sec), 2)
+                except Exception:
+                    pass
+            if agent_steps:
+                message["agent_steps"] = list(agent_steps)
+            if artifacts:
+                message["artifacts"] = list(artifacts)
             
             if role == "assistant":
                 message["actions"] = self._extract_actions(content)

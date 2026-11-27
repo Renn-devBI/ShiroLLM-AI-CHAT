@@ -5,6 +5,7 @@ Handles document upload, text extraction, previews, and static file/image servin
 """
 
 import os
+import re
 from flask import Blueprint, request, jsonify, send_file
 from shiro.auth import verify_api_key
 
@@ -71,7 +72,20 @@ def get_uploaded_file(filename):
         return jsonify({"error": "File tidak ditemukan"}), 404
     
     as_attachment = request.args.get('download', '0') == '1'
-    return send_file(target, as_attachment=as_attachment)
+    return send_file(target, as_attachment=as_attachment, download_name=os.path.basename(target))
+
+
+@documents_bp.route('/api/artifacts/<artifact_id>/<path:filename>', methods=['GET'])
+def get_generated_artifact(artifact_id, filename):
+    """Serve generated archive/file artifact from data/generated_files/ preserving exact filename."""
+    if not re.match(r'^[a-zA-Z0-9_-]{4,64}$', artifact_id or ''):
+        return jsonify({"error": "ID artifak tidak valid"}), 400
+    from shiro.agent.packager import GENERATED_ARTIFACTS_DIR
+    artifacts_root = os.path.abspath(os.path.join(GENERATED_ARTIFACTS_DIR, artifact_id))
+    target = os.path.abspath(os.path.join(artifacts_root, filename))
+    if os.path.commonpath([artifacts_root, target]) != artifacts_root or not os.path.isfile(target):
+        return jsonify({"error": "Berkas artifak tidak ditemukan"}), 404
+    return send_file(target, as_attachment=True, download_name=os.path.basename(target))
 
 @documents_bp.route('/api/document/preview', methods=['GET'])
 def preview_document():

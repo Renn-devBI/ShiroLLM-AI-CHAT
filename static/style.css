@@ -3611,3 +3611,295 @@ body.sidebar-resizing iframe {
         scroll-behavior: auto !important;
     }
 }
+
+/* ==========================================================================
+   Antigravity Agent Analysis Accordion & Exact Downloadable Artifacts
+   ========================================================================== */
+.ag-thought-block {
+    margin: 2px 0 8px;
+    width: 100%;
+    max-width: 100%;
+}
+
+.ag-thought-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 4px 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 12px;
+    transition: color 0.14s ease;
+}
+
+.ag-thought-toggle:hover {
+    color: var(--text-primary);
+}
+
+.ag-thought-rule {
+    flex: 1;
+    height: 1px;
+    border-top: 1px dashed var(--border-default);
+    opacity: 0.85;
+}
+
+.ag-thought-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.ag-thought-block.is-running .ag-thought-pill {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.ag-thought-caret {
+    font-size: 11px;
+    transition: transform 0.16s ease;
+}
+
+.ag-thought-block.is-open .ag-thought-caret {
+    transform: rotate(180deg);
+}
+
+.ag-thought-body {
+    display: none;
+    margin-top: 6px;
+    padding: 10px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+}
+
+.ag-thought-block.is-open .ag-thought-body {
+    display: block;
+}
+
+.ag-trace-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ag-trace-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.ag-trace-step-icon {
+    margin-top: 2px;
+    font-size: 13.5px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.ag-trace-step.status-running .ag-trace-step-icon {
+    color: var(--accent);
+}
+
+.ag-trace-step.status-done .ag-trace-step-icon {
+    color: #22c55e;
+}
+
+.ag-trace-step.status-failed .ag-trace-step-icon {
+    color: var(--danger);
+}
+
+.ag-trace-step-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.ag-trace-step-title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ag-trace-step-feedback {
+    color: var(--text-muted);
+    font-size: 11.5px;
+    margin-top: 1px;
+    word-break: break-word;
+}
+
+.ag-thought-reasoning {
+    margin-top: 9px;
+    padding-top: 9px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.ag-thought-reasoning-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+
+.ag-thought-reasoning-text {
+    max-height: 220px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.ag-artifacts-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    width: 100%;
+}
+
+.ag-artifact-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ag-artifact-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ag-artifact-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.ag-artifact-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.ag-artifact-meta {
+    min-width: 0;
+}
+
+.ag-artifact-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.ag-artifact-sub {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.ag-artifact-dl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: opacity 0.14s ease;
+}
+
+.ag-artifact-dl-btn:hover {
+    opacity: 0.9;
+}
+
+.ag-artifact-files-details {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 6px;
+}
+
+.ag-artifact-files-details summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.ag-artifact-files-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.ag-artifact-subfile-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-decoration: none;
+}
+
+.ag-artifact-subfile-link:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.ag-artifact-note {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.code-filename-badge {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.code-lang-sub {
+    margin-left: 6px;
+    font-size: 10.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}

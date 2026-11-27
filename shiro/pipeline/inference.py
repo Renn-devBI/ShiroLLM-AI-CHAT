@@ -193,10 +193,13 @@ def _prepare_inference_payload(
     has_doc = bool(document_info and document_info.get("text"))
     doc_name = document_info.get("filename", "Dokumen") if has_doc else None
 
-    # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math via Cloudflare 1.1.1.1 & Mozilla)
+    # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math, File/Archive Packager)
     agent_action_data = None
     web_data = None
     web_prompt_addon = ""
+    agent_intent_detected = "none"
+    generated_artifacts: List[Dict[str, Any]] = []
+    pending_archive_request: Optional[Dict[str, Any]] = None
 
     if raw_user_typed:
         try:
@@ -212,6 +215,7 @@ def _prepare_inference_payload(
             )
             agent_intent_res = detect_agent_intent(raw_user_typed, conversation_history=getattr(memory, 'short_term_history', None))
             agent_intent = agent_intent_res.get("intent", "none")
+            agent_intent_detected = agent_intent
             agent_params = agent_intent_res.get("params", {})
 
             if agent_intent != "none":
@@ -220,8 +224,77 @@ def _prepare_inference_payload(
                 tool_desc = ""
                 obs_summary = ""
                 structured_obs = None
+                custom_agent_prompt = ""
 
-                if agent_intent == "weather":
+                if agent_intent == "archive":
+                    from shiro.agent.packager import (
+                        extract_files_from_conversation,
+                        create_archive_artifact,
+                    )
+                    tool_name = "archive_packager"
+                    req_fmt = agent_params.get("format", "zip")
+                    req_arch_name = agent_params.get("archive_name")
+                    hist_src = (
+                        incoming_messages[:-1]
+                        if (incoming_messages and len(incoming_messages) > 1)
+                        else list(getattr(memory, "short_term_history", []) or [])
+                    )
+                    # Jika user meminta membuat berkas/proyek BARU lalu dikompres (mis. "buatkan login.app lalu kompres tar.gz"),
+                    # tunda pengemasan hingga post-LLM agar berkas baru yang dihasilkan ikut dikemas.
+                    low_req = raw_user_typed.lower()
+                    wants_new_generation = bool(
+                        re.search(r'\b(?:lalu|terus|kemudian|and\s+then|then)\b', low_req)
+                        or (
+                            re.search(r'\b(?:buatkan|buat|bikin|create|generate|write|tulis)\b', low_req)
+                            and (
+                                re.search(r'\b[A-Za-z0-9_\-]+\.(?!zip\b|tar\b|gz\b|7z\b|rar\b|tgz\b)[A-Za-z0-9]{1,12}\b', raw_user_typed, re.IGNORECASE)
+                                or any(k in low_req for k in ("website", "aplikasi", "program", "script", "skrip", "kode", "halaman", "login"))
+                            )
+                        )
+                    )
+                    extracted_files, inferred_proj = ([], None) if wants_new_generation else extract_files_from_conversation(hist_src)
+                    if extracted_files:
+                        arch_art = create_archive_artifact(
+                            extracted_files,
+                            fmt=req_fmt,
+                            archive_name=req_arch_name,
+                            project_name=inferred_proj,
+                        )
+                        generated_artifacts.append(arch_art)
+                        tool_desc = (
+                            f"Compressing {arch_art['file_count']} file(s) into "
+                            f"{arch_art['filename']} ({arch_art['format'].upper()}, {arch_art['size_label']})"
+                        )
+                        note_line = f"\nCatatan format: {arch_art['note']}" if arch_art.get("note") else ""
+                        obs_summary = (
+                            f"Arsip nyata `{arch_art['filename']}` ({arch_art['size_label']}) berhasil dibuat dari "
+                            f"{arch_art['file_count']} berkas: {', '.join(arch_art['files_included'])}.{note_line}"
+                        )
+                        structured_obs = arch_art
+                        custom_agent_prompt = (
+                            f"\n\n[HASIL EKSEKUSI AGEN PENGEMAS ARSIP — SUDAH BERHASIL DIBUAT]:\n"
+                            f"{obs_summary}\n"
+                            f"Tombol unduhan langsung untuk `{arch_art['filename']}` sudah otomatis disematkan di antarmuka obrolan di bawah jawabanmu.\n"
+                            f"[INSTRUKSI]:\n"
+                            f"1. Sampaikan kepada Kakak dengan antusias bahwa arsip `{arch_art['filename']}` ({arch_art['size_label']}) sudah jadi dan siap diunduh langsung lewat tombol di bawah.\n"
+                            f"2. Sebutkan daftar berkas di dalamnya ({', '.join(arch_art['files_included'])}) dan jelaskan singkat cara pakainya bila perlu.\n"
+                            f"3. DILARANG PERNAH mengatakan tidak bisa membuat/mengirim file .zip atau arsip, dan tidak perlu menulis ulang seluruh isi kode mentah kecuali diminta.\n"
+                        )
+                    else:
+                        pending_archive_request = dict(agent_params)
+                        tool_desc = f"Preparing to generate & compress files as .{req_fmt.upper()}"
+                        obs_summary = (
+                            f"Belum ada berkas program di riwayat percakapan; menugaskan model menghasilkan "
+                            f"berkas lengkap untuk dikemas otomatis menjadi .{req_fmt}."
+                        )
+                        structured_obs = {"pending": True, **agent_params}
+                        custom_agent_prompt = (
+                            f"\n\n[PERMINTAAN PEMBUATAN BERKAS + KOMPRESI OTOMATIS (.{req_fmt})]:\n"
+                            f"Sistem agen akan otomatis mengemas seluruh blok kode yang kamu hasilkan menjadi berkas arsip `.{req_fmt}` siap unduh.\n"
+                            f"Tulis setiap berkas secara LENGKAP dengan nama berkas eksplisit di judul atau header blok kode (contoh: `### File: app.py` atau ```` ```python:login.app ````). "
+                            f"Jangan katakan kamu tidak bisa membuat .{req_fmt}.\n"
+                        )
+                elif agent_intent == "weather":
                     tool_name = "weather_sat_check"
                     locs = agent_params.get("locations", ["Jakarta", "Tokyo"])
                     tool_desc = f"Membuka koneksi satelit cuaca via Cloudflare 1.1.1.1 untuk lokasi: {', '.join(locs)}"
@@ -306,14 +379,17 @@ def _prepare_inference_payload(
                     "status": "success" if is_tool_success else "failed"
                 }
 
-                web_prompt_addon = (
-                    f"\n\n[Informasi / Fakta Web Nyata Real-time]:\n"
-                    f"{obs_summary}\n\n"
-                    f"[Instruksi Karakter]:\n"
-                    f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta di atas.\n"
-                    f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH ada di atas.\n"
-                    f"3. DILARANG KERAS menyertakan header teknis, badge, nama tool/alat, browser Mozilla, Cloudflare, atau awalan '> 🌐'. Sampaikan murni dengan gaya bicara manis dan hangat khas Shiro.\n"
-                )
+                if custom_agent_prompt:
+                    web_prompt_addon = custom_agent_prompt
+                else:
+                    web_prompt_addon = (
+                        f"\n\n[Informasi / Fakta Web Nyata Real-time]:\n"
+                        f"{obs_summary}\n\n"
+                        f"[Instruksi Karakter]:\n"
+                        f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta di atas.\n"
+                        f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek di HP karena datanya SUDAH ada di atas.\n"
+                        f"3. DILARANG KERAS menyertakan header teknis, badge, nama tool/alat, browser Mozilla, Cloudflare, atau awalan '> 🌐'. Sampaikan murni dengan gaya bicara manis dan hangat khas Shiro.\n"
+                    )
         except Exception as e_agent:
             print(f"[Inference Agent Warning]: {e_agent}")
 
@@ -601,6 +677,13 @@ def _prepare_inference_payload(
                 "\n\n[Mode Seimbang ShiroHaru-Lyra Medium]: Jawab langsung dengan cepat, jelas, "
                 "dan lengkap tanpa proses berpikir berpanjang-panjang."
             )
+        else:
+            system_prompt += (
+                "\n\n[Antigravity Internal Analysis Mode]:\n"
+                "Before writing your final response, analyze the user's request carefully inside <think>...</think> "
+                "in clear, structured ENGLISH covering: (1) Request & Intent, (2) Technical/Contextual Plan & any helpful feedback/clarifications, "
+                "(3) Exact Filenames & Verification. Wait until after </think> to write your user-facing answer in the user's language (100% Indonesian for Indonesian input)."
+            )
 
     visual_evidence_text = ""
     has_vision_handler = bool(
@@ -770,12 +853,19 @@ def _prepare_inference_payload(
     remaining_space = max(256, effective_ctx - prompt_tokens_est - 128)
     max_output_tokens = min(desired_max, remaining_space)
 
+    disable_thinking = bool(
+        is_lyra_model
+        and not is_reasoning_enabled
+        and api_version != "v3"
+        and lyra_thinking_mode in ("off", "light")
+    )
+
     stop_tokens = [
         "<|im_end|>", "<|im_start|>", "<|eot_id|>", "<|end|>", "<|end_of_text|>",
         "\nUser:", "\nKakak:", "\nuser:", "\nAssistant:", "\nassistant:",
         "\n<|im_start|>user", "\n<|im_start|>assistant"
     ]
-    if not is_reasoning_enabled:
+    if disable_thinking and not is_reasoning_enabled:
         stop_tokens.extend(["\nOkay, let me", "\nThe user is"])
 
     tier_top_k = int(lyra_tier_info.get("top_k", 40)) if lyra_tier_info else 40
@@ -791,12 +881,35 @@ def _prepare_inference_payload(
     }
 
     call_kwargs = dict(gen_params)
-    disable_thinking = bool(
-        is_lyra_model
-        and not is_reasoning_enabled
-        and api_version != "v3"
-        and lyra_thinking_mode in ("off", "light")
-    )
+
+    tier_lbl_en = lyra_tier_info["label"] if lyra_tier_info else (active_model_name or "Standard")
+    mode_en = "Fast Agent Path" if disable_thinking else f"English Analysis ({lyra_thinking_mode or 'standard'})"
+    agent_steps: List[Dict[str, Any]] = [
+        {
+            "id": "analyze",
+            "title": "Analyze Request & Context",
+            "status": "done",
+            "feedback": (
+                f"Intent: {agent_intent_detected} · Context: {tier_lbl_en} ({effective_ctx:,} tokens) · "
+                f"Memory: {len(relevant_facts)} fact(s), {len(clean_context)} turn(s) · Mode: {mode_en}"
+            ),
+        }
+    ]
+    if generated_artifacts:
+        first_art = generated_artifacts[0]
+        agent_steps.append({
+            "id": "package",
+            "title": f"Compress Archive ({first_art['filename']})",
+            "status": "done",
+            "feedback": f"Packaged {first_art['file_count']} file(s) into {first_art['filename']} ({first_art['format'].upper()}, {first_art['size_label']})",
+        })
+    elif agent_action_data and agent_action_data.get("tool") != "archive_packager":
+        agent_steps.append({
+            "id": f"tool_{agent_action_data['tool']}",
+            "title": f"Execute Tool ({agent_action_data['tool']})",
+            "status": "done" if agent_action_data.get("status") == "success" else "failed",
+            "feedback": str(agent_action_data.get("description") or "")[:160],
+        })
 
     return {
         "t_start_total": t_start_total,
@@ -820,6 +933,10 @@ def _prepare_inference_payload(
         "visual_evidence_text": visual_evidence_text,
         "web_prompt_addon": web_prompt_addon,
         "agent_action_data": agent_action_data,
+        "agent_intent_detected": agent_intent_detected,
+        "generated_artifacts": generated_artifacts,
+        "pending_archive_request": pending_archive_request,
+        "agent_steps": agent_steps,
         "web_data": web_data,
         "api_version": api_version,
         "tools": tools,
@@ -836,7 +953,9 @@ def _finalize_inference_output(
     raw_reply: str,
     t_llm_dur: float,
     res: Optional[Dict[str, Any]] = None,
-    grounding_info: Optional[Dict[str, Any]] = None
+    grounding_info: Optional[Dict[str, Any]] = None,
+    thought_content_override: Optional[str] = None,
+    thought_duration_sec: Optional[float] = None
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     """
     Menjalankan Node 5 s/d Node 8: Filter, State Persistence Sync, dan Response Delivery Stream.
@@ -907,6 +1026,9 @@ def _finalize_inference_output(
     if not raw_reply and reasoning_content:
         raw_reply = reasoning_content
 
+    if thought_content_override and str(thought_content_override).strip():
+        reasoning_content = str(thought_content_override).strip()
+
     if not parsed_tool_calls and ("tool_calls" in raw_reply or "```json" in raw_reply):
         json_tc_match = re.search(r'```(?:json)?\s*(\{.*?"tool_calls".*?\})\s*```', raw_reply, flags=re.DOTALL)
         if not json_tc_match:
@@ -927,6 +1049,55 @@ def _finalize_inference_output(
 
     if not cleaned_reply and raw_reply:
         cleaned_reply = raw_reply.strip()
+
+    # Post-LLM Packaging & Exact Filename Artifacts (zip/tar.gz/7z atau file individual seperti login.app)
+    artifacts: List[Dict[str, Any]] = list(prep.get("generated_artifacts") or [])
+    agent_steps: List[Dict[str, Any]] = [dict(s) for s in (prep.get("agent_steps") or [])]
+    pending_arch = prep.get("pending_archive_request")
+    try:
+        from shiro.agent.packager import (
+            extract_named_files_from_markdown,
+            infer_project_name_from_text,
+            create_archive_artifact,
+            create_file_artifacts,
+        )
+        extracted_post = extract_named_files_from_markdown(cleaned_reply)
+        has_archive_already = any(a.get("kind") == "archive" for a in artifacts)
+        if pending_arch and not has_archive_already and extracted_post:
+            proj_name = infer_project_name_from_text(cleaned_reply, extracted_post)
+            arch_art = create_archive_artifact(
+                extracted_post,
+                fmt=pending_arch.get("format", "zip"),
+                archive_name=pending_arch.get("archive_name"),
+                project_name=proj_name,
+            )
+            artifacts.append(arch_art)
+            agent_steps.append({
+                "id": "package",
+                "title": f"Package Archive ({arch_art['filename']})",
+                "status": "done",
+                "feedback": f"Compressed {arch_art['file_count']} file(s) into {arch_art['filename']} ({arch_art['format'].upper()}, {arch_art['size_label']})",
+            })
+        elif not artifacts and extracted_post:
+            wants_file_download = bool(
+                re.search(r'\b[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,12}\b', raw_user_typed or "")
+                or any(
+                    kw in (raw_user_typed or "").lower()
+                    for kw in ("buatkan file", "buat file", "kirim file", "download", "unduh", "create file", "save as")
+                )
+            )
+            if wants_file_download:
+                file_arts = create_file_artifacts(extracted_post)
+                if file_arts:
+                    artifacts.extend(file_arts)
+                    agent_steps.append({
+                        "id": "files",
+                        "title": "Prepare Exact File Downloads",
+                        "status": "done",
+                        "feedback": "Exact file(s) ready: " + ", ".join(a["filename"] for a in file_arts),
+                    })
+    except Exception as e_pkg:
+        print(f"[Inference Packager Warning]: {e_pkg}")
 
     t_filter_dur = (time.perf_counter() - t0) * 1000
     nodes.append({
@@ -1054,6 +1225,11 @@ def _finalize_inference_output(
         "total_duration_ms": round(t_total_dur, 2),
         "user_input": raw_user_typed,
         "reply": delivery_reply,
+        "thought_content": reasoning_content,
+        "thought_duration_sec": thought_duration_sec,
+        "agent_steps": agent_steps,
+        "artifacts": artifacts,
+        "active_context_window": prep.get("effective_ctx", prep.get("active_ctx")),
         "agent_action": agent_action_data,
         "nodes": nodes
     }
@@ -1061,6 +1237,10 @@ def _finalize_inference_output(
 
     details = {
         "reasoning_content": reasoning_content,
+        "thought_duration_sec": thought_duration_sec,
+        "agent_steps": agent_steps,
+        "artifacts": artifacts,
+        "active_context_window": prep.get("effective_ctx", prep.get("active_ctx")),
         "tool_calls": parsed_tool_calls,
         "finish_reason": "tool_calls" if parsed_tool_calls else finish_reason,
         "trace": trace,
@@ -1284,6 +1464,21 @@ def get_shiro_reply(
             return err_msg, err_trace
         return err_msg
 
+def _split_partial_think_suffix(buf: str) -> Tuple[str, str]:
+    """Menahan sufiks parsial '<think>' atau '</think>' agar tag tidak terpotong antar-chunk SSE."""
+    if not buf:
+        return "", ""
+    low = buf.lower()
+    max_hold = 0
+    for tag in ("<think>", "</think>"):
+        for k in range(1, len(tag)):
+            if low.endswith(tag[:k]):
+                max_hold = max(max_hold, k)
+    if max_hold > 0:
+        return buf[:-max_hold], buf[-max_hold:]
+    return buf, ""
+
+
 def stream_shiro_reply(
     user_input: str,
     image_base64: Optional[Union[str, List[str]]] = None,
@@ -1303,6 +1498,10 @@ def stream_shiro_reply(
     Eksekusi streaming token neural real-time (Server-Sent Events generator).
     Yields events:
     - {'type': 'status', 'status': '...'}
+    - {'type': 'agent_trace_step', 'step': {'id': ..., 'title': ..., 'status': ..., 'feedback': ...}}
+    - {'type': 'thought', 'token': '...'}
+    - {'type': 'thought_done', 'duration_sec': ...}
+    - {'type': 'artifacts', 'artifacts': [...]}
     - {'type': 'agent_action', 'agent_action': ...}
     - {'type': 'token', 'token': '...'}
     - {'type': 'ping'}
@@ -1310,15 +1509,27 @@ def stream_shiro_reply(
     """
     t_start_total = time.perf_counter()
     try:
-        # Pre-detect intent untuk memancarkan status langsung ke antarmuka pengguna
+        # Pre-detect intent untuk memancarkan status & langkah analisis agen langsung ke UI
         raw_user_typed = (user_input or "").strip()
+        yield {
+            "type": "agent_trace_step",
+            "step": {
+                "id": "analyze",
+                "title": "Analyzing Request & Intent",
+                "status": "running",
+                "feedback": "Inspecting prompt context, active memory, and available agent tools...",
+            },
+        }
         if raw_user_typed:
             try:
                 from shiro.agent.tools import detect_agent_intent
                 mem_inst = state.init_memory()
                 intent_info = detect_agent_intent(raw_user_typed, conversation_history=getattr(mem_inst, 'short_term_history', None))
                 intent = intent_info.get("intent", "none")
-                if intent == "screenshot":
+                if intent == "archive":
+                    arch_fmt = intent_info.get("params", {}).get("format", "zip")
+                    yield {"type": "status", "status": f"Menganalisis & mengompres berkas ke .{arch_fmt}..."}
+                elif intent == "screenshot":
                     target_u = intent_info.get("params", {}).get("url", "")
                     yield {"type": "status", "status": f"Sedang mengambil tangkapan layar website ({target_u or 'web'})..."}
                 elif intent == "search":
@@ -1341,7 +1552,7 @@ def stream_shiro_reply(
                         _ai_name, _, _, _ = load_active_profiles()
                     except Exception:
                         _ai_name = "Shiro"
-                    yield {"type": "status", "status": f"{_ai_name} sedang berpikir..."}
+                    yield {"type": "status", "status": f"{_ai_name} sedang menganalisis..."}
             except Exception:
                 yield {"type": "status", "status": "Sedang berpikir..."}
         else:
@@ -1368,8 +1579,28 @@ def stream_shiro_reply(
             lyra_tier=lyra_tier,
             t_start_total=t_start_total
         )
+        for st_step in prep.get("agent_steps") or []:
+            yield {"type": "agent_trace_step", "step": st_step}
+        if prep.get("generated_artifacts"):
+            yield {"type": "artifacts", "artifacts": prep["generated_artifacts"]}
         if prep.get("agent_action_data"):
             yield {"type": "agent_action", "agent_action": prep["agent_action_data"]}
+
+        tier_lbl_live = (prep.get("lyra_tier_info") or {}).get("label") or (prep.get("active_model_name") or "Agent")
+        reason_fb = (
+            f"Running English reasoning & solution design ({tier_lbl_live})..."
+            if not prep.get("disable_thinking")
+            else f"Synthesizing direct response ({tier_lbl_live})..."
+        )
+        yield {
+            "type": "agent_trace_step",
+            "step": {
+                "id": "reason",
+                "title": "Reasoning & Solution Synthesis",
+                "status": "running",
+                "feedback": reason_fb,
+            },
+        }
 
         llm = prep["llm"]
         msgs = prep["msgs"]
@@ -1569,8 +1800,123 @@ def stream_shiro_reply(
 
             in_think = False
             thinking_status_sent = False
+            thought_acc = ""
+            thought_started_at: Optional[float] = None
+            thought_duration_sec: Optional[float] = None
+            tag_carry = ""
             t_first_token = None
             max_clause_len = 48 if lyra_tier_id == "low" else 80
+
+            def _emit_visible_token(vis_tok: str):
+                nonlocal clause_buf, streamed_reply_acc, last_ping_time, t_first_token
+                if not vis_tok:
+                    return []
+                out_events = []
+                if not streamed_reply_acc and not clause_buf:
+                    if not vis_tok.strip():
+                        return []
+                    vis_tok = vis_tok.lstrip()
+                if t_first_token is None and vis_tok.strip():
+                    t_first_token = time.perf_counter()
+
+                if not should_guard_id or (raw_reply.count("```") % 2 == 1):
+                    if clause_buf:
+                        flushed = _flush_stream_seg(clause_buf)
+                        streamed_reply_acc += flushed
+                        out_events.append({"type": "token", "token": flushed})
+                        clause_buf = ""
+                    streamed_reply_acc += vis_tok
+                    out_events.append({"type": "token", "token": vis_tok})
+                    last_ping_time = time.perf_counter()
+                else:
+                    clause_buf += vis_tok
+                    is_first_emit = not streamed_reply_acc
+                    buf_cap = 48 if is_first_emit else max_clause_len
+                    if "\n" in clause_buf:
+                        head, sep, tail = clause_buf.rpartition("\n")
+                        to_flush = head + sep
+                        if to_flush.count("*") % 2 == 0:
+                            flushed = _flush_stream_seg(to_flush)
+                            streamed_reply_acc += flushed
+                            out_events.append({"type": "token", "token": flushed})
+                            clause_buf = tail
+                            last_ping_time = time.perf_counter()
+                    elif clause_buf.count("*") % 2 == 0 and len(clause_buf) >= (20 if is_first_emit else 35):
+                        m_sent = re.search(r'^([\s\S]*?[.!?~]["\'*)]?\s+)([\s\S]*)$', clause_buf)
+                        if m_sent:
+                            head_part, tail_part = m_sent.group(1), m_sent.group(2)
+                            if head_part.count("*") % 2 == 0:
+                                flushed = _flush_stream_seg(head_part)
+                                streamed_reply_acc += flushed
+                                out_events.append({"type": "token", "token": flushed})
+                                clause_buf = tail_part
+                                last_ping_time = time.perf_counter()
+                        elif is_first_emit and re.search(r'\s$', clause_buf):
+                            flushed = _flush_stream_seg(clause_buf)
+                            streamed_reply_acc += flushed
+                            out_events.append({"type": "token", "token": flushed})
+                            clause_buf = ""
+                            last_ping_time = time.perf_counter()
+                    elif len(clause_buf) >= buf_cap:
+                        flushed = _flush_stream_seg(clause_buf)
+                        streamed_reply_acc += flushed
+                        out_events.append({"type": "token", "token": flushed})
+                        clause_buf = ""
+                        last_ping_time = time.perf_counter()
+                return out_events
+
+            def _process_stream_piece(piece_str: str):
+                nonlocal in_think, thinking_status_sent, thought_acc, thought_started_at, thought_duration_sec, last_ping_time
+                events_out = []
+                cur = piece_str
+                while cur:
+                    if not in_think:
+                        m_open = re.search(r'<think>', cur, flags=re.IGNORECASE)
+                        if m_open:
+                            before = cur[:m_open.start()]
+                            if before:
+                                events_out.extend(_emit_visible_token(before))
+                            in_think = True
+                            if thought_started_at is None:
+                                thought_started_at = time.perf_counter()
+                            if not thinking_status_sent:
+                                thinking_status_sent = True
+                                events_out.append({"type": "status", "status": f"{prep.get('ai_name', 'Shiro')} sedang menganalisis..."})
+                            cur = cur[m_open.end():]
+                        else:
+                            events_out.extend(_emit_visible_token(cur))
+                            cur = ""
+                    else:
+                        m_close = re.search(r'</think>', cur, flags=re.IGNORECASE)
+                        if m_close:
+                            th_seg = cur[:m_close.start()]
+                            if th_seg:
+                                thought_acc += th_seg
+                                events_out.append({"type": "thought", "token": th_seg})
+                            in_think = False
+                            dur_s = round(max(0.1, time.perf_counter() - (thought_started_at or time.perf_counter())), 1)
+                            thought_duration_sec = dur_s
+                            events_out.append({"type": "thought_done", "duration_sec": dur_s})
+                            events_out.append({
+                                "type": "agent_trace_step",
+                                "step": {
+                                    "id": "reason",
+                                    "title": "Reasoning & Solution Synthesis",
+                                    "status": "running",
+                                    "feedback": f"English analysis complete ({dur_s}s) — streaming response...",
+                                },
+                            })
+                            cur = cur[m_close.end():]
+                        else:
+                            thought_acc += cur
+                            events_out.append({"type": "thought", "token": cur})
+                            now_th = time.perf_counter()
+                            if now_th - last_ping_time > ping_interval:
+                                events_out.append({"type": "ping"})
+                                last_ping_time = now_th
+                            cur = ""
+                return events_out
+
             while True:
                 try:
                     ev_kind, ev_val = chunk_queue.get(timeout=ping_interval)
@@ -1580,6 +1926,13 @@ def stream_shiro_reply(
                     continue
 
                 if ev_kind == "end":
+                    if tag_carry:
+                        for ev_item in _process_stream_piece(tag_carry):
+                            yield ev_item
+                        tag_carry = ""
+                    if in_think and thought_started_at is not None and thought_duration_sec is None:
+                        thought_duration_sec = round(max(0.1, time.perf_counter() - thought_started_at), 1)
+                        yield {"type": "thought_done", "duration_sec": thought_duration_sec}
                     break
                 elif ev_kind == "error":
                     raise ev_val
@@ -1589,11 +1942,15 @@ def stream_shiro_reply(
                     if isinstance(res_sync, dict) and res_sync.get("choices"):
                         sync_text = res_sync["choices"][0].get("message", {}).get("content", "") or ""
                     if sync_text:
-                        if t_first_token is None:
-                            t_first_token = time.perf_counter()
                         raw_reply = sync_text
-                        streamed_reply_acc = sync_text
-                        yield {"type": "token", "token": sync_text}
+                        if not is_reasoning_enabled:
+                            for ev_item in _process_stream_piece(sync_text):
+                                yield ev_item
+                        else:
+                            if t_first_token is None:
+                                t_first_token = time.perf_counter()
+                            streamed_reply_acc = sync_text
+                            yield {"type": "token", "token": sync_text}
                     continue
 
                 chunk = ev_val
@@ -1605,75 +1962,13 @@ def stream_shiro_reply(
                 if token:
                     raw_reply += token
                     if not is_reasoning_enabled:
-                        if "<think>" in token or ("<think>" in raw_reply and "</think>" not in raw_reply):
-                            in_think = True
-                            if not thinking_status_sent:
-                                thinking_status_sent = True
-                                yield {"type": "status", "status": f"{prep.get('ai_name', 'Shiro')} sedang menalar mendalam..."}
-                            now = time.perf_counter()
-                            if now - last_ping_time > ping_interval:
-                                yield {"type": "ping"}
-                                last_ping_time = now
-                            continue
-                        elif in_think and "</think>" in token:
-                            in_think = False
-                            after_think = token.split("</think>", 1)[-1]
-                            if after_think:
-                                token = after_think
-                            else:
-                                continue
-
-                    # Jangan kirim spasi/newline kosong sebelum karakter terlihat pertama keluar (agar status UI tetap akurat)
-                    if not streamed_reply_acc and not clause_buf and not token.strip():
-                        continue
-
-                    if t_first_token is None and token.strip():
-                        t_first_token = time.perf_counter()
-
-                    if not should_guard_id or (raw_reply.count("```") % 2 == 1):
-                        if clause_buf:
-                            flushed = _flush_stream_seg(clause_buf)
-                            streamed_reply_acc += flushed
-                            yield {"type": "token", "token": flushed}
-                            clause_buf = ""
-                        streamed_reply_acc += token
-                        yield {"type": "token", "token": token}
-                        last_ping_time = time.perf_counter()
+                        ready_piece, tag_carry = _split_partial_think_suffix(tag_carry + token)
+                        if ready_piece:
+                            for ev_item in _process_stream_piece(ready_piece):
+                                yield ev_item
                     else:
-                        clause_buf += token
-                        is_first_emit = not streamed_reply_acc
-                        buf_cap = 48 if is_first_emit else max_clause_len
-                        if "\n" in clause_buf:
-                            head, sep, tail = clause_buf.rpartition("\n")
-                            to_flush = head + sep
-                            if to_flush.count("*") % 2 == 0:
-                                flushed = _flush_stream_seg(to_flush)
-                                streamed_reply_acc += flushed
-                                yield {"type": "token", "token": flushed}
-                                clause_buf = tail
-                                last_ping_time = time.perf_counter()
-                        elif clause_buf.count("*") % 2 == 0 and len(clause_buf) >= (20 if is_first_emit else 35):
-                            m_sent = re.search(r'^([\s\S]*?[.!?~]["\'*)]?\s+)([\s\S]*)$', clause_buf)
-                            if m_sent:
-                                head_part, tail_part = m_sent.group(1), m_sent.group(2)
-                                if head_part.count("*") % 2 == 0:
-                                    flushed = _flush_stream_seg(head_part)
-                                    streamed_reply_acc += flushed
-                                    yield {"type": "token", "token": flushed}
-                                    clause_buf = tail_part
-                                    last_ping_time = time.perf_counter()
-                            elif is_first_emit and re.search(r'\s$', clause_buf):
-                                flushed = _flush_stream_seg(clause_buf)
-                                streamed_reply_acc += flushed
-                                yield {"type": "token", "token": flushed}
-                                clause_buf = ""
-                                last_ping_time = time.perf_counter()
-                        elif len(clause_buf) >= buf_cap:
-                            flushed = _flush_stream_seg(clause_buf)
-                            streamed_reply_acc += flushed
-                            yield {"type": "token", "token": flushed}
-                            clause_buf = ""
-                            last_ping_time = time.perf_counter()
+                        for ev_item in _emit_visible_token(token):
+                            yield ev_item
 
                 now = time.perf_counter()
                 if now - last_ping_time > ping_interval:
@@ -1709,13 +2004,47 @@ def stream_shiro_reply(
         delivery_reply, trace, details = _finalize_inference_output(
             prep=prep,
             raw_reply=raw_reply,
-            t_llm_dur=t_llm_dur
+            t_llm_dur=t_llm_dur,
+            thought_content_override=thought_acc or None,
+            thought_duration_sec=thought_duration_sec,
         )
+
+        reason_done_step = {
+            "id": "reason",
+            "title": "Reasoning & Solution Synthesis",
+            "status": "done",
+            "feedback": (
+                f"English analysis ({thought_duration_sec}s) & answer complete ({round(t_llm_dur / 1000.0, 1)}s total)"
+                if thought_duration_sec is not None
+                else f"Response synthesized in {round(t_llm_dur / 1000.0, 1)}s"
+            ),
+        }
+        final_steps = list(details.get("agent_steps") or [])
+        replaced_reason = False
+        for idx_s, s_item in enumerate(final_steps):
+            if s_item.get("id") == "reason":
+                final_steps[idx_s] = reason_done_step
+                replaced_reason = True
+                break
+        if not replaced_reason:
+            final_steps.append(reason_done_step)
+
+        for st_emit in final_steps:
+            if st_emit.get("id") in ("reason", "package", "files"):
+                yield {"type": "agent_trace_step", "step": st_emit}
+
+        if details.get("artifacts") and not prep.get("generated_artifacts"):
+            yield {"type": "artifacts", "artifacts": details["artifacts"]}
 
         yield {
             "type": "done",
             "reply": delivery_reply,
             "raw_reply": raw_reply,
+            "thought_content": details.get("reasoning_content"),
+            "thought_duration_sec": thought_duration_sec,
+            "agent_steps": final_steps,
+            "artifacts": details.get("artifacts") or [],
+            "active_context_window": details.get("active_context_window"),
             "trace": trace,
             "agent_action": prep.get("agent_action_data")
         }

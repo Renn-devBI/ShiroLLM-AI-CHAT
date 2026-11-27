@@ -31,6 +31,12 @@ def _format_message_for_api(msg):
     doc = m.get("document_name")
     if doc and not m.get("document_url"):
         m["document_url"] = f"/api/files/{doc}"
+    if m.get("thought_content") is None:
+        m.pop("thought_content", None)
+    if m.get("agent_steps") and not isinstance(m.get("agent_steps"), list):
+        m["agent_steps"] = []
+    if m.get("artifacts") and not isinstance(m.get("artifacts"), list):
+        m["artifacts"] = []
     return m
 
 @chat_bp.route('/api/history', methods=['GET'])
@@ -40,7 +46,7 @@ def get_history():
         memory._ensure_message_ids(memory.short_term_history)
         valid_history = [
             _format_message_for_api(m) for m in memory.short_term_history
-            if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+            if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text") or m.get("artifacts")
         ]
         return jsonify({
             "history": valid_history,
@@ -376,21 +382,34 @@ def chat():
                     "active_session_id": active_sess_id,
                 })
 
-            reply, trace = get_shiro_reply(
+            reply, details = get_shiro_reply(
                 user_message,
                 image_base64=image_base64,
                 document_info=document_info,
                 max_tokens=user_max_tokens,
                 lyra_tier=req_lyra_tier,
-                return_trace=True
+                return_details=True
             )
+            trace = details.get("trace", {}) if isinstance(details, dict) else {}
+            thought_content = details.get("reasoning_content") if isinstance(details, dict) else None
+            thought_duration_sec = details.get("thought_duration_sec") if isinstance(details, dict) else None
+            agent_steps = details.get("agent_steps") if isinstance(details, dict) else None
+            artifacts = details.get("artifacts") if isinstance(details, dict) else None
             
             assistant_img_url = None
             if trace and isinstance(trace.get("agent_action"), dict):
                 assistant_img_url = trace["agent_action"].get("image_url")
 
             with memory.lock:
-                assistant_msg_id = memory.add_message("assistant", reply, image_path=assistant_img_url)
+                assistant_msg_id = memory.add_message(
+                    "assistant",
+                    reply,
+                    image_path=assistant_img_url,
+                    thought_content=thought_content,
+                    thought_duration_sec=thought_duration_sec,
+                    agent_steps=agent_steps,
+                    artifacts=artifacts,
+                )
                 memory.update_emotional_state_from_response(reply)
                 memory.update_mood_from_emotions()
                 
@@ -431,7 +450,11 @@ def chat():
                 "active_session_id": active_sess_id,
                 "session_title": session_title,
                 "pipeline_trace": trace,
-                "agent_action": trace.get("agent_action")
+                "agent_action": trace.get("agent_action"),
+                "thought_content": thought_content,
+                "thought_duration_sec": thought_duration_sec,
+                "agent_steps": agent_steps or [],
+                "artifacts": artifacts or []
             })
 
         # 3. STREAMING REAL-TIME SSE (text/event-stream)
@@ -443,6 +466,10 @@ def chat():
             agent_action = None
             agent_plan = None
             agent_status = None
+            thought_content = None
+            thought_duration_sec = None
+            agent_steps = None
+            artifacts = None
             client_disconnected = False
             active_stream_gen = None
 
@@ -531,6 +558,16 @@ def chat():
                             yield f"data: {py_json.dumps({'type': 'token', 'token': token})}\n\n"
                         elif ev_type == "status":
                             yield f"data: {py_json.dumps({'type': 'status', 'status': event.get('status', '')})}\n\n"
+                        elif ev_type == "agent_trace_step":
+                            yield f"data: {py_json.dumps({'type': 'agent_trace_step', 'step': event.get('step')})}\n\n"
+                        elif ev_type == "thought":
+                            yield f"data: {py_json.dumps({'type': 'thought', 'token': event.get('token', '')})}\n\n"
+                        elif ev_type == "thought_done":
+                            thought_duration_sec = event.get("duration_sec")
+                            yield f"data: {py_json.dumps({'type': 'thought_done', 'duration_sec': thought_duration_sec})}\n\n"
+                        elif ev_type == "artifacts":
+                            artifacts = event.get("artifacts") or []
+                            yield f"data: {py_json.dumps({'type': 'artifacts', 'artifacts': artifacts})}\n\n"
                         elif ev_type == "agent_action":
                             agent_action = event.get("agent_action")
                             if agent_action and agent_action.get("image_url"):
@@ -545,6 +582,14 @@ def chat():
                         elif ev_type == "done":
                             full_reply = event.get("reply", full_reply)
                             trace = event.get("trace")
+                            if event.get("thought_content"):
+                                thought_content = event.get("thought_content")
+                            if event.get("thought_duration_sec") is not None:
+                                thought_duration_sec = event.get("thought_duration_sec")
+                            if event.get("agent_steps"):
+                                agent_steps = event.get("agent_steps")
+                            if event.get("artifacts"):
+                                artifacts = event.get("artifacts")
                             if trace and isinstance(trace.get("agent_action"), dict):
                                 assistant_img_url = trace["agent_action"].get("image_url")
             except (GeneratorExit, BrokenPipeError, ConnectionResetError):
@@ -572,7 +617,15 @@ def chat():
                 try:
                     if full_reply and full_reply.strip():
                         with memory.lock:
-                            assistant_msg_id = memory.add_message("assistant", full_reply, image_path=assistant_img_url)
+                            assistant_msg_id = memory.add_message(
+                                "assistant",
+                                full_reply,
+                                image_path=assistant_img_url,
+                                thought_content=thought_content,
+                                thought_duration_sec=thought_duration_sec,
+                                agent_steps=agent_steps,
+                                artifacts=artifacts,
+                            )
                             memory.update_emotional_state_from_response(full_reply)
                             memory.update_mood_from_emotions()
                             
@@ -603,6 +656,10 @@ def chat():
                                 "session_title": session_title,
                                 "pipeline_trace": trace,
                                 "agent_action": agent_action or (trace.get("agent_action") if trace else None),
+                                "thought_content": thought_content,
+                                "thought_duration_sec": thought_duration_sec,
+                                "agent_steps": agent_steps or [],
+                                "artifacts": artifacts or [],
                                 "plan": agent_plan,
                                 "status": agent_status,
                                 "count": memory.system_metadata["total_turns"],
