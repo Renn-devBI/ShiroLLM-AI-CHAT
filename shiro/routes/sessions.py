@@ -11,6 +11,27 @@ from shiro.routes.chat import _format_message_for_api
 
 sessions_bp = Blueprint("sessions_bp", __name__)
 
+def _annotate_running_sessions(sessions: list) -> tuple:
+    running_ids = set(state.get_running_session_ids())
+    for s in sessions:
+        if isinstance(s, dict):
+            s["is_running"] = (s.get("id") in running_ids)
+    return sessions, sorted(running_ids)
+
+
+def _is_renderable_session_msg(m: dict) -> bool:
+    return bool(
+        (m.get("content") or "").strip()
+        or m.get("image")
+        or m.get("images")
+        or m.get("videos")
+        or m.get("document_name")
+        or m.get("documents")
+        or m.get("document_text")
+        or m.get("artifacts")
+    )
+
+
 @sessions_bp.route('/api/sessions', methods=['GET'])
 def list_sessions():
     if not verify_api_key(allow_web_ui=True):
@@ -26,10 +47,12 @@ def list_sessions():
             memory._ensure_message_ids(memory.short_term_history)
             valid_msgs = [
                 _format_message_for_api(m) for m in memory.short_term_history
-                if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+                if _is_renderable_session_msg(m)
             ]
+            sessions_out, running_list = _annotate_running_sessions(memory.get_sessions_list())
             return jsonify({
-                "sessions": memory.get_sessions_list(),
+                "sessions": sessions_out,
+                "running_sessions": running_list,
                 "active_session_id": active_id,
                 "messages": valid_msgs
             })
@@ -46,10 +69,12 @@ def create_session():
         memory = state.init_memory()
         with memory.lock:
             new_id = memory.create_new_session(title=title)
+            sessions_out, running_list = _annotate_running_sessions(memory.get_sessions_list())
             return jsonify({
                 "success": True,
                 "session_id": new_id,
-                "sessions": memory.get_sessions_list(),
+                "sessions": sessions_out,
+                "running_sessions": running_list,
                 "active_session_id": new_id,
                 "messages": []
             })
@@ -73,13 +98,15 @@ def switch_session():
             memory._ensure_message_ids(memory.short_term_history)
             valid_msgs = [
                 _format_message_for_api(m) for m in memory.short_term_history
-                if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+                if _is_renderable_session_msg(m)
             ]
+            sessions_out, running_list = _annotate_running_sessions(memory.get_sessions_list())
             return jsonify({
                 "success": True,
                 "active_session_id": session_id,
                 "messages": valid_msgs,
-                "sessions": memory.get_sessions_list()
+                "sessions": sessions_out,
+                "running_sessions": running_list,
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -102,12 +129,13 @@ def get_session(session_id):
                     "id": sess.get("id", session_id),
                     "title": sess.get("title", f"Chat {session_id[:8]}"),
                     "pinned": sess.get("pinned", False),
+                    "is_running": session_id in set(state.get_running_session_ids()),
                     "created_at": sess.get("created_at"),
                     "last_active": sess.get("last_active")
                 },
                 "messages": [
                     _format_message_for_api(m) for m in msgs
-                    if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text")
+                    if _is_renderable_session_msg(m)
                 ]
             })
     except Exception as e:
@@ -122,11 +150,13 @@ def delete_session(session_id):
         with memory.lock:
             ok = memory.delete_session(session_id)
             memory._ensure_message_ids(memory.short_term_history)
+            sessions_out, running_list = _annotate_running_sessions(memory.get_sessions_list())
             return jsonify({
                 "success": ok,
                 "active_session_id": memory.active_session_id,
                 "messages": [_format_message_for_api(m) for m in memory.short_term_history],
-                "sessions": memory.get_sessions_list()
+                "sessions": sessions_out,
+                "running_sessions": running_list,
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -576,6 +576,16 @@ class AdvancedMemoryManager:
             if "pinned" not in m:
                 m["pinned"] = False
     
+    def get_session_history(self, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Mengambil daftar pesan untuk sesi tertentu secara aman tanpa mengubah sesi aktif."""
+        with self.lock:
+            active_id = getattr(self, "active_session_id", "default")
+            if not session_id or session_id == active_id:
+                return list(self.short_term_history)
+            if hasattr(self, "sessions_store") and session_id in self.sessions_store:
+                return list(self.sessions_store[session_id].get("messages", []))
+            return []
+
     def add_message(
         self, 
         role: str, 
@@ -593,16 +603,29 @@ class AdvancedMemoryManager:
         thought_duration_sec: Optional[float] = None,
         agent_steps: Optional[List[Dict[str, Any]]] = None,
         artifacts: Optional[List[Dict[str, Any]]] = None,
-        agent_action: Optional[Dict[str, Any]] = None
+        agent_action: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
     ) -> str:
-        """Add message to short-term history and self-learn from conversation & response"""
+        """Add message to target session history and self-learn from conversation & response"""
         with self.lock:
             # Cegah penyimpanan pesan kosong/ghost asisten ke memori
             has_multi = bool(documents or images or videos)
             if role == "assistant" and not (content or "").strip() and not image_path and not artifacts and not has_multi:
                 return ""
+            active_id = getattr(self, "active_session_id", "default")
+            target_sid = (
+                session_id
+                if (session_id and hasattr(self, "sessions_store") and session_id in self.sessions_store)
+                else active_id
+            )
+            is_active_target = (target_sid == active_id)
+            target_len = (
+                len(self.short_term_history)
+                if is_active_target
+                else len(self.sessions_store.get(target_sid, {}).get("messages", []))
+            )
             now_iso = datetime.now().isoformat()
-            raw_id = f"{now_iso}:{role}:{(content or '')[:40]}:{len(self.short_term_history)}"
+            raw_id = f"{now_iso}:{role}:{(content or '')[:40]}:{target_sid}:{target_len}"
             msg_id = f"msg-{hashlib.md5(raw_id.encode('utf-8', errors='ignore')).hexdigest()[:10]}"
             message = {
                 "id": msg_id,
@@ -697,21 +720,32 @@ class AdvancedMemoryManager:
             if role == "assistant":
                 message["actions"] = self._extract_actions(content)
             
-            self.short_term_history.append(message)
-            
-            # Keep only recent messages
-            if len(self.short_term_history) > self.MAX_SHORT_TERM:
-                self.short_term_history = self.short_term_history[-self.MAX_SHORT_TERM:]
+            if is_active_target:
+                self.short_term_history.append(message)
 
-            # Sync to sessions_store
-            if hasattr(self, "sessions_store") and getattr(self, "active_session_id", None):
-                if self.active_session_id in self.sessions_store:
-                    self.sessions_store[self.active_session_id]["messages"] = list(self.short_term_history)
-                    self.sessions_store[self.active_session_id]["last_active"] = datetime.now().isoformat()
-                    if role == "user" and self.sessions_store[self.active_session_id].get("title", "") in ("Obrolan Utama", "Chat Baru", ""):
+                # Keep only recent messages
+                if len(self.short_term_history) > self.MAX_SHORT_TERM:
+                    self.short_term_history = self.short_term_history[-self.MAX_SHORT_TERM:]
+
+                # Sync to sessions_store
+                if hasattr(self, "sessions_store") and target_sid in self.sessions_store:
+                    self.sessions_store[target_sid]["messages"] = list(self.short_term_history)
+                    self.sessions_store[target_sid]["last_active"] = datetime.now().isoformat()
+                    if role == "user" and self.sessions_store[target_sid].get("title", "") in ("Obrolan Utama", "Chat Baru", ""):
                         c_title = content.strip()[:35]
                         if c_title:
-                            self.sessions_store[self.active_session_id]["title"] = c_title + ("..." if len(content) > 35 else "")
+                            self.sessions_store[target_sid]["title"] = c_title + ("..." if len(content) > 35 else "")
+            else:
+                sess_entry = self.sessions_store[target_sid]
+                sess_msgs = sess_entry.setdefault("messages", [])
+                sess_msgs.append(message)
+                if len(sess_msgs) > self.MAX_SHORT_TERM:
+                    sess_entry["messages"] = sess_msgs[-self.MAX_SHORT_TERM:]
+                sess_entry["last_active"] = datetime.now().isoformat()
+                if role == "user" and sess_entry.get("title", "") in ("Obrolan Utama", "Chat Baru", ""):
+                    c_title = content.strip()[:35]
+                    if c_title:
+                        sess_entry["title"] = c_title + ("..." if len(content) > 35 else "")
             
             # Update metadata
             self.system_metadata["last_interaction"] = message["timestamp"]

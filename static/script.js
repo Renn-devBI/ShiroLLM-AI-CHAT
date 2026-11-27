@@ -8,15 +8,120 @@ const resetBtn = document.getElementById('reset-btn');
 const memoryCount = document.getElementById('memory-count');
 const status = document.getElementById('status');
 
-// Notifikasi singkat non-blocking
-function showToast(message, duration = 2200) {
+// Notifikasi pojok kanan bawah (non-blocking & dapat ditutup)
+function _dismissToastEl(el) {
+    if (el && el.parentNode) {
+        el.remove();
+    }
+}
+
+function showToast(message, duration = 3000) {
     const stack = document.getElementById('toast-stack');
     if (!stack) { console.log(message); return; }
     const el = document.createElement('div');
     el.className = 'toast';
-    el.textContent = message;
+    el.setAttribute('role', 'status');
+    el.innerHTML = `
+        <i class="ph ph-info toast-icon" aria-hidden="true"></i>
+        <div class="toast-body">
+            <div class="toast-subtitle">${escapeHtml(message)}</div>
+        </div>
+        <button type="button" class="toast-close-btn" title="${escapeHtml(t('close_notif_tooltip'))}" aria-label="${escapeHtml(t('close_notif_tooltip'))}">
+            <i class="ph ph-x"></i>
+        </button>
+    `;
+    let timer = null;
+    const armTimer = (ms) => {
+        if (ms > 0) timer = setTimeout(() => _dismissToastEl(el), ms);
+    };
+    const closeBtn = el.querySelector('.toast-close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (timer) clearTimeout(timer);
+            _dismissToastEl(el);
+        });
+    }
+    el.addEventListener('mouseenter', () => {
+        if (timer) { clearTimeout(timer); timer = null; }
+    });
+    el.addEventListener('mouseleave', () => armTimer(Math.min(duration, 2000)));
     stack.appendChild(el);
-    setTimeout(() => el.remove(), duration);
+    armTimer(duration);
+}
+
+function dismissSessionDoneNotifications(sessionId) {
+    const stack = document.getElementById('toast-stack');
+    if (!stack || !sessionId) return;
+    stack.querySelectorAll('.toast-session-notif').forEach((node) => {
+        if (node.dataset.sessionId === sessionId) {
+            _dismissToastEl(node);
+        }
+    });
+}
+
+function showSessionDoneNotification({ sessionId, sessionTitle, isError = false, errorText = '' } = {}) {
+    const stack = document.getElementById('toast-stack');
+    if (!stack || !sessionId) return;
+    dismissSessionDoneNotifications(sessionId);
+
+    const safeTitle = sessionTitle || getSessionTitleById(sessionId);
+    const isOtherSession = sessionId !== activeSessionId;
+    const titleTxt = isError ? t('session_error_title') : t('session_done_title');
+    const subTxt = isError
+        ? `${safeTitle}${errorText ? ` — ${errorText}` : ''}`
+        : `${safeTitle} · ${t('session_done_desc')}`;
+
+    const el = document.createElement('div');
+    el.className = `toast toast-session-notif ${isError ? 'toast-error' : 'toast-done'}`;
+    el.dataset.sessionId = sessionId;
+    el.setAttribute('role', 'status');
+    el.innerHTML = `
+        <i class="ph-fill ${isError ? 'ph-warning-circle' : 'ph-check-circle'} toast-icon" aria-hidden="true"></i>
+        <div class="toast-body">
+            <div class="toast-title">${escapeHtml(titleTxt)}</div>
+            <div class="toast-subtitle">${escapeHtml(subTxt)}</div>
+        </div>
+        <div class="toast-actions">
+            ${isOtherSession ? `<button type="button" class="toast-open-btn">${escapeHtml(t('open_session_btn'))}</button>` : ''}
+            <button type="button" class="toast-close-btn" title="${escapeHtml(t('close_notif_tooltip'))}" aria-label="${escapeHtml(t('close_notif_tooltip'))}">
+                <i class="ph ph-x"></i>
+            </button>
+        </div>
+    `;
+
+    let timer = null;
+    const autoCloseMs = isOtherSession ? 0 : 8000;
+    const armTimer = (ms) => {
+        if (ms > 0) timer = setTimeout(() => _dismissToastEl(el), ms);
+    };
+
+    const openBtn = el.querySelector('.toast-open-btn');
+    if (openBtn) {
+        openBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (timer) clearTimeout(timer);
+            _dismissToastEl(el);
+            switchSession(sessionId);
+        });
+    }
+    const closeBtn = el.querySelector('.toast-close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (timer) clearTimeout(timer);
+            _dismissToastEl(el);
+        });
+    }
+    el.addEventListener('mouseenter', () => {
+        if (timer) { clearTimeout(timer); timer = null; }
+    });
+    el.addEventListener('mouseleave', () => {
+        if (autoCloseMs > 0) armTimer(3500);
+    });
+
+    stack.appendChild(el);
+    if (autoCloseMs > 0) armTimer(autoCloseMs);
 }
 
 function escapeHtml(str) {
@@ -58,10 +163,13 @@ let userProfile = null;
 let aiProfile = null;
 let triggerTimer;
 
-// State tracking
-let isGenerating = false;
-let abortController = null;
-let lastGenerationAborted = false;
+// State tracking (per-session concurrent runs, Antigravity-style switching)
+const sessionRuns = new Map();
+const sessionQueues = new Map();
+const unreadDoneSessions = new Set();
+let serverRunningSessions = new Set();
+let sessionSwitchSeq = 0;
+
 let activeSessionId = 'default';
 let attachedDocument = null;
 let attachedImage = null;
@@ -69,7 +177,6 @@ let attachedDocuments = [];
 let attachedImages = [];
 let attachedVideos = [];
 let pendingUploads = [];
-let queuedMessages = [];
 let queuedPanelCollapsed = false;
 let inFlightUploadsCount = 0;
 let activeUploadPromises = [];
@@ -77,6 +184,180 @@ let enableTrainingLogging = true;
 let roleplayEnabled = true;
 let currentLang = localStorage.getItem('shiro_lang') || 'id';
 let currentUILang = currentLang;
+
+function getSessionQueue(sid = activeSessionId) {
+    const key = sid || 'default';
+    if (!sessionQueues.has(key)) {
+        sessionQueues.set(key, []);
+    }
+    return sessionQueues.get(key);
+}
+
+function isSessionRunning(sid = activeSessionId) {
+    const key = sid || 'default';
+    const r = sessionRuns.get(key);
+    return Boolean((r && r.isRunning) || serverRunningSessions.has(key));
+}
+
+function isActiveSessionGenerating() {
+    const r = sessionRuns.get(activeSessionId || 'default');
+    return Boolean(r && r.isRunning);
+}
+
+function isAnySessionRunning() {
+    for (const r of sessionRuns.values()) {
+        if (r && r.isRunning) return true;
+    }
+    return serverRunningSessions.size > 0;
+}
+
+function getSessionTitleById(sid) {
+    if (!sid) return 'Chat';
+    const found = (currentSessionsData || []).find(s => s.id === sid);
+    if (found && found.title) return found.title;
+    const run = sessionRuns.get(sid);
+    if (run && run.sessionTitle) return run.sessionTitle;
+    return `Chat ${String(sid).slice(0, 6)}`;
+}
+
+function detachRunDOMRefs(run) {
+    if (!run) return;
+    run.userMsgEl = null;
+    run.assistantMsgEl = null;
+    run.assistantBubble = null;
+    run.assistantTextEl = null;
+}
+
+function detachAllRunDOMRefs() {
+    for (const run of sessionRuns.values()) {
+        detachRunDOMRefs(run);
+    }
+}
+
+function updateSidebarRunningIndicators() {
+    if (sidebarSessionList) {
+        sidebarSessionList.querySelectorAll('.session-item[data-session-id]').forEach((item) => {
+            const sid = item.dataset.sessionId;
+            const running = isSessionRunning(sid);
+            const hasUnread = !running && unreadDoneSessions.has(sid) && sid !== activeSessionId;
+            item.classList.toggle('is-running', running);
+            item.classList.toggle('is-unread-done', hasUnread);
+            const content = item.querySelector('.session-item-content');
+            if (!content) return;
+            const oldRunBadge = content.querySelector('.session-running-badge');
+            const oldDoneDot = content.querySelector('.session-done-dot');
+            if (running) {
+                if (oldDoneDot) oldDoneDot.remove();
+                if (!oldRunBadge) {
+                    const badge = document.createElement('span');
+                    badge.className = 'session-running-badge';
+                    badge.title = t('session_running_label');
+                    badge.innerHTML = '<span class="ag-spinner-ring" aria-hidden="true"></span>';
+                    const pinBadge = content.querySelector('.session-pin-badge');
+                    if (pinBadge) content.insertBefore(badge, pinBadge);
+                    else content.appendChild(badge);
+                }
+            } else {
+                if (oldRunBadge) oldRunBadge.remove();
+                if (hasUnread) {
+                    if (!oldDoneDot) {
+                        const dot = document.createElement('span');
+                        dot.className = 'session-done-dot';
+                        dot.title = t('session_done_title');
+                        const pinBadge = content.querySelector('.session-pin-badge');
+                        if (pinBadge) content.insertBefore(dot, pinBadge);
+                        else content.appendChild(dot);
+                    }
+                } else if (oldDoneDot) {
+                    oldDoneDot.remove();
+                }
+            }
+        });
+    }
+    if (sessionSelect) {
+        Array.from(sessionSelect.options).forEach((opt) => {
+            const sid = opt.value;
+            const found = (currentSessionsData || []).find(s => s.id === sid);
+            if (!found) return;
+            const baseTxt = (found.pinned ? '📌 ' : '') + (found.title || `Chat ${sid.slice(0, 6)}`);
+            if (isSessionRunning(sid)) opt.textContent = `⏳ ${baseTxt}`;
+            else if (unreadDoneSessions.has(sid) && sid !== activeSessionId) opt.textContent = `✓ ${baseTxt}`;
+            else opt.textContent = baseTxt;
+        });
+    }
+}
+
+function reattachActiveSessionRunDOM(run) {
+    if (!run || !run.isRunning || run.sessionId !== activeSessionId) return;
+    const hasProgress = Boolean(
+        run.streamText
+        || run.liveThoughtText
+        || (run.liveAgentSteps && run.liveAgentSteps.length)
+        || (run.liveArtifacts && run.liveArtifacts.length)
+        || run.activeAgentAction
+    );
+    if (!hasProgress) {
+        showTyping(true, run.statusText || t('status_thinking'));
+        return;
+    }
+    showTyping(false);
+    if (!run.assistantMsgEl) {
+        run.assistantMsgEl = addMessage(
+            'assistant',
+            run.streamText || '',
+            run.activeAssistantImgUrl,
+            null,
+            null,
+            null,
+            null,
+            run.activeAgentAction,
+            null,
+            false,
+            {
+                agent_steps: run.liveAgentSteps,
+                thought_content: run.liveThoughtText,
+                thought_duration_sec: run.liveThoughtDuration,
+                artifacts: run.liveArtifacts,
+                is_running: true
+            }
+        );
+        if (run.assistantMsgEl) {
+            run.assistantBubble = run.assistantMsgEl.querySelector('.bubble');
+            run.assistantTextEl = run.assistantMsgEl.querySelector('.msg-text');
+            if (run.assistantTextEl && run.streamText) {
+                let disp = run.streamText;
+                if (((disp.match(/```/g) || []).length) % 2 === 1) disp += '\n```';
+                run.assistantTextEl.innerHTML = parseMessageContent(disp);
+                if (typeof hljs !== 'undefined') {
+                    run.assistantMsgEl.querySelectorAll('pre code[class*="language-"]').forEach(block => {
+                        try { hljs.highlightElement(block); } catch (_) {}
+                    });
+                }
+            }
+        }
+    }
+}
+
+function syncActiveSessionUI() {
+    const run = sessionRuns.get(activeSessionId || 'default');
+    const runningHere = Boolean(run && run.isRunning);
+    setInputLock(runningHere);
+    renderQueuedMessagesPanel();
+    if (pipelineNavDot) {
+        pipelineNavDot.classList.toggle('hidden', !runningHere);
+    }
+    if (runningHere) {
+        if (status) status.textContent = run.statusText || t('status_thinking');
+        reattachActiveSessionRunDOM(run);
+    } else if (isSessionRunning(activeSessionId)) {
+        showTyping(true, t('status_thinking'));
+        if (status) status.textContent = t('status_thinking');
+    } else {
+        showTyping(false);
+        if (status) status.textContent = t('status_ready');
+    }
+    updateSidebarRunningIndicators();
+}
 
 // State Mode Konteks Antigravity khusus ShiroHaru-Lyra-Agent
 const LYRA_DISPLAY_NAME = 'ShiroHaru-Lyra-Agent';
@@ -308,7 +589,13 @@ const SHIRO_I18N = {
         image_ready_sub: 'Gambar siap',
         queued_title: 'Pesan Terantre',
         queued_subtitle: 'Terkirim otomatis setelah asisten selesai bekerja',
-        sources_browser: 'Sumber Browser'
+        sources_browser: 'Sumber Browser',
+        session_running_label: 'Sedang berjalan',
+        session_done_title: 'Sesi selesai diproses',
+        session_done_desc: 'Respons selesai dan siap dibaca.',
+        session_error_title: 'Sesi berhenti karena kendala',
+        open_session_btn: 'Buka',
+        close_notif_tooltip: 'Tutup notifikasi'
     },
     en: {
         new_chat: 'New chat',
@@ -506,7 +793,13 @@ const SHIRO_I18N = {
         image_ready_sub: 'Image ready',
         queued_title: 'Queued Messages',
         queued_subtitle: 'Sends after agent finishes working',
-        sources_browser: 'Browser Sources'
+        sources_browser: 'Browser Sources',
+        session_running_label: 'Running',
+        session_done_title: 'Session completed',
+        session_done_desc: 'Response finished and ready to view.',
+        session_error_title: 'Session stopped with error',
+        open_session_btn: 'Open',
+        close_notif_tooltip: 'Dismiss notification'
     }
 };
 
@@ -711,7 +1004,7 @@ function updateScrollBottomBtnVisibility() {
     const dist = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
     const shouldShow = dist > 70;
     scrollBottomBtn.classList.toggle('hidden', !shouldShow);
-    if (shouldShow && isGenerating) {
+    if (shouldShow && isActiveSessionGenerating()) {
         scrollBottomBtn.classList.add('is-streaming');
     } else if (scrollBottomBtn) {
         scrollBottomBtn.classList.remove('is-streaming');
@@ -725,7 +1018,7 @@ if (chatViewport) {
             isUserScrolledUp = true;
             if (scrollBottomBtn) {
                 scrollBottomBtn.classList.remove('hidden');
-                if (isGenerating) scrollBottomBtn.classList.add('is-streaming');
+                if (isActiveSessionGenerating()) scrollBottomBtn.classList.add('is-streaming');
             }
         } else if (e.deltaY > 0) {
             const dist = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
@@ -1323,7 +1616,7 @@ function editUserPrompt(btn) {
 }
 
 function regenerateLastResponse() {
-    if (isGenerating) return;
+    if (isActiveSessionGenerating()) return;
     const userMessages = document.querySelectorAll('.message.user .bubble');
     if (userMessages.length === 0) return;
     const lastUserBubble = userMessages[userMessages.length - 1];
@@ -2115,7 +2408,7 @@ function hasComposerDraftContent() {
 
 function updateComposerSendButton() {
     if (!sendBtn) return;
-    if (isGenerating) {
+    if (isActiveSessionGenerating()) {
         sendBtn.disabled = false;
         sendBtn.classList.add('is-queue-mode');
         if (hasComposerDraftContent()) {
@@ -2141,6 +2434,7 @@ function toggleQueuedMessagesPanel() {
 function renderQueuedMessagesPanel() {
     const panel = document.getElementById('queued-messages-panel');
     if (!panel) return;
+    const queuedMessages = getSessionQueue(activeSessionId);
     if (!Array.isArray(queuedMessages) || queuedMessages.length === 0) {
         panel.classList.add('hidden');
         panel.innerHTML = '';
@@ -2215,11 +2509,12 @@ function renderQueuedMessagesPanel() {
 }
 
 function promoteQueuedMessage(idx) {
+    const queuedMessages = getSessionQueue(activeSessionId);
     if (idx < 0 || idx >= queuedMessages.length) return;
-    if (!isGenerating) {
+    if (!isActiveSessionGenerating()) {
         const [item] = queuedMessages.splice(idx, 1);
         renderQueuedMessagesPanel();
-        sendMessage(item);
+        sendMessage(item, activeSessionId);
         return;
     }
     if (idx > 0) {
@@ -2230,6 +2525,7 @@ function promoteQueuedMessage(idx) {
 }
 
 function editQueuedMessage(idx) {
+    const queuedMessages = getSessionQueue(activeSessionId);
     if (idx < 0 || idx >= queuedMessages.length) return;
     const [item] = queuedMessages.splice(idx, 1);
     renderQueuedMessagesPanel();
@@ -2246,12 +2542,13 @@ function editQueuedMessage(idx) {
 }
 
 function removeQueuedMessage(idx) {
+    const queuedMessages = getSessionQueue(activeSessionId);
     if (idx < 0 || idx >= queuedMessages.length) return;
     queuedMessages.splice(idx, 1);
     renderQueuedMessagesPanel();
 }
 
-async function enqueueCurrentComposer() {
+async function enqueueCurrentComposer(targetSid = activeSessionId) {
     if (typeof activeUploadPromises !== 'undefined' && activeUploadPromises.length > 0) {
         if (status) {
             status.textContent = currentLang === 'en'
@@ -2268,6 +2565,7 @@ async function enqueueCurrentComposer() {
         return;
     }
 
+    const queuedMessages = getSessionQueue(targetSid || activeSessionId);
     queuedMessages.push({
         message: msgText,
         images: [...attachedImages],
@@ -2353,7 +2651,7 @@ function startTriggerTimer() {
     const naturalDelay = Math.floor(Math.random() * (240000 - 150000 + 1)) + 150000;
     
     triggerTimer = setTimeout(() => {
-        if (isGenerating || (userInput && userInput.value.trim().length > 0)) return; 
+        if (isAnySessionRunning() || (userInput && userInput.value.trim().length > 0)) return; 
 
         fetch('/api/trigger', {
             method: 'POST',
@@ -2369,10 +2667,11 @@ function startTriggerTimer() {
     }, naturalDelay);
 }
 
-// Send message main function
-async function sendMessage(overridePayload = null) {
-    if (!overridePayload && isGenerating) {
-        await enqueueCurrentComposer();
+// Send message main function (isolated per session so switching chats never interrupts or blocks background runs)
+async function sendMessage(overridePayload = null, explicitSessionId = null) {
+    const targetSessionId = explicitSessionId || activeSessionId || 'default';
+    if (!overridePayload && isSessionRunning(targetSessionId)) {
+        await enqueueCurrentComposer(targetSessionId);
         return;
     }
 
@@ -2389,23 +2688,63 @@ async function sendMessage(overridePayload = null) {
         ? [...(overridePayload.videos || [])]
         : [...attachedVideos];
 
-    if ((!message && !sendingImages.length && !sendingDocs.length && !sendingVideos.length) || isGenerating) return;
+    if ((!message && !sendingImages.length && !sendingDocs.length && !sendingVideos.length) || isSessionRunning(targetSessionId)) return;
 
     clearTimeout(triggerTimer);
-    lastGenerationAborted = false;
-    isGenerating = true;
-    isUserScrolledUp = false;
-    if (scrollBottomBtn) {
-        scrollBottomBtn.classList.add('hidden');
-        scrollBottomBtn.classList.remove('is-streaming');
+    unreadDoneSessions.delete(targetSessionId);
+
+    const run = {
+        sessionId: targetSessionId,
+        sessionTitle: getSessionTitleById(targetSessionId),
+        isRunning: true,
+        aborted: false,
+        abortController: new AbortController(),
+        statusText: t('status_thinking'),
+        serverStatusReceived: false,
+        streamText: '',
+        liveThoughtText: '',
+        liveThoughtDuration: null,
+        liveAgentSteps: [],
+        liveArtifacts: [],
+        activeAgentAction: null,
+        activeAssistantImgUrl: null,
+        userMsgEl: null,
+        assistantMsgEl: null,
+        assistantBubble: null,
+        assistantTextEl: null,
+        userMsgId: null,
+        lastAgentTaskId: null,
+        awaitingApproval: false,
+        finalData: null,
+        typingProgressInterval: null,
+        hadError: false,
+        errorText: ''
+    };
+    sessionRuns.set(targetSessionId, run);
+
+    const isMounted = () => activeSessionId === targetSessionId;
+    const syncRunTitle = (newTitle) => {
+        if (!newTitle) return;
+        run.sessionTitle = newTitle;
+        const found = (currentSessionsData || []).find(s => s.id === targetSessionId);
+        if (found) found.title = newTitle;
+    };
+
+    if (isMounted()) {
+        isUserScrolledUp = false;
+        if (scrollBottomBtn) {
+            scrollBottomBtn.classList.add('hidden');
+            scrollBottomBtn.classList.remove('is-streaming');
+        }
+        setInputLock(true);
     }
-    setInputLock(true);
+    updateSidebarRunningIndicators();
 
     const sendingImage = sendingImages[0] || null;
     const currentImgUrl = sendingImage ? sendingImage.dataUrl : null;
     const sendingDoc = sendingDocs[0] || null;
 
-    if (!overridePayload) {
+    if (!overridePayload && isMounted()) {
         if (userInput) {
             userInput.value = '';
             adjustInputHeight();
@@ -2414,7 +2753,7 @@ async function sendMessage(overridePayload = null) {
         clearAttachedDocument();
         clearAttachedVideo();
     }
-    updateComposerSendButton();
+    if (isMounted()) updateComposerSendButton();
     
     let displayMsg = message;
     if (!displayMsg) {
@@ -2425,39 +2764,38 @@ async function sendMessage(overridePayload = null) {
         displayMsg = `Kakak melampirkan ${partsDesc.join(' + ')}. Shiro, tolong pelajari semuanya ya!`;
     }
     
-    const userMsgEl = addMessage(
-        'user', 
-        displayMsg, 
-        currentImgUrl, 
-        sendingDoc ? sendingDoc.filename : null,
-        sendingDoc ? sendingDoc.url : null,
-        sendingDoc ? sendingDoc.file_type : null,
-        sendingDoc ? sendingDoc.text : null,
-        null,
-        null,
-        false,
-        {
-            documents: sendingDocs,
-            images: sendingImages.map(im => im.dataUrl),
-            videos: sendingVideos,
-        }
-    );
-    
-    status.textContent = t('status_thinking');
-    showTyping(true, t('status_thinking'));
-    if (pipelineNavDot) pipelineNavDot.classList.remove('hidden');
-    startPipelineAnimation(displayMsg);
+    if (isMounted()) {
+        run.userMsgEl = addMessage(
+            'user', 
+            displayMsg, 
+            currentImgUrl, 
+            sendingDoc ? sendingDoc.filename : null,
+            sendingDoc ? sendingDoc.url : null,
+            sendingDoc ? sendingDoc.file_type : null,
+            sendingDoc ? sendingDoc.text : null,
+            null,
+            null,
+            false,
+            {
+                documents: sendingDocs,
+                images: sendingImages.map(im => im.dataUrl),
+                videos: sendingVideos,
+            }
+        );
+        if (status) status.textContent = run.statusText;
+        showTyping(true, run.statusText);
+        if (pipelineNavDot) pipelineNavDot.classList.remove('hidden');
+        startPipelineAnimation(displayMsg);
+    }
 
-    let typingProgressInterval = null;
     let elapsedSec = 0;
-    let serverStatusReceived = false;
-    typingProgressInterval = setInterval(() => {
+    run.typingProgressInterval = setInterval(() => {
         elapsedSec++;
-        if (!isGenerating) {
-            clearInterval(typingProgressInterval);
+        if (!run.isRunning) {
+            clearInterval(run.typingProgressInterval);
             return;
         }
-        if (serverStatusReceived) return;
+        if (run.serverStatusReceived) return;
         let nextMsg = null;
         if (elapsedSec === 4) {
             nextMsg = t('status_processing') || 'Shiro sedang menganalisis pesan...';
@@ -2467,16 +2805,18 @@ async function sendMessage(overridePayload = null) {
             nextMsg = 'Sedang memproses instruksi mendalam...';
         }
         if (nextMsg) {
-            updateTypingStatus(nextMsg);
-            if (status) status.textContent = nextMsg;
+            run.statusText = nextMsg;
+            if (isMounted()) {
+                updateTypingStatus(nextMsg);
+                if (status) status.textContent = nextMsg;
+            }
         }
     }, 1000);
-
-    abortController = new AbortController();
 
     try {
         const payload = { 
             message: message,
+            session_id: targetSessionId,
             stream: true 
         };
         if (isLyraActive && activeLyraTier) {
@@ -2508,7 +2848,7 @@ async function sendMessage(overridePayload = null) {
                 'Accept': 'text/event-stream, application/json'
             },
             body: JSON.stringify(payload),
-            signal: abortController.signal
+            signal: run.abortController.signal
         });
 
         if (!response.ok) {
@@ -2516,9 +2856,11 @@ async function sendMessage(overridePayload = null) {
             try {
                 const errData = await response.json();
                 if (errData.reply) {
-                    showTyping(false);
-                    addMessage('assistant', errData.reply);
-                    status.textContent = t('status_ready');
+                    if (isMounted()) {
+                        showTyping(false);
+                        addMessage('assistant', errData.reply);
+                        if (status) status.textContent = t('status_ready');
+                    }
                     return;
                 }
                 if (errData.error) errorMsg = errData.error;
@@ -2531,121 +2873,108 @@ async function sendMessage(overridePayload = null) {
             const reader = response.body.getReader();
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
-            let streamText = '';
-            let assistantMsgEl = null;
-            let assistantBubble = null;
-            let assistantTextEl = null;
-            let finalData = null;
-            let activeAgentAction = null;
-            let activeAssistantImgUrl = null;
             let lastRenderTime = 0;
             let lastThoughtRenderTime = 0;
-            let awaitingApproval = false;
-            let lastAgentTaskId = null;
-            let liveThoughtText = '';
-            let liveThoughtDuration = null;
-            let liveAgentSteps = [];
-            let liveArtifacts = [];
 
             const upsertLiveStep = (stepObj) => {
                 if (!stepObj || !stepObj.id) return;
-                const idx = liveAgentSteps.findIndex(s => s.id === stepObj.id);
+                const idx = run.liveAgentSteps.findIndex(s => s.id === stepObj.id);
                 if (idx >= 0) {
-                    liveAgentSteps[idx] = { ...liveAgentSteps[idx], ...stepObj };
+                    run.liveAgentSteps[idx] = { ...run.liveAgentSteps[idx], ...stepObj };
                 } else {
-                    liveAgentSteps.push(stepObj);
+                    run.liveAgentSteps.push(stepObj);
                 }
             };
 
             const ensureAssistantMsgEl = () => {
-                if (!assistantMsgEl) {
-                    assistantMsgEl = addMessage(
+                if (!isMounted()) return null;
+                if (!run.assistantMsgEl) {
+                    run.assistantMsgEl = addMessage(
                         'assistant',
                         '',
-                        activeAssistantImgUrl,
+                        run.activeAssistantImgUrl,
                         null,
                         null,
                         null,
                         null,
-                        activeAgentAction,
-                        finalData ? finalData.assistant_message_id : null,
+                        run.activeAgentAction,
+                        run.finalData ? run.finalData.assistant_message_id : null,
                         false,
                         {
-                            agent_steps: liveAgentSteps,
-                            thought_content: liveThoughtText,
-                            thought_duration_sec: liveThoughtDuration,
-                            artifacts: liveArtifacts,
+                            agent_steps: run.liveAgentSteps,
+                            thought_content: run.liveThoughtText,
+                            thought_duration_sec: run.liveThoughtDuration,
+                            artifacts: run.liveArtifacts,
                             is_running: true
                         }
                     );
-                    if (assistantMsgEl) {
+                    if (run.assistantMsgEl) {
                         showTyping(false);
-                        assistantBubble = assistantMsgEl.querySelector('.bubble');
-                        assistantTextEl = assistantMsgEl.querySelector('.msg-text');
+                        run.assistantBubble = run.assistantMsgEl.querySelector('.bubble');
+                        run.assistantTextEl = run.assistantMsgEl.querySelector('.msg-text');
                     }
                 }
-                return assistantMsgEl;
+                return run.assistantMsgEl;
             };
 
             const updateAssistantUI = (text, isDone = false) => {
+                if (!isMounted()) return;
                 const trimmedText = (text || '').trim();
-                if (!assistantMsgEl) {
+                if (!run.assistantMsgEl) {
                     if (!trimmedText && !isDone) {
                         return;
                     }
                     ensureAssistantMsgEl();
                 }
-                if (assistantBubble && (trimmedText || activeAssistantImgUrl || isDone)) {
-                    assistantBubble.classList.remove('hidden');
+                if (run.assistantBubble && (trimmedText || run.activeAssistantImgUrl || isDone)) {
+                    run.assistantBubble.classList.remove('hidden');
                 }
-                if (!assistantTextEl && assistantBubble) {
-                    let existingTextEl = assistantBubble.querySelector('.msg-text');
+                if (!run.assistantTextEl && run.assistantBubble) {
+                    let existingTextEl = run.assistantBubble.querySelector('.msg-text');
                     if (!existingTextEl) {
                         existingTextEl = document.createElement('div');
                         existingTextEl.className = 'msg-text';
-                        assistantBubble.appendChild(existingTextEl);
+                        run.assistantBubble.appendChild(existingTextEl);
                     }
-                    assistantTextEl = existingTextEl;
+                    run.assistantTextEl = existingTextEl;
                 }
-                if (assistantTextEl) {
+                if (run.assistantTextEl) {
                     let displayContent = text;
                     const codeBlockCount = (displayContent.match(/```/g) || []).length;
                     if (codeBlockCount % 2 === 1) {
                         displayContent += '\n```';
                     }
 
-                    // Kunci scroll viewport agar layar tidak bergeser atau berkedip saat re-render innerHTML
-                    const prevScrollTop = chatViewport.scrollTop;
-                    const distFromBottom = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
+                    const prevScrollTop = chatViewport ? chatViewport.scrollTop : 0;
+                    const distFromBottom = chatViewport ? (chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight) : 0;
                     const isAtBottom = distFromBottom <= 60;
 
-                    assistantTextEl.innerHTML = parseMessageContent(displayContent);
-                    if (assistantBubble) {
-                        assistantBubble.setAttribute('data-original-text', text);
-                        
-                        // Sisipkan gambar lampiran jika tersedia dan belum tersemat
-                        if (activeAssistantImgUrl && !assistantBubble.querySelector('.chat-img-wrapper')) {
-                            const jsImgUrl = activeAssistantImgUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    run.assistantTextEl.innerHTML = parseMessageContent(displayContent);
+                    if (run.assistantBubble) {
+                        run.assistantBubble.setAttribute('data-original-text', text);
+
+                        if (run.activeAssistantImgUrl && !run.assistantBubble.querySelector('.chat-img-wrapper')) {
+                            const jsImgUrl = run.activeAssistantImgUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                             const imgWrap = document.createElement('div');
                             imgWrap.className = 'chat-img-wrapper';
                             imgWrap.onclick = () => openImageLightbox(jsImgUrl, 'Foto Lampiran Chat');
-                            imgWrap.innerHTML = `<img src="${activeAssistantImgUrl}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">`;
-                            assistantBubble.prepend(imgWrap);
+                            imgWrap.innerHTML = `<img src="${run.activeAssistantImgUrl}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">`;
+                            run.assistantBubble.prepend(imgWrap);
                         }
                     }
 
-                    if (isUserScrolledUp) {
-                        // User sedang membaca chat sebelumnya di atas: pertahankan posisi scroll user!
-                        isProgrammaticScroll = true;
-                        chatViewport.scrollTop = prevScrollTop;
-                        if (scrollBottomBtn) {
-                            scrollBottomBtn.classList.remove('hidden');
-                            scrollBottomBtn.classList.add('is-streaming');
+                    if (chatViewport) {
+                        if (isUserScrolledUp) {
+                            isProgrammaticScroll = true;
+                            chatViewport.scrollTop = prevScrollTop;
+                            if (scrollBottomBtn) {
+                                scrollBottomBtn.classList.remove('hidden');
+                                scrollBottomBtn.classList.add('is-streaming');
+                            }
+                        } else if (isAtBottom || !isDone) {
+                            isProgrammaticScroll = true;
+                            chatViewport.scrollTop = chatViewport.scrollHeight;
                         }
-                    } else if (isAtBottom || !isDone) {
-                        // User berada di dasar: auto-follow seketika (non-smooth) agar streaming tidak lag
-                        isProgrammaticScroll = true;
-                        chatViewport.scrollTop = chatViewport.scrollHeight;
                     }
                 }
             };
@@ -2656,12 +2985,11 @@ async function sendMessage(overridePayload = null) {
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
-                buffer = lines.pop(); // pertahankan baris parsial dalam buffer
+                buffer = lines.pop();
 
                 for (const line of lines) {
                     const trimmed = line.trim();
                     if (!trimmed || trimmed.startsWith(':')) {
-                        // Heartbeat ping SSE (: ping) atau komentar, abaikan
                         continue;
                     }
                     if (trimmed.startsWith('data:')) {
@@ -2670,144 +2998,168 @@ async function sendMessage(overridePayload = null) {
                         try {
                             const evData = JSON.parse(jsonStr);
                             if (evData.type === 'init') {
-                                if (userMsgEl && evData.user_message_id) {
-                                    userMsgEl.dataset.msgId = evData.user_message_id;
-                                }
-                                if (evData.active_session_id) {
-                                    activeSessionId = evData.active_session_id;
-                                    try {
-                                        if (window.location.pathname !== '/chat/' + evData.active_session_id) {
-                                            window.history.pushState(null, '', '/chat/' + evData.active_session_id);
-                                        }
-                                    } catch (_) {}
+                                run.userMsgId = evData.user_message_id || run.userMsgId;
+                                if (evData.session_title) syncRunTitle(evData.session_title);
+                                if (isMounted() && run.userMsgEl && evData.user_message_id) {
+                                    run.userMsgEl.dataset.msgId = evData.user_message_id;
                                 }
                             } else if (evData.type === 'status') {
                                 if (evData.status) {
-                                    serverStatusReceived = true;
-                                    updateTypingStatus(evData.status);
-                                    if (status) status.textContent = evData.status;
+                                    run.serverStatusReceived = true;
+                                    run.statusText = evData.status;
+                                    if (isMounted()) {
+                                        updateTypingStatus(evData.status);
+                                        if (status) status.textContent = evData.status;
+                                    }
                                 }
                             } else if (evData.type === 'agent_trace_step') {
                                 if (evData.step) {
-                                    serverStatusReceived = true;
+                                    run.serverStatusReceived = true;
                                     upsertLiveStep(evData.step);
-                                    ensureAssistantMsgEl();
-                                    syncAgThoughtInMsg(assistantMsgEl, {
-                                        agent_steps: liveAgentSteps,
-                                        thought_content: liveThoughtText,
-                                        thought_duration_sec: liveThoughtDuration,
-                                        is_running: true
-                                    });
-                                    if (evData.step.title && status) {
-                                        status.textContent = evData.step.title + '...';
+                                    if (evData.step.title) {
+                                        run.statusText = evData.step.title + '...';
                                     }
-                                    scrollToBottom(false);
+                                    if (isMounted()) {
+                                        ensureAssistantMsgEl();
+                                        syncAgThoughtInMsg(run.assistantMsgEl, {
+                                            agent_steps: run.liveAgentSteps,
+                                            thought_content: run.liveThoughtText,
+                                            thought_duration_sec: run.liveThoughtDuration,
+                                            is_running: true
+                                        });
+                                        if (evData.step.title && status) {
+                                            status.textContent = evData.step.title + '...';
+                                        }
+                                        scrollToBottom(false);
+                                    }
                                 }
                             } else if (evData.type === 'thought') {
-                                serverStatusReceived = true;
-                                liveThoughtText += (evData.token || '');
-                                ensureAssistantMsgEl();
-                                const nowTh = Date.now();
-                                if (nowTh - lastThoughtRenderTime > 55) {
-                                    lastThoughtRenderTime = nowTh;
-                                    syncAgThoughtInMsg(assistantMsgEl, {
-                                        agent_steps: liveAgentSteps,
-                                        thought_content: liveThoughtText,
-                                        thought_duration_sec: liveThoughtDuration,
-                                        is_running: true
-                                    });
-                                    scrollToBottom(false);
+                                run.serverStatusReceived = true;
+                                run.liveThoughtText += (evData.token || '');
+                                if (isMounted()) {
+                                    ensureAssistantMsgEl();
+                                    const nowTh = Date.now();
+                                    if (nowTh - lastThoughtRenderTime > 55) {
+                                        lastThoughtRenderTime = nowTh;
+                                        syncAgThoughtInMsg(run.assistantMsgEl, {
+                                            agent_steps: run.liveAgentSteps,
+                                            thought_content: run.liveThoughtText,
+                                            thought_duration_sec: run.liveThoughtDuration,
+                                            is_running: true
+                                        });
+                                        scrollToBottom(false);
+                                    }
                                 }
                             } else if (evData.type === 'thought_done') {
                                 if (evData.duration_sec !== undefined) {
-                                    liveThoughtDuration = evData.duration_sec;
+                                    run.liveThoughtDuration = evData.duration_sec;
                                 }
-                                if (assistantMsgEl) {
-                                    syncAgThoughtInMsg(assistantMsgEl, {
-                                        agent_steps: liveAgentSteps,
-                                        thought_content: liveThoughtText,
-                                        thought_duration_sec: liveThoughtDuration,
+                                if (isMounted() && run.assistantMsgEl) {
+                                    syncAgThoughtInMsg(run.assistantMsgEl, {
+                                        agent_steps: run.liveAgentSteps,
+                                        thought_content: run.liveThoughtText,
+                                        thought_duration_sec: run.liveThoughtDuration,
                                         is_running: true
                                     });
                                 }
                             } else if (evData.type === 'artifacts') {
                                 if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
-                                    liveArtifacts = evData.artifacts;
-                                    ensureAssistantMsgEl();
-                                    syncArtifactsInMsg(assistantMsgEl, liveArtifacts);
-                                    scrollToBottom(false);
+                                    run.liveArtifacts = evData.artifacts;
+                                    if (isMounted()) {
+                                        ensureAssistantMsgEl();
+                                        syncArtifactsInMsg(run.assistantMsgEl, run.liveArtifacts);
+                                        scrollToBottom(false);
+                                    }
                                 }
                             } else if (evData.type === 'agent_plan') {
-                                lastAgentTaskId = evData.task_id;
-                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, null);
-                                updateTypingStatus('Rencana siap · Memulai eksekusi...');
+                                run.lastAgentTaskId = evData.task_id;
+                                run.statusText = 'Rencana siap · Memulai eksekusi...';
+                                if (isMounted()) {
+                                    createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, null);
+                                    updateTypingStatus(run.statusText);
+                                }
                             } else if (evData.type === 'agent_step') {
-                                lastAgentTaskId = evData.task_id;
-                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, evData, null);
-                                updateTypingStatus(`Langkah ${evData.step_index}: ${evData.tool} (${evData.status})...`);
+                                run.lastAgentTaskId = evData.task_id;
+                                run.statusText = `Langkah ${evData.step_index}: ${evData.tool} (${evData.status})...`;
+                                if (isMounted()) {
+                                    createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, evData, null);
+                                    updateTypingStatus(run.statusText);
+                                }
                             } else if (evData.type === 'approval_required') {
-                                awaitingApproval = true;
-                                lastAgentTaskId = evData.task_id;
-                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, evData.pending_action);
-                                status.textContent = 'Menunggu persetujuan Anda...';
-                                updateTypingStatus('Menunggu persetujuan pengguna...');
+                                run.awaitingApproval = true;
+                                run.lastAgentTaskId = evData.task_id;
+                                run.statusText = 'Menunggu persetujuan Anda...';
+                                if (isMounted()) {
+                                    createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, evData.pending_action);
+                                    if (status) status.textContent = run.statusText;
+                                    updateTypingStatus('Menunggu persetujuan pengguna...');
+                                }
                             } else if (evData.type === 'reset_stream') {
-                                streamText = '';
-                                if (assistantTextEl) {
-                                    assistantTextEl.innerHTML = '';
+                                run.streamText = '';
+                                if (isMounted() && run.assistantTextEl) {
+                                    run.assistantTextEl.innerHTML = '';
                                 }
                             } else if (evData.type === 'agent_action') {
-                                activeAgentAction = evData.agent_action;
-                                if (activeAgentAction && activeAgentAction.image_url) {
-                                    activeAssistantImgUrl = activeAgentAction.image_url;
+                                run.activeAgentAction = evData.agent_action;
+                                if (run.activeAgentAction && run.activeAgentAction.image_url) {
+                                    run.activeAssistantImgUrl = run.activeAgentAction.image_url;
                                 }
-                                if (assistantMsgEl && activeAgentAction) {
-                                    syncWebSourcesInMsg(assistantMsgEl, activeAgentAction);
+                                const toolTitle = run.activeAgentAction ? (run.activeAgentAction.tool || 'eksekusi') : 'eksekusi';
+                                run.statusText = `Selesai menjalankan ${toolTitle} · Menyusun jawaban...`;
+                                if (isMounted()) {
+                                    if (run.assistantMsgEl && run.activeAgentAction) {
+                                        syncWebSourcesInMsg(run.assistantMsgEl, run.activeAgentAction);
+                                    }
+                                    updateTypingStatus(run.statusText);
                                 }
-                                const toolTitle = activeAgentAction ? (activeAgentAction.tool || 'eksekusi') : 'eksekusi';
-                                updateTypingStatus(`Selesai menjalankan ${toolTitle} · Menyusun jawaban...`);
                             } else if (evData.type === 'token') {
                                 const chunkTok = evData.token || '';
-                                if (!streamText && chunkTok.trim()) {
-                                    status.textContent = t('status_typing');
+                                if (!run.streamText && chunkTok.trim()) {
+                                    run.statusText = t('status_typing');
+                                    if (isMounted() && status) status.textContent = run.statusText;
                                 }
-                                streamText += chunkTok;
-                                const now = Date.now();
-                                if (now - lastRenderTime > 35) {
-                                    lastRenderTime = now;
-                                    updateAssistantUI(streamText, false);
+                                run.streamText += chunkTok;
+                                if (isMounted()) {
+                                    const now = Date.now();
+                                    if (now - lastRenderTime > 35) {
+                                        lastRenderTime = now;
+                                        updateAssistantUI(run.streamText, false);
+                                    }
                                 }
                             } else if (evData.type === 'error') {
                                 console.warn('[Stream Error Event]:', evData.error);
+                                run.hadError = true;
                                 const errMsg = evData.error || 'Terjadi gangguan koneksi pada server.';
-                                if (!streamText) {
-                                    streamText = `*menatap cemas* Maaf Kakak, ada kendala: ${errMsg}`;
+                                run.errorText = errMsg;
+                                if (!run.streamText) {
+                                    run.streamText = `Maaf, ada kendala teknis: ${errMsg}`;
                                 } else {
-                                    streamText += `\n\n*menatap cemas* (Koneksi terganggu: ${errMsg})`;
+                                    run.streamText += `\n\n(Koneksi terganggu: ${errMsg})`;
                                 }
-                                updateAssistantUI(streamText, false);
+                                if (isMounted()) updateAssistantUI(run.streamText, false);
                             } else if (evData.type === 'done') {
-                                finalData = evData;
-                                if (evData.reply && !streamText) {
-                                    streamText = evData.reply;
+                                run.finalData = evData;
+                                if (evData.session_title) syncRunTitle(evData.session_title);
+                                if (evData.reply && !run.streamText) {
+                                    run.streamText = evData.reply;
                                 }
                                 if (evData.assistant_image_url) {
-                                    activeAssistantImgUrl = evData.assistant_image_url;
+                                    run.activeAssistantImgUrl = evData.assistant_image_url;
                                 }
                                 if (evData.agent_action) {
-                                    activeAgentAction = evData.agent_action;
+                                    run.activeAgentAction = evData.agent_action;
                                 }
                                 if (evData.thought_content) {
-                                    liveThoughtText = evData.thought_content;
+                                    run.liveThoughtText = evData.thought_content;
                                 }
                                 if (evData.thought_duration_sec !== undefined && evData.thought_duration_sec !== null) {
-                                    liveThoughtDuration = evData.thought_duration_sec;
+                                    run.liveThoughtDuration = evData.thought_duration_sec;
                                 }
                                 if (Array.isArray(evData.agent_steps) && evData.agent_steps.length) {
-                                    liveAgentSteps = evData.agent_steps;
+                                    run.liveAgentSteps = evData.agent_steps;
                                 }
                                 if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
-                                    liveArtifacts = evData.artifacts;
+                                    run.liveArtifacts = evData.artifacts;
                                 }
                             }
                         } catch (errParse) {
@@ -2817,69 +3169,70 @@ async function sendMessage(overridePayload = null) {
                 }
             }
 
-            // Render final setelah pembacaan stream tuntas
-            if (typingProgressInterval) clearInterval(typingProgressInterval);
-            showTyping(false);
-            if (awaitingApproval && !streamText && !finalData) {
-                // Tugas berhenti sementara menunggu klik Approve / Reject dari user
-                clearPipelineSimulation();
-                status.textContent = 'Menunggu persetujuan Anda...';
-                scrollToBottom(true);
+            if (run.typingProgressInterval) clearInterval(run.typingProgressInterval);
+            if (isMounted()) showTyping(false);
+
+            if (run.awaitingApproval && !run.streamText && !run.finalData) {
+                if (isMounted()) {
+                    clearPipelineSimulation();
+                    if (status) status.textContent = 'Menunggu persetujuan Anda...';
+                    scrollToBottom(true);
+                }
                 return;
             }
-            // Selalu gunakan respons final yang sudah difilter / dibersihkan / diterjemahkan oleh server jika ada
-            if (finalData && finalData.reply && finalData.reply.trim()) {
-                streamText = finalData.reply.trim();
-            } else if (!streamText && finalData && finalData.reply) {
-                streamText = finalData.reply;
+            if (run.finalData && run.finalData.reply && run.finalData.reply.trim()) {
+                run.streamText = run.finalData.reply.trim();
+            } else if (!run.streamText && run.finalData && run.finalData.reply) {
+                run.streamText = run.finalData.reply;
             }
-            if (!streamText) {
-                // Safeguard: AI tidak boleh menghilang atau kosong
-                streamText = '*menatap cemas* Maaf Kakak, Shiro tidak dapat menyelesaikan respons ini (koneksi terputus atau server tidak memberikan jawaban).';
+            if (!run.streamText) {
+                run.hadError = true;
+                run.streamText = 'Maaf, server tidak memberikan respons lengkap (koneksi terputus atau gagal memuat jawaban).';
             }
-            if (lastAgentTaskId && finalData && finalData.plan) {
-                createOrUpdateAgentWorkspaceCard(lastAgentTaskId, finalData.plan, null, null, finalData.status || 'completed');
-            }
-            updateAssistantUI(streamText, true);
-                if (assistantMsgEl) {
-                    if (liveAgentSteps.length || liveThoughtText) {
-                        liveAgentSteps = liveAgentSteps.map(s => s.status === 'running' ? { ...s, status: 'done' } : s);
-                        syncAgThoughtInMsg(assistantMsgEl, {
-                            agent_steps: liveAgentSteps,
-                            thought_content: liveThoughtText,
-                            thought_duration_sec: liveThoughtDuration,
+            if (isMounted()) {
+                if (run.lastAgentTaskId && run.finalData && run.finalData.plan) {
+                    createOrUpdateAgentWorkspaceCard(run.lastAgentTaskId, run.finalData.plan, null, null, run.finalData.status || 'completed');
+                }
+                updateAssistantUI(run.streamText, true);
+                if (run.assistantMsgEl) {
+                    if (run.liveAgentSteps.length || run.liveThoughtText) {
+                        run.liveAgentSteps = run.liveAgentSteps.map(s => s.status === 'running' ? { ...s, status: 'done' } : s);
+                        syncAgThoughtInMsg(run.assistantMsgEl, {
+                            agent_steps: run.liveAgentSteps,
+                            thought_content: run.liveThoughtText,
+                            thought_duration_sec: run.liveThoughtDuration,
                             is_running: false,
                             force_open: false
                         });
                     }
-                    const finalActionObj = (finalData && finalData.agent_action) || activeAgentAction;
+                    const finalActionObj = (run.finalData && run.finalData.agent_action) || run.activeAgentAction;
                     if (finalActionObj) {
-                        syncWebSourcesInMsg(assistantMsgEl, finalActionObj);
+                        syncWebSourcesInMsg(run.assistantMsgEl, finalActionObj);
                     }
-                    if (liveArtifacts && liveArtifacts.length) {
-                        syncArtifactsInMsg(assistantMsgEl, liveArtifacts);
+                    if (run.liveArtifacts && run.liveArtifacts.length) {
+                        syncArtifactsInMsg(run.assistantMsgEl, run.liveArtifacts);
                     }
-                    if (finalData && finalData.assistant_message_id) {
-                        assistantMsgEl.dataset.msgId = finalData.assistant_message_id;
+                    if (run.finalData && run.finalData.assistant_message_id) {
+                        run.assistantMsgEl.dataset.msgId = run.finalData.assistant_message_id;
                     }
-                    if (finalData && finalData.assistant_image_url) {
-                        let bubble = assistantMsgEl.querySelector('.bubble');
+                    if (run.finalData && run.finalData.assistant_image_url) {
+                        let bubble = run.assistantMsgEl.querySelector('.bubble');
                         if (bubble && !bubble.querySelector('.chat-img-wrapper')) {
-                            const jsImgUrl = finalData.assistant_image_url.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                            const jsImgUrl = run.finalData.assistant_image_url.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                             const imgWrap = document.createElement('div');
                             imgWrap.className = 'chat-img-wrapper';
                             imgWrap.onclick = () => openImageLightbox(jsImgUrl, 'Foto Lampiran Chat');
-                            imgWrap.innerHTML = `<img src="${finalData.assistant_image_url}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">`;
+                            imgWrap.innerHTML = `<img src="${run.finalData.assistant_image_url}" class="chat-img-attachment" alt="Foto Visual" loading="lazy">`;
                             bubble.prepend(imgWrap);
                         }
                     }
                     if (typeof hljs !== 'undefined') {
-                        assistantMsgEl.querySelectorAll('pre code[class*="language-"]').forEach(block => {
+                        run.assistantMsgEl.querySelectorAll('pre code[class*="language-"]').forEach(block => {
                             try { hljs.highlightElement(block); } catch (_) {}
                         });
                     }
                     if (typeof mermaid !== 'undefined') {
-                        assistantMsgEl.querySelectorAll('.mermaid-container').forEach(async (container) => {
+                        run.assistantMsgEl.querySelectorAll('.mermaid-container').forEach(async (container) => {
                             const rawSource = container.querySelector('.mermaid-raw-source');
                             const renderTarget = container.querySelector('.mermaid-diagram-render');
                             if (rawSource && renderTarget) {
@@ -2895,107 +3248,121 @@ async function sendMessage(overridePayload = null) {
                         });
                     }
                 }
-
-            clearPipelineSimulation();
-
-            if (finalData && finalData.pipeline_trace) {
-                activePipelineTrace = finalData.pipeline_trace;
-                renderModalPipeline(activePipelineTrace);
+                clearPipelineSimulation();
+                if (run.finalData && run.finalData.pipeline_trace) {
+                    activePipelineTrace = run.finalData.pipeline_trace;
+                    renderModalPipeline(activePipelineTrace);
+                }
             }
-            if (finalData && finalData.session_title) {
-                const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
-                if (currentSession) currentSession.title = finalData.session_title;
+
+            if (run.finalData && run.finalData.session_title) {
+                syncRunTitle(run.finalData.session_title);
             }
+            if (!isMounted()) {
+                unreadDoneSessions.add(targetSessionId);
+            }
+            showSessionDoneNotification({
+                sessionId: targetSessionId,
+                sessionTitle: run.sessionTitle || getSessionTitleById(targetSessionId),
+                isError: run.hadError,
+                errorText: run.errorText
+            });
 
             updateMemoryCount();
             await loadSessions();
-            status.textContent = t('status_ready');
+            if (isMounted() && status) status.textContent = t('status_ready');
             startTriggerTimer();
 
         } else {
             // Non-streaming fallback
             const data = await response.json();
-            if (userMsgEl && data.user_message_id) {
-                userMsgEl.dataset.msgId = data.user_message_id;
-            }
-            
-            showTyping(false);
-            const assistantImg = data.assistant_image_url || null;
-            addMessage(
-                'assistant',
-                data.reply || '*menatap cemas* Maaf Kakak, server tidak memberikan jawaban teks.',
-                assistantImg,
-                null,
-                null,
-                null,
-                null,
-                data.agent_action,
-                data.assistant_message_id || null,
-                false,
-                {
-                    thought_content: data.thought_content || null,
-                    thought_duration_sec: data.thought_duration_sec ?? null,
-                    agent_steps: data.agent_steps || [],
-                    artifacts: data.artifacts || [],
-                    is_running: false
+            if (data.session_title) syncRunTitle(data.session_title);
+            if (isMounted()) {
+                if (run.userMsgEl && data.user_message_id) {
+                    run.userMsgEl.dataset.msgId = data.user_message_id;
                 }
-            );
-            clearPipelineSimulation();
-            
-            if (data.pipeline_trace) {
-                activePipelineTrace = data.pipeline_trace;
-                renderModalPipeline(activePipelineTrace);
+                showTyping(false);
+                const assistantImg = data.assistant_image_url || null;
+                addMessage(
+                    'assistant',
+                    data.reply || 'Maaf, server tidak memberikan jawaban teks.',
+                    assistantImg,
+                    null,
+                    null,
+                    null,
+                    null,
+                    data.agent_action,
+                    data.assistant_message_id || null,
+                    false,
+                    {
+                        thought_content: data.thought_content || null,
+                        thought_duration_sec: data.thought_duration_sec ?? null,
+                        agent_steps: data.agent_steps || [],
+                        artifacts: data.artifacts || [],
+                        is_running: false
+                    }
+                );
+                clearPipelineSimulation();
+                if (data.pipeline_trace) {
+                    activePipelineTrace = data.pipeline_trace;
+                    renderModalPipeline(activePipelineTrace);
+                }
+                if (status) status.textContent = t('status_ready');
+            } else {
+                unreadDoneSessions.add(targetSessionId);
             }
-            
-            if (data.session_title) {
-                const currentSession = currentSessionsData.find(s => s.id === activeSessionId);
-                if (currentSession) currentSession.title = data.session_title;
-            }
+
+            showSessionDoneNotification({
+                sessionId: targetSessionId,
+                sessionTitle: run.sessionTitle || getSessionTitleById(targetSessionId),
+                isError: false
+            });
             updateMemoryCount(); 
             await loadSessions();
-            status.textContent = t('status_ready');
             startTriggerTimer(); 
         }
 
     } catch (error) {
-        if (typeof typingProgressInterval !== 'undefined' && typingProgressInterval) {
-            clearInterval(typingProgressInterval);
+        if (run.typingProgressInterval) {
+            clearInterval(run.typingProgressInterval);
         }
-        clearPipelineSimulation();
+        if (isMounted()) clearPipelineSimulation();
         if (error.name === 'AbortError') {
-            lastGenerationAborted = true;
-            console.log('Request stopped by user');
-            showTyping(false);
-            status.textContent = t('status_stopped');
-            const lastAssistantMsg = chatMessages ? chatMessages.querySelector('.message.assistant:last-child') : null;
-            if (lastAssistantMsg) {
-                const runningThought = lastAssistantMsg.querySelector('.ag-thought-block.is-running');
-                if (runningThought) {
-                    runningThought.classList.remove('is-running');
-                    runningThought.classList.add('is-done');
-                    runningThought.querySelectorAll('.ph-spinner, .ag-spinner-ring').forEach(ic => {
-                        const sp = document.createElement('i');
-                        sp.className = 'ph ph-sparkle';
-                        ic.replaceWith(sp);
-                    });
-                    const titleSp = runningThought.querySelector('.ag-thought-title');
-                    if (titleSp) titleSp.textContent = 'Analysis stopped';
-                }
-                const lastBubble = lastAssistantMsg.querySelector('.bubble');
-                if (lastBubble && lastBubble.classList.contains('hidden')) {
-                    lastBubble.classList.remove('hidden');
-                    const mt = lastBubble.querySelector('.msg-text');
-                    if (mt && !mt.textContent.trim()) {
-                        mt.innerHTML = parseMessageContent('*Respons dihentikan oleh pengguna.*');
+            run.aborted = true;
+            console.log('Request stopped by user for session:', targetSessionId);
+            if (isMounted()) {
+                showTyping(false);
+                if (status) status.textContent = t('status_stopped');
+                const lastAssistantMsg = chatMessages ? chatMessages.querySelector('.message.assistant:last-child') : null;
+                if (lastAssistantMsg) {
+                    const runningThought = lastAssistantMsg.querySelector('.ag-thought-block.is-running');
+                    if (runningThought) {
+                        runningThought.classList.remove('is-running');
+                        runningThought.classList.add('is-done');
+                        runningThought.querySelectorAll('.ph-spinner, .ag-spinner-ring').forEach(ic => {
+                            const sp = document.createElement('i');
+                            sp.className = 'ph ph-sparkle';
+                            ic.replaceWith(sp);
+                        });
+                        const titleSp = runningThought.querySelector('.ag-thought-title');
+                        if (titleSp) titleSp.textContent = 'Analysis stopped';
                     }
+                    const lastBubble = lastAssistantMsg.querySelector('.bubble');
+                    if (lastBubble && lastBubble.classList.contains('hidden')) {
+                        lastBubble.classList.remove('hidden');
+                        const mt = lastBubble.querySelector('.msg-text');
+                        if (mt && !mt.textContent.trim()) {
+                            mt.innerHTML = parseMessageContent('*Respons dihentikan oleh pengguna.*');
+                        }
+                    }
+                } else {
+                    addMessage('assistant', '*Respons dihentikan oleh pengguna.*');
                 }
-            } else {
-                addMessage('assistant', '*Respons dihentikan oleh pengguna.*');
-            }
-            if (lastAssistantMsg && typeof hljs !== 'undefined') {
-                lastAssistantMsg.querySelectorAll('pre code[class*="language-"]').forEach(block => {
-                    try { hljs.highlightElement(block); } catch (_) {}
-                });
+                if (lastAssistantMsg && typeof hljs !== 'undefined') {
+                    lastAssistantMsg.querySelectorAll('pre code[class*="language-"]').forEach(block => {
+                        try { hljs.highlightElement(block); } catch (_) {}
+                    });
+                }
             }
             try {
                 updateMemoryCount();
@@ -3003,38 +3370,61 @@ async function sendMessage(overridePayload = null) {
             } catch (_) {}
         } else {
             console.error('Error:', error);
-            showTyping(false);
-            addErrorMessage(error.message || 'Gagal terhubung ke Shiro.', { message: displayMsg });
-            status.textContent = t('status_ready');
+            run.hadError = true;
+            run.errorText = error.message || 'Gagal terhubung ke server.';
+            if (isMounted()) {
+                showTyping(false);
+                addErrorMessage(run.errorText, { message: displayMsg });
+                if (status) status.textContent = t('status_ready');
+            } else {
+                unreadDoneSessions.add(targetSessionId);
+            }
+            showSessionDoneNotification({
+                sessionId: targetSessionId,
+                sessionTitle: run.sessionTitle || getSessionTitleById(targetSessionId),
+                isError: true,
+                errorText: run.errorText
+            });
         }
     } finally {
-        if (typeof typingProgressInterval !== 'undefined' && typingProgressInterval) {
-            clearInterval(typingProgressInterval);
+        if (run.typingProgressInterval) {
+            clearInterval(run.typingProgressInterval);
         }
-        clearPipelineSimulation();
-        if (pipelineNavDot) pipelineNavDot.classList.add('hidden');
-        const wasAborted = lastGenerationAborted;
-        isGenerating = false;
-        if (scrollBottomBtn) {
-            scrollBottomBtn.classList.remove('is-streaming');
-            updateScrollBottomBtnVisibility();
+        run.isRunning = false;
+        if (sessionRuns.get(targetSessionId) === run) {
+            sessionRuns.delete(targetSessionId);
         }
-        setInputLock(false);
-        if (!wasAborted && queuedMessages.length > 0) {
-            const nextQueued = queuedMessages.shift();
-            renderQueuedMessagesPanel();
+        serverRunningSessions.delete(targetSessionId);
+        detachRunDOMRefs(run);
+        updateSidebarRunningIndicators();
+
+        if (isMounted()) {
+            clearPipelineSimulation();
+            if (pipelineNavDot) pipelineNavDot.classList.add('hidden');
+            if (scrollBottomBtn) {
+                scrollBottomBtn.classList.remove('is-streaming');
+                updateScrollBottomBtnVisibility();
+            }
+            setInputLock(isActiveSessionGenerating());
+        }
+
+        const qForSession = getSessionQueue(targetSessionId);
+        if (!run.aborted && qForSession.length > 0) {
+            const nextQueued = qForSession.shift();
+            if (isMounted()) renderQueuedMessagesPanel();
             setTimeout(() => {
-                sendMessage(nextQueued);
+                sendMessage(nextQueued, targetSessionId);
             }, 80);
-        } else if (userInput) {
+        } else if (isMounted() && userInput) {
             userInput.focus();
         }
     }
 }
 
-function stopGeneration() {
-    if (abortController) {
-        abortController.abort();
+function stopGeneration(targetSessionId = activeSessionId) {
+    const run = sessionRuns.get(targetSessionId || activeSessionId);
+    if (run && run.abortController) {
+        run.abortController.abort();
     }
 }
 
@@ -3162,7 +3552,10 @@ async function resetMemory() {
             clearAttachedDocument();
             clearAttachedImage();
             clearAttachedVideo();
-            queuedMessages = [];
+            stopGeneration(activeSessionId);
+            sessionQueues.delete(activeSessionId);
+            unreadDoneSessions.delete(activeSessionId);
+            dismissSessionDoneNotifications(activeSessionId);
             renderQueuedMessagesPanel();
             updateComposerSendButton();
             chatMessages.innerHTML = `
@@ -3276,6 +3669,10 @@ async function loadSessions() {
         if (data.sessions) {
             currentSessionsData = data.sessions;
             activeSessionId = data.active_session_id;
+            serverRunningSessions = new Set(Array.isArray(data.running_sessions) ? data.running_sessions : []);
+            data.sessions.forEach(s => {
+                if (s && s.is_running) serverRunningSessions.add(s.id);
+            });
 
             const activeSession = data.sessions.find(s => s.id === data.active_session_id);
             const isCurrentSessionPinned = activeSession ? Boolean(activeSession.pinned) : false;
@@ -3287,8 +3684,8 @@ async function loadSessions() {
                 document.title = 'Shiro · AI Assistant';
             }
 
-            // Segera render data.messages jika ada dan layar belum memiliki pesan obrolan aktif
-            if (Array.isArray(data.messages)) {
+            // Segera render data.messages hanya jika layar belum memiliki pesan obrolan aktif dan sesi tidak sedang streaming
+            if (Array.isArray(data.messages) && !isActiveSessionGenerating()) {
                 const existingMsgs = chatMessages ? chatMessages.querySelectorAll('.message:not(#typing-indicator)') : [];
                 const isOnlyGreeting = existingMsgs.length === 1 && existingMsgs[0].querySelector('[data-i18n="welcome_greeting"]');
                 if (existingMsgs.length === 0 || isOnlyGreeting) {
@@ -3301,7 +3698,10 @@ async function loadSessions() {
                 data.sessions.forEach(s => {
                     const opt = document.createElement('option');
                     opt.value = s.id;
-                    opt.textContent = (s.pinned ? '📌 ' : '') + (s.title || `Chat ${s.id.slice(0, 6)}`);
+                    const baseLabel = (s.pinned ? '📌 ' : '') + (s.title || `Chat ${s.id.slice(0, 6)}`);
+                    const running = isSessionRunning(s.id);
+                    const hasUnread = !running && unreadDoneSessions.has(s.id) && s.id !== data.active_session_id;
+                    opt.textContent = running ? `⏳ ${baseLabel}` : (hasUnread ? `✓ ${baseLabel}` : baseLabel);
                     if (s.id === data.active_session_id) {
                         opt.selected = true;
                     }
@@ -3318,8 +3718,14 @@ async function loadSessions() {
                     sidebarSessionList.appendChild(emptyTip);
                 } else {
                     data.sessions.forEach(s => {
+                        const running = isSessionRunning(s.id);
+                        const hasUnread = !running && unreadDoneSessions.has(s.id) && s.id !== data.active_session_id;
                         const item = document.createElement('div');
-                        item.className = 'session-item' + (s.id === data.active_session_id ? ' active' : '') + (s.pinned ? ' is-pinned' : '');
+                        item.className = 'session-item'
+                            + (s.id === data.active_session_id ? ' active' : '')
+                            + (s.pinned ? ' is-pinned' : '')
+                            + (running ? ' is-running' : '')
+                            + (hasUnread ? ' is-unread-done' : '');
                         item.dataset.sessionId = s.id;
 
                         const content = document.createElement('div');
@@ -3337,6 +3743,19 @@ async function loadSessions() {
 
                         content.appendChild(icon);
                         content.appendChild(titleSpan);
+
+                        if (running) {
+                            const runBadge = document.createElement('span');
+                            runBadge.className = 'session-running-badge';
+                            runBadge.title = t('session_running_label');
+                            runBadge.innerHTML = '<span class="ag-spinner-ring" aria-hidden="true"></span>';
+                            content.appendChild(runBadge);
+                        } else if (hasUnread) {
+                            const doneDot = document.createElement('span');
+                            doneDot.className = 'session-done-dot';
+                            doneDot.title = t('session_done_title');
+                            content.appendChild(doneDot);
+                        }
 
                         if (s.pinned) {
                             const pinBadge = document.createElement('span');
@@ -3377,17 +3796,20 @@ async function loadSessions() {
 }
 
 async function createNewSession() {
-    if (isGenerating) return;
+    const seq = ++sessionSwitchSeq;
+    detachAllRunDOMRefs();
     try {
-        status.textContent = '...';
+        if (status) status.textContent = '...';
         const res = await fetch('/api/sessions/new', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: t('new_chat') })
         });
         const data = await res.json();
+        if (seq !== sessionSwitchSeq) return;
         if (data.success) {
             activeSessionId = data.session_id;
+            unreadDoneSessions.delete(activeSessionId);
             try {
                 window.history.pushState(null, '', '/chat/' + data.session_id);
             } catch (e) {}
@@ -3395,9 +3817,6 @@ async function createNewSession() {
             clearAttachedDocument();
             clearAttachedImage();
             clearAttachedVideo();
-            queuedMessages = [];
-            renderQueuedMessagesPanel();
-            updateComposerSendButton();
 
             chatMessages.innerHTML = `
                 <div class="message assistant">
@@ -3416,28 +3835,33 @@ async function createNewSession() {
                 renderChatFilesList();
             }
             await loadSessions();
+            syncActiveSessionUI();
             updateMemoryCount();
-            status.textContent = t('status_ready');
             if (userInput) userInput.focus();
         }
     } catch (e) {
         console.error("Error creating new session:", e);
-        status.textContent = 'Error';
+        if (status) status.textContent = 'Error';
     }
 }
 
 async function switchSession(sessionId, force = false) {
-    if (!sessionId || (sessionId === activeSessionId && !force) || isGenerating) return;
+    if (!sessionId || (sessionId === activeSessionId && !force)) return;
+    const seq = ++sessionSwitchSeq;
+    detachAllRunDOMRefs();
     try {
-        status.textContent = '...';
+        if (status) status.textContent = '...';
         const res = await fetch('/api/sessions/switch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: sessionId })
         });
         const data = await res.json();
+        if (seq !== sessionSwitchSeq) return;
         if (data.success) {
             activeSessionId = sessionId;
+            unreadDoneSessions.delete(sessionId);
+            dismissSessionDoneNotifications(sessionId);
             try {
                 if (window.location.pathname !== '/chat/' + sessionId) {
                     window.history.pushState(null, '', '/chat/' + sessionId);
@@ -3447,25 +3871,20 @@ async function switchSession(sessionId, force = false) {
             clearAttachedDocument();
             clearAttachedImage();
             clearAttachedVideo();
-            queuedMessages = [];
-            renderQueuedMessagesPanel();
-            updateComposerSendButton();
 
             renderMessagesList(data.messages || []);
             await loadSessions();
+            syncActiveSessionUI();
             updateMemoryCount();
-            status.textContent = t('status_ready');
             if (userInput) userInput.focus();
         }
     } catch (e) {
         console.error("Error switching session:", e);
-        status.textContent = 'Error';
+        if (status) status.textContent = 'Error';
     }
 }
 
 async function deleteSessionById(sessionId, title) {
-    if (isGenerating) return;
-
     const sessionName = title || (currentLang === 'en' ? 'this conversation' : 'percakapan ini');
     const isEnglish = currentLang === 'en';
 
@@ -3504,8 +3923,17 @@ async function deleteSessionById(sessionId, title) {
 
     if (!confirmed) return;
 
+    const runningTarget = sessionRuns.get(sessionId);
+    if (runningTarget && runningTarget.isRunning && runningTarget.abortController) {
+        runningTarget.aborted = true;
+        runningTarget.abortController.abort();
+    }
+    sessionQueues.delete(sessionId);
+    unreadDoneSessions.delete(sessionId);
+    dismissSessionDoneNotifications(sessionId);
+
     try {
-        status.textContent = '...';
+        if (status) status.textContent = '...';
         const res = await fetch(`/api/sessions/${sessionId}`, {
             method: 'DELETE'
         });
@@ -3515,15 +3943,12 @@ async function deleteSessionById(sessionId, title) {
             clearAttachedDocument();
             clearAttachedImage();
             clearAttachedVideo();
-            queuedMessages = [];
-            renderQueuedMessagesPanel();
-            updateComposerSendButton();
 
             renderMessagesList(data.messages || []);
             await loadSessions();
+            syncActiveSessionUI();
             updateMemoryCount();
-            status.textContent = t('status_ready');
-        } else {
+        } else if (status) {
             status.textContent = 'Error';
         }
     } catch (e) {
@@ -5016,7 +5441,7 @@ async function uploadMixedFiles(fileList, { preferVideo = false } = {}) {
             inFlightUploadsCount = Math.max(0, inFlightUploadsCount - 1);
             renderAttachmentPreviewBars();
             const totalCount = attachedDocuments.length + attachedImages.length + attachedVideos.length;
-            if (!isGenerating) {
+            if (!isActiveSessionGenerating() && status) {
                 status.textContent = totalCount > 0
                     ? (currentLang === 'en' ? `${totalCount} attachment(s) ready` : `${totalCount} lampiran siap`)
                     : t('status_ready');
@@ -5129,7 +5554,7 @@ function handleLongPaste(text) {
 
     status.textContent = `Teks ${text.length.toLocaleString()} karakter otomatis dijadikan lampiran (${meta.filename}).`;
     setTimeout(() => {
-        if (!isGenerating && status && status.textContent.includes('otomatis dijadikan lampiran')) {
+        if (!isActiveSessionGenerating() && status && status.textContent.includes('otomatis dijadikan lampiran')) {
             status.textContent = 'Siap';
         }
     }, 4000);
@@ -5307,7 +5732,7 @@ function syncLyraTierUI(enabled, tierId = null) {
         picker.classList.toggle('hidden', !isLyraActive);
     }
     if (btn) {
-        btn.disabled = Boolean(isGenerating);
+        btn.disabled = Boolean(isAnySessionRunning());
         btn.classList.remove('is-loading');
     }
     if (labelEl) {
@@ -5335,8 +5760,8 @@ function toggleLyraTierMenu(forceState = null) {
 
 function selectLyraTier(tierId) {
     if (!tierId || !LYRA_TIER_LABELS[tierId]) return;
-    if (isGenerating) {
-        showToast(currentLang === 'en' ? 'Wait until the current response finishes' : 'Tunggu hingga respons saat ini selesai');
+    if (isAnySessionRunning()) {
+        showToast(currentLang === 'en' ? 'Wait until active session finishes' : 'Tunggu hingga sesi yang sedang berjalan selesai');
         toggleLyraTierMenu(false);
         return;
     }
@@ -5564,7 +5989,7 @@ async function switchModel() {
             
             setTimeout(() => {
                 loadModels();
-                if (!isGenerating && status) {
+                if (!isActiveSessionGenerating() && status) {
                     status.textContent = 'Siap';
                 }
             }, 600);

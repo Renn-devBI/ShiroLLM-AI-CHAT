@@ -255,6 +255,12 @@ def chat():
 
         memory = state.init_memory()
         training_enabled = memory.system_metadata.get("enable_training_logging", True)
+        req_session_id = (data.get("session_id") or "").strip() or None
+
+        def _resolve_session_title(mem_obj, sid: str) -> str:
+            if hasattr(mem_obj, "sessions_store") and sid in mem_obj.sessions_store:
+                return mem_obj.sessions_store[sid].get("title") or f"Chat {sid[:6]}"
+            return "Obrolan Utama"
         
         primary_img_b64 = image_base64 or (images_list[0] if images_list else None)
         saved_img_rel = None
@@ -314,6 +320,13 @@ def chat():
             doc_url = f"/api/files/{first_doc_name}" if first_doc_name else None
             doc_type = os.path.splitext(first_doc_name)[1].lower().replace(".", "") if first_doc_name else None
 
+            active_sess_id = getattr(memory, "active_session_id", "default")
+            target_sess_id = (
+                req_session_id
+                if (req_session_id and hasattr(memory, "sessions_store") and req_session_id in memory.sessions_store)
+                else active_sess_id
+            )
+
             user_msg_id = memory.add_message(
                 "user", 
                 log_msg, 
@@ -325,11 +338,8 @@ def chat():
                 documents=documents_list,
                 images=saved_images_urls if len(saved_images_urls) > 1 else None,
                 videos=videos_list,
+                session_id=target_sess_id,
             )
-            active_sess_id = getattr(memory, "active_session_id", "default")
-            if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
-                memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
-                memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
             memory.save_memory()
 
         # 2. NON-STREAMING FALLBACK (Jika client eksplisit meminta stream: false)
@@ -378,126 +388,128 @@ def chat():
                         state.set_llm(old_llm, old_vis)
 
         if not stream_mode:
-            if not agent_route.get("route"):
-                _ensure_lyra_tier_loaded()
-            if agent_route.get("route"):
-                from shiro.agent.autonomous_runner import autonomous_runner
-                ag_res = autonomous_runner.run_task(
-                    agent_route["task"],
-                    state.llm,
-                    session_id=active_sess_id,
+            state.mark_session_running(target_sess_id)
+            try:
+                if not agent_route.get("route"):
+                    _ensure_lyra_tier_loaded()
+                if agent_route.get("route"):
+                    from shiro.agent.autonomous_runner import autonomous_runner
+                    ag_res = autonomous_runner.run_task(
+                        agent_route["task"],
+                        state.llm,
+                        session_id=target_sess_id,
+                    )
+                    reply = ag_res.get("reply", "")
+                    assistant_msg_id = None
+                    if ag_res.get("status") in ("completed", "rejected") and reply:
+                        with memory.lock:
+                            assistant_msg_id = memory.add_message("assistant", reply, session_id=target_sess_id)
+                            memory.update_emotional_state_from_response(reply)
+                            memory.update_mood_from_emotions()
+                            if training_enabled:
+                                memory.record_learned_pattern(log_msg, reply)
+                            if target_sess_id == getattr(memory, "active_session_id", "default") and len(memory.short_term_history) > 500:
+                                compress_old_messages(memory, keep_count=500)
+                            memory.save_memory()
+                    return jsonify({
+                        "reply": reply,
+                        "status": ag_res.get("status"),
+                        "task_id": ag_res.get("task_id"),
+                        "plan": ag_res.get("plan"),
+                        "pending_action": ag_res.get("pending_action"),
+                        "agent_action": ag_res.get("agent_action"),
+                        "user_message_id": user_msg_id,
+                        "assistant_message_id": assistant_msg_id,
+                        "count": memory.system_metadata["total_turns"],
+                        "active_session_id": getattr(memory, "active_session_id", target_sess_id),
+                        "session_id": target_sess_id,
+                        "session_title": _resolve_session_title(memory, target_sess_id),
+                    })
+
+                reply, details = get_shiro_reply(
+                    user_message,
+                    image_base64=image_base64,
+                    images_base64=images_list,
+                    document_info=document_info,
+                    documents=documents_list,
+                    videos=videos_list,
+                    max_tokens=user_max_tokens,
+                    lyra_tier=req_lyra_tier,
+                    session_id=target_sess_id,
+                    return_details=True
                 )
-                reply = ag_res.get("reply", "")
-                assistant_msg_id = None
-                if ag_res.get("status") in ("completed", "rejected") and reply:
-                    with memory.lock:
-                        assistant_msg_id = memory.add_message("assistant", reply)
-                        memory.update_emotional_state_from_response(reply)
-                        memory.update_mood_from_emotions()
-                        if training_enabled:
-                            memory.record_learned_pattern(log_msg, reply)
-                        if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
-                            memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
-                            memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
-                        if len(memory.short_term_history) > 500:
-                            compress_old_messages(memory, keep_count=500)
-                        memory.save_memory()
+                trace = details.get("trace", {}) if isinstance(details, dict) else {}
+                thought_content = details.get("reasoning_content") if isinstance(details, dict) else None
+                thought_duration_sec = details.get("thought_duration_sec") if isinstance(details, dict) else None
+                agent_steps = details.get("agent_steps") if isinstance(details, dict) else None
+                artifacts = details.get("artifacts") if isinstance(details, dict) else None
+                saved_agent_action = (
+                    details.get("agent_action")
+                    if (isinstance(details, dict) and details.get("agent_action"))
+                    else (trace.get("agent_action") if isinstance(trace, dict) else None)
+                )
+                
+                assistant_img_url = None
+                if isinstance(saved_agent_action, dict):
+                    assistant_img_url = saved_agent_action.get("image_url")
+
+                with memory.lock:
+                    assistant_msg_id = memory.add_message(
+                        "assistant",
+                        reply,
+                        image_path=assistant_img_url,
+                        thought_content=thought_content,
+                        thought_duration_sec=thought_duration_sec,
+                        agent_steps=agent_steps,
+                        artifacts=artifacts,
+                        agent_action=saved_agent_action,
+                        session_id=target_sess_id,
+                    )
+                    memory.update_emotional_state_from_response(reply)
+                    memory.update_mood_from_emotions()
+                    
+                    if training_enabled and (not image_base64 or "poster tersebut" not in reply.lower()):
+                        memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
+                    
+                    session_title = None
+                    if hasattr(memory, "auto_update_session_title"):
+                        session_title = memory.auto_update_session_title(
+                            session_id=target_sess_id,
+                            user_message=user_message,
+                            document_name=document_name
+                        )
+
+                    if target_sess_id == getattr(memory, "active_session_id", "default") and len(memory.short_term_history) > 500:
+                        compress_old_messages(memory, keep_count=500)
+                    memory.save_memory()
+                    
                 return jsonify({
                     "reply": reply,
-                    "status": ag_res.get("status"),
-                    "task_id": ag_res.get("task_id"),
-                    "plan": ag_res.get("plan"),
-                    "pending_action": ag_res.get("pending_action"),
-                    "agent_action": ag_res.get("agent_action"),
                     "user_message_id": user_msg_id,
                     "assistant_message_id": assistant_msg_id,
+                    "assistant_image_url": assistant_img_url,
                     "count": memory.system_metadata["total_turns"],
-                    "active_session_id": active_sess_id,
+                    "emotion": user_emotion,
+                    "mood": memory.agent_persona.get("current_mood", "Neutral"),
+                    "topics": memory.system_metadata.get("topics_discussed", []),
+                    "has_image": bool(image_base64),
+                    "image_url": img_url,
+                    "has_document": bool(document_info),
+                    "document_name": document_name,
+                    "document_url": doc_url,
+                    "document_type": doc_type,
+                    "active_session_id": getattr(memory, "active_session_id", target_sess_id),
+                    "session_id": target_sess_id,
+                    "session_title": session_title or _resolve_session_title(memory, target_sess_id),
+                    "pipeline_trace": trace,
+                    "agent_action": trace.get("agent_action"),
+                    "thought_content": thought_content,
+                    "thought_duration_sec": thought_duration_sec,
+                    "agent_steps": agent_steps or [],
+                    "artifacts": artifacts or []
                 })
-
-            reply, details = get_shiro_reply(
-                user_message,
-                image_base64=image_base64,
-                images_base64=images_list,
-                document_info=document_info,
-                documents=documents_list,
-                videos=videos_list,
-                max_tokens=user_max_tokens,
-                lyra_tier=req_lyra_tier,
-                return_details=True
-            )
-            trace = details.get("trace", {}) if isinstance(details, dict) else {}
-            thought_content = details.get("reasoning_content") if isinstance(details, dict) else None
-            thought_duration_sec = details.get("thought_duration_sec") if isinstance(details, dict) else None
-            agent_steps = details.get("agent_steps") if isinstance(details, dict) else None
-            artifacts = details.get("artifacts") if isinstance(details, dict) else None
-            saved_agent_action = (
-                details.get("agent_action")
-                if (isinstance(details, dict) and details.get("agent_action"))
-                else (trace.get("agent_action") if isinstance(trace, dict) else None)
-            )
-            
-            assistant_img_url = None
-            if isinstance(saved_agent_action, dict):
-                assistant_img_url = saved_agent_action.get("image_url")
-
-            with memory.lock:
-                assistant_msg_id = memory.add_message(
-                    "assistant",
-                    reply,
-                    image_path=assistant_img_url,
-                    thought_content=thought_content,
-                    thought_duration_sec=thought_duration_sec,
-                    agent_steps=agent_steps,
-                    artifacts=artifacts,
-                    agent_action=saved_agent_action,
-                )
-                memory.update_emotional_state_from_response(reply)
-                memory.update_mood_from_emotions()
-                
-                if training_enabled and (not image_base64 or "poster tersebut" not in reply.lower()):
-                    memory.record_learned_pattern(log_msg, reply, image_path=saved_img_rel)
-                
-                session_title = None
-                if hasattr(memory, "auto_update_session_title"):
-                    session_title = memory.auto_update_session_title(
-                        session_id=active_sess_id,
-                        user_message=user_message,
-                        document_name=document_name
-                    )
-
-                if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
-                    memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
-                    memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
-
-                if len(memory.short_term_history) > 500:
-                    compress_old_messages(memory, keep_count=500)
-                memory.save_memory()
-                
-            return jsonify({
-                "reply": reply,
-                "user_message_id": user_msg_id,
-                "assistant_message_id": assistant_msg_id,
-                "assistant_image_url": assistant_img_url,
-                "count": memory.system_metadata["total_turns"],
-                "emotion": user_emotion,
-                "mood": memory.agent_persona.get("current_mood", "Neutral"),
-                "topics": memory.system_metadata.get("topics_discussed", []),
-                "has_image": bool(image_base64),
-                "image_url": img_url,
-                "has_document": bool(document_info),
-                "document_name": document_name,
-                "document_url": doc_url,
-                "document_type": doc_type,
-                "active_session_id": active_sess_id,
-                "session_title": session_title,
-                "pipeline_trace": trace,
-                "agent_action": trace.get("agent_action"),
-                "thought_content": thought_content,
-                "thought_duration_sec": thought_duration_sec,
-                "agent_steps": agent_steps or [],
-                "artifacts": artifacts or []
-            })
+            finally:
+                state.mark_session_done(target_sess_id)
 
         # 3. STREAMING REAL-TIME SSE (text/event-stream)
         import json as py_json
@@ -514,12 +526,15 @@ def chat():
             artifacts = None
             client_disconnected = False
             active_stream_gen = None
+            state.mark_session_running(target_sess_id)
 
-            # Kirim metadata awal segera agar UI mendapatkan user_msg_id
+            # Kirim metadata awal segera agar UI mendapatkan user_msg_id & session_id asal
             init_payload = {
                 "type": "init",
                 "user_message_id": user_msg_id,
-                "active_session_id": active_sess_id,
+                "active_session_id": target_sess_id,
+                "session_id": target_sess_id,
+                "session_title": _resolve_session_title(memory, target_sess_id),
                 "image_url": img_url,
                 "document_name": document_name,
                 "images": saved_images_urls if len(saved_images_urls) > 1 else None,
@@ -555,7 +570,7 @@ def chat():
                     active_stream_gen = autonomous_runner.run_task_stream(
                         agent_route["task"],
                         state.llm,
-                        session_id=active_sess_id,
+                        session_id=target_sess_id,
                     )
                     for event in active_stream_gen:
                         ev_type = event.get("type")
@@ -592,7 +607,8 @@ def chat():
                         documents=documents_list,
                         videos=videos_list,
                         max_tokens=user_max_tokens,
-                        lyra_tier=req_lyra_tier
+                        lyra_tier=req_lyra_tier,
+                        session_id=target_sess_id,
                     )
                     for event in active_stream_gen:
                         ev_type = event.get("type")
@@ -662,7 +678,8 @@ def chat():
                         active_stream_gen.close()
                     except Exception:
                         pass
-                # Simpan jawaban ke memori bahkan jika koneksi terputus di tengah jalan
+                state.mark_session_done(target_sess_id)
+                # Simpan jawaban ke memori sesi asal bahkan jika user sudah berpindah ke sesi lain
                 done_payload = None
                 try:
                     if full_reply and full_reply.strip():
@@ -677,6 +694,7 @@ def chat():
                                 agent_steps=agent_steps,
                                 artifacts=artifacts,
                                 agent_action=resolved_action,
+                                session_id=target_sess_id,
                             )
                             memory.update_emotional_state_from_response(full_reply)
                             memory.update_mood_from_emotions()
@@ -687,17 +705,18 @@ def chat():
                             session_title = None
                             if hasattr(memory, "auto_update_session_title"):
                                 session_title = memory.auto_update_session_title(
-                                    session_id=active_sess_id,
+                                    session_id=target_sess_id,
                                     user_message=user_message,
                                     document_name=document_name
                                 )
 
-                            if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
-                                memory.sessions_store[active_sess_id]["messages"] = list(memory.short_term_history)
-                                memory.sessions_store[active_sess_id]["last_active"] = datetime.now().isoformat()
-
-                            if len(memory.short_term_history) > 500:
-                                compress_old_messages(memory, keep_count=500)
+                            if target_sess_id == getattr(memory, "active_session_id", "default"):
+                                if len(memory.short_term_history) > 500:
+                                    compress_old_messages(memory, keep_count=500)
+                            elif hasattr(memory, "sessions_store") and target_sess_id in memory.sessions_store:
+                                bg_msgs = memory.sessions_store[target_sess_id].get("messages", [])
+                                if len(bg_msgs) > 500:
+                                    memory.sessions_store[target_sess_id]["messages"] = bg_msgs[-500:]
                             memory.save_memory()
 
                             done_payload = {
@@ -705,7 +724,8 @@ def chat():
                                 "reply": full_reply,
                                 "assistant_message_id": assistant_msg_id,
                                 "assistant_image_url": assistant_img_url,
-                                "session_title": session_title,
+                                "session_id": target_sess_id,
+                                "session_title": session_title or _resolve_session_title(memory, target_sess_id),
                                 "pipeline_trace": trace,
                                 "agent_action": agent_action or (trace.get("agent_action") if trace else None),
                                 "thought_content": thought_content,

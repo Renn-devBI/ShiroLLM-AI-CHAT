@@ -328,6 +328,7 @@ def _prepare_inference_payload(
     include_reasoning: bool = False,
     max_tokens: Optional[int] = None,
     lyra_tier: Optional[str] = None,
+    session_id: Optional[str] = None,
     t_start_total: Optional[float] = None
 ) -> Dict[str, Any]:
     """
@@ -509,7 +510,12 @@ def _prepare_inference_payload(
                 take_web_screenshot,
                 execute_powershell_command
             )
-            agent_intent_res = detect_agent_intent(raw_user_typed, conversation_history=getattr(memory, 'short_term_history', None))
+            sess_hist_src = (
+                memory.get_session_history(session_id)
+                if (memory and hasattr(memory, "get_session_history"))
+                else list(getattr(memory, "short_term_history", []) or [])
+            )
+            agent_intent_res = detect_agent_intent(raw_user_typed, conversation_history=sess_hist_src)
             agent_intent = agent_intent_res.get("intent", "none")
             if api_version == "v2" and agent_intent in ("archive", "generate_video", "powershell"):
                 agent_intent = "none"
@@ -537,7 +543,7 @@ def _prepare_inference_payload(
                     hist_src = (
                         incoming_messages[:-1]
                         if (incoming_messages and len(incoming_messages) > 1)
-                        else list(getattr(memory, "short_term_history", []) or [])
+                        else sess_hist_src
                     )
                     # Jika user meminta membuat berkas/proyek BARU tanpa menyebut berkas lama, abaikan arsip lama
                     low_req = raw_user_typed.lower()
@@ -859,6 +865,15 @@ def _prepare_inference_payload(
                     c = " ".join([p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"]).strip()
                 if c:
                     clean_context.append({"role": role, "content": c})
+    elif memory and hasattr(memory, "get_session_history"):
+        history_slice = memory.get_session_history(session_id)
+        if history_slice and history_slice[-1].get("role") == "user" and history_slice[-1].get("content") == raw_user_typed:
+            history_slice = history_slice[:-1]
+        for m in history_slice:
+            r = m.get("role", "")
+            c = m.get("content", "")
+            if r in ["user", "assistant"] and c:
+                clean_context.append({"role": r, "content": str(c)})
     elif memory and hasattr(memory, "short_term_history"):
         history_slice = list(memory.short_term_history)
         if history_slice and history_slice[-1].get("role") == "user" and history_slice[-1].get("content") == raw_user_typed:
@@ -1828,7 +1843,8 @@ def get_shiro_reply(
     reasoning_effort: Optional[str] = None,
     include_reasoning: bool = False,
     max_tokens: Optional[int] = None,
-    lyra_tier: Optional[str] = None
+    lyra_tier: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Union[str, Tuple[str, Any]]:
     """
     Eksekusi pipeline kognitif Shiro (Synchronous Non-Streaming).
@@ -1851,6 +1867,7 @@ def get_shiro_reply(
             include_reasoning=include_reasoning,
             max_tokens=max_tokens,
             lyra_tier=lyra_tier,
+            session_id=session_id,
             t_start_total=t_start_total
         )
         llm = prep["llm"]
@@ -2122,7 +2139,8 @@ def stream_shiro_reply(
     reasoning_effort: Optional[str] = None,
     include_reasoning: bool = False,
     max_tokens: Optional[int] = None,
-    lyra_tier: Optional[str] = None
+    lyra_tier: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Generator[Dict[str, Any], None, None]:
     """
     Eksekusi streaming token neural real-time (Server-Sent Events generator).
@@ -2149,7 +2167,12 @@ def stream_shiro_reply(
             try:
                 from shiro.agent.tools import detect_agent_intent
                 mem_inst = state.init_memory()
-                intent_info = detect_agent_intent(raw_user_typed, conversation_history=getattr(mem_inst, 'short_term_history', None))
+                pre_hist = (
+                    mem_inst.get_session_history(session_id)
+                    if (mem_inst and hasattr(mem_inst, "get_session_history"))
+                    else getattr(mem_inst, 'short_term_history', None)
+                )
+                intent_info = detect_agent_intent(raw_user_typed, conversation_history=pre_hist)
                 pre_intent = intent_info.get("intent", "none")
                 if api_version == "v2" and pre_intent in ("archive", "generate_video", "powershell"):
                     pre_intent = "none"
@@ -2250,6 +2273,7 @@ def stream_shiro_reply(
             include_reasoning=include_reasoning,
             max_tokens=max_tokens,
             lyra_tier=lyra_tier,
+            session_id=session_id,
             t_start_total=t_start_total
         )
         is_heavy_task_stream = bool(prep.get("is_heavy_task", False)) and api_version != "v2"

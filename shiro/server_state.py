@@ -20,6 +20,33 @@ class ServerRuntimeState:
         # Global lock untuk menserialisasi seluruh operasi llama.cpp (inferensi, vision, switch model)
         # Mencegah race condition C++ (GGML_ASSERT / SIGABRT) akibat akses paralel ke llama_context
         self.llm_lock = threading.Lock()
+        self._running_sessions_lock = threading.Lock()
+        self._running_sessions: dict = {}
+
+    def mark_session_running(self, session_id: Optional[str]):
+        """Menandai sesi tertentu sedang menjalankan respons AI di latar belakang."""
+        sid = (session_id or "").strip()
+        if not sid:
+            return
+        with self._running_sessions_lock:
+            self._running_sessions[sid] = int(self._running_sessions.get(sid, 0)) + 1
+
+    def mark_session_done(self, session_id: Optional[str]):
+        """Mengurangi hitungan eksekusi aktif untuk sesi saat respons selesai/berhenti."""
+        sid = (session_id or "").strip()
+        if not sid:
+            return
+        with self._running_sessions_lock:
+            cur = int(self._running_sessions.get(sid, 0)) - 1
+            if cur <= 0:
+                self._running_sessions.pop(sid, None)
+            else:
+                self._running_sessions[sid] = cur
+
+    def get_running_session_ids(self) -> list:
+        """Mengembalikan daftar ID sesi yang saat ini masih berjalan di backend."""
+        with self._running_sessions_lock:
+            return [sid for sid, cnt in self._running_sessions.items() if cnt > 0]
 
     def is_llm_busy(self) -> bool:
         """Memeriksa apakah instance LLM sedang digunakan untuk inferensi atau perpindahan model"""
