@@ -185,16 +185,80 @@ def _split_partial_agent_tag(buf: str) -> Tuple[str, str]:
     return buf, ""
 
 
-def _execute_live_research_tool(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+def get_max_agent_rounds(tier_id: Optional[str] = None) -> int:
+    """Mengembalikan batas iterasi reasoning/pencarian agen yang berskala dinamis sesuai level konteks."""
+    budgets = {
+        "low": 3,
+        "medium": 8,
+        "high": 24,
+        "extra_high": 45,
+        "ultra_high": 64,
+    }
+    return budgets.get(str(tier_id or "").lower(), 16)
+
+
+_HEAVY_TASK_RE = re.compile(
+    r'\b(?:kode|code|script|skrip|website|web|html|css|javascript|typescript|python|flask|fastapi|'
+    r'react|vue|sql|database|db|api|endpoint|bug|error|traceback|exception|debug|fix|perbaiki|'
+    r'buatkan|buatin|bikin|create|build|develop|implement|refactor|optimasi|optimize|deploy|server|'
+    r'docker|zip|tar|rar|7z|compress|arsip|file|berkas|folder|directory|direktori|dokumen|pdf|docx|'
+    r'analisa|analisis|analyze|audit|review|bandingkan|compare|arsitektur|algoritma|hitung|rumus|'
+    r'cari|carikan|search|google|browsing|browse|berita|info|informasi|terbaru|harga|kurs|cuaca|'
+    r'video|gambar|foto|render|generate)\b',
+    re.IGNORECASE,
+)
+
+
+def _is_heavy_agent_task(
+    raw_user_typed: str,
+    agent_intent: str = "none",
+    has_doc: bool = False,
+    has_image: bool = False,
+    has_video: bool = False,
+    api_version: str = "v1",
+    tools: Optional[List[Dict[str, Any]]] = None,
+    include_reasoning: bool = False,
+    reasoning_effort: Optional[str] = None,
+) -> bool:
+    """
+    Menentukan apakah permintaan membutuhkan alur agen & penalaran penuh (`Reasoning & Solution Synthesis`)
+    atau cukup dijawab langsung secara natural (misalnya obrolan santai atau mode VTuber v2).
+    """
+    if api_version == "v2":
+        return False
+    if include_reasoning or (reasoning_effort and str(reasoning_effort).lower() not in ("none", "false", "0")):
+        return True
+    if tools or has_doc or has_image or has_video:
+        return True
+    if agent_intent and agent_intent != "none":
+        return True
+    txt = (raw_user_typed or "").strip()
+    if not txt:
+        return False
+    if "\n" in txt or len(txt) > 130 or "```" in txt:
+        return True
+    if _HEAVY_TASK_RE.search(txt):
+        return True
+    return False
+
+
+def _execute_live_research_tool(
+    tool_call: Dict[str, Any],
+    tier_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Menjalankan alat penelusuran web/browser (`web_search`, `open_url`, `screenshot`) secara langsung."""
     from shiro.agent.tools import search_google_web, open_and_read_webpage, take_web_screenshot
+    from shiro.web.realtime_intel import get_research_config_for_tier
+    cfg = get_research_config_for_tier(tier_id)
+    max_res = max(4, min(12, int(cfg.max_sources)))
+    max_imgs = max(2, min(8, int(cfg.max_images)))
     name = (tool_call.get("name") or "").lower()
     args = tool_call.get("args") or {}
     t0 = time.perf_counter()
 
     if name == "web_search":
         q = (args.get("query") or args.get("q") or "").strip()
-        res = search_google_web(q, max_results=6, include_images=True)
+        res = search_google_web(q, max_results=max_res, include_images=True)
         sources = [
             {
                 "title": str(r.get("title") or "Sumber Web"),
@@ -202,10 +266,10 @@ def _execute_live_research_tool(tool_call: Dict[str, Any]) -> Dict[str, Any]:
                 "domain": "",
                 "snippet": str(r.get("snippet") or "")[:200],
             }
-            for r in (res.get("results") or [])[:6]
+            for r in (res.get("results") or [])[:max_res]
             if isinstance(r, dict) and r.get("url")
         ]
-        images = list((res.get("images") or [])[:4])
+        images = list((res.get("images") or [])[:max_imgs])
         return {
             "tool": "multi_source_web_research",
             "title": f"Browser Web Search ({q[:40]})",
@@ -219,7 +283,7 @@ def _execute_live_research_tool(tool_call: Dict[str, Any]) -> Dict[str, Any]:
         u = (args.get("url") or "").strip()
         res = open_and_read_webpage(u)
         sources = [{"title": res.get("title") or u, "url": u, "domain": "", "snippet": (res.get("content") or "")[:200]}] if u else []
-        images = list((res.get("images") or [])[:4])
+        images = list((res.get("images") or [])[:max_imgs])
         img_lines = "\n".join(f"- ![{im.get('title', 'Image')}]({im.get('url')})" for im in images if im.get("url"))
         obs = f"Judul: {res.get('title')}\nURL: {u}\nKonten:\n{res.get('content')}"
         if img_lines:
@@ -276,6 +340,11 @@ def _prepare_inference_payload(
     vision_chat_handler = state.vision_chat_handler
     memory = state.init_memory()
     web_reader = state.init_web_reader()
+    roleplay_enabled = (
+        bool(memory.system_metadata.get("roleplay_enabled", True))
+        if (memory and hasattr(memory, "system_metadata") and isinstance(memory.system_metadata, dict))
+        else True
+    )
 
     raw_user_typed = (user_input or "").strip()
     active_model_path = getattr(llm, 'model_path', '') if hasattr(llm, 'model_path') else ""
@@ -301,10 +370,18 @@ def _prepare_inference_payload(
 
     all_videos: List[Dict[str, Any]] = [
         v for v in (videos or [])
-        if isinstance(v, dict) and (v.get("frames") or v.get("thumbnail"))
+        if isinstance(v, dict)
+        and (
+            v.get("frames")
+            or v.get("thumbnail")
+            or v.get("url")
+            or v.get("saved_filename")
+            or v.get("filename")
+        )
     ]
     video_frames_pool: List[str] = []
     video_meta_lines: List[str] = []
+    video_upload_dir = os.path.abspath(os.path.join("data", "uploads", "videos"))
     for v_idx, v_item in enumerate(all_videos, 1):
         v_name = v_item.get("filename") or f"video_{v_idx}.mp4"
         v_dur = v_item.get("duration_sec")
@@ -312,12 +389,53 @@ def _prepare_inference_payload(
         v_fps = v_item.get("fps")
         v_frames = list(v_item.get("frames") or ([v_item["thumbnail"]] if v_item.get("thumbnail") else []))
         v_ts = list(v_item.get("frame_timestamps") or [])
-        ts_preview = ", ".join(f"{t}s" for t in v_ts[:12]) if v_ts else f"{len(v_frames)} frames"
+
+        # Lazy on-demand extraction saat inference saja (unggah video tetap instan tanpa ekstrak frame)
+        if not v_frames:
+            cand_names = []
+            for raw_n in (
+                v_item.get("saved_filename"),
+                os.path.basename(str(v_item.get("url") or "").split("?")[0]),
+                v_item.get("filename"),
+            ):
+                if raw_n and raw_n not in cand_names:
+                    cand_names.append(os.path.basename(str(raw_n)))
+            disk_path = None
+            for cand_n in cand_names:
+                probe_path = os.path.abspath(os.path.join(video_upload_dir, cand_n))
+                try:
+                    if os.path.commonpath([probe_path, video_upload_dir]) == video_upload_dir and os.path.isfile(probe_path):
+                        disk_path = probe_path
+                        break
+                except ValueError:
+                    continue
+            if disk_path:
+                try:
+                    from shiro.vision.video import extract_video_frames_and_metadata
+                    max_vid_frames = int(os.environ.get("SHIRO_VIDEO_MAX_FRAMES", "12"))
+                    lazy_meta = extract_video_frames_and_metadata(
+                        disk_path,
+                        filename=v_name,
+                        max_frames=max_vid_frames,
+                    )
+                    v_frames = list(lazy_meta.get("frames") or ([lazy_meta["thumbnail"]] if lazy_meta.get("thumbnail") else []))
+                    v_ts = list(lazy_meta.get("frame_timestamps") or v_ts)
+                    if v_dur is None:
+                        v_dur = lazy_meta.get("duration_sec")
+                    if v_res == "unknown" and lazy_meta.get("resolution"):
+                        v_res = lazy_meta["resolution"]
+                    if v_fps is None:
+                        v_fps = lazy_meta.get("fps")
+                    v_item["sampled_frame_count"] = len(v_frames)
+                except Exception as e_vid_lazy:
+                    print(f"[Lazy Video Extraction Warning]: {e_vid_lazy}")
+
+        ts_preview = ", ".join(f"{t}s" for t in v_ts[:12]) if v_ts else f"{len(v_frames)} segmen"
         dur_lbl = f"{v_dur}s" if v_dur is not None else "unknown duration"
         fps_lbl = f", {v_fps} fps" if v_fps else ""
         video_meta_lines.append(
             f"- Video #{v_idx} `{v_name}` ({v_res}, durasi {dur_lbl}{fps_lbl}): "
-            f"{len(v_frames)} frame kronologis pada timestamp [{ts_preview}]"
+            f"{len(v_frames)} titik adegan kronologis [{ts_preview}]"
         )
         video_frames_pool.extend(v_frames)
 
@@ -367,6 +485,7 @@ def _prepare_inference_payload(
     pending_video_request: Optional[Dict[str, Any]] = None
     available_archive_files: List[Dict[str, str]] = []
     inferred_project_name: Optional[str] = None
+    research_substeps: List[Dict[str, Any]] = []
     all_docs_files: List[Dict[str, str]] = [
         {
             "filename": d.get("filename") or f"file_{i}.txt",
@@ -392,6 +511,8 @@ def _prepare_inference_payload(
             )
             agent_intent_res = detect_agent_intent(raw_user_typed, conversation_history=getattr(memory, 'short_term_history', None))
             agent_intent = agent_intent_res.get("intent", "none")
+            if api_version == "v2" and agent_intent in ("archive", "generate_video", "powershell"):
+                agent_intent = "none"
             agent_intent_detected = agent_intent
             agent_params = agent_intent_res.get("params", {})
 
@@ -501,8 +622,8 @@ def _prepare_inference_payload(
                     custom_agent_prompt = (
                         f"\n\n[PERMINTAAN RENDER VIDEO MP4 (.mp4)]:\n"
                         f"Sistem akan merender video MP4 programatik berdurasi {vid_dur} detik SETELAH responsmu selesai.\n"
-                        f"Jelaskan rencana visual/adegan video untuk Kakak dengan alami. "
-                        f"Catatan jujur bila diminta video sinematik AI/foto bergerak realistis: Qwen3.8-27B adalah model pemahaman video/gambar (video understanding), sehingga generator video di server saat ini merender MP4 motion-graphic / slideshow programatik.\n"
+                        f"Jelaskan rencana visual/adegan video untuk pengguna dengan alami. "
+                        f"Catatan jujur bila diminta video sinematik AI/foto bergerak realistis: sistem memahami input video/visual secara multimodal dan merender MP4 motion-graphic / slideshow programatik.\n"
                     )
                 elif agent_intent == "weather":
                     tool_name = "weather_sat_check"
@@ -514,14 +635,31 @@ def _prepare_inference_payload(
                 elif agent_intent == "search":
                     tool_name = "multi_source_web_research"
                     q = agent_params.get("query", raw_user_typed)
-                    tool_desc = f"Riset browser multi-sumber & pencarian gambar web: '{q}'"
+                    chosen_search_tier = lyra_tier if is_valid_lyra_tier(lyra_tier) else get_saved_lyra_tier()
+                    tool_desc = f"Riset browser multi-sumber ({chosen_search_tier}) & pencarian gambar web: '{q}'"
+                    from shiro.web.realtime_intel import get_research_config_for_tier
+                    search_cfg = get_research_config_for_tier(chosen_search_tier)
                     try:
                         from shiro.web.realtime_intel import research, wrap_search_fn, default_fetcher
+
+                        def _on_research_progress(ev_msg: str):
+                            if not ev_msg:
+                                return
+                            idx_s = len(research_substeps) + 1
+                            research_substeps.append({
+                                "id": f"web_sub_{idx_s}",
+                                "title": f"Deep Search Pass #{idx_s}",
+                                "status": "done",
+                                "feedback": str(ev_msg)[:160],
+                            })
+
                         res_intel = research(
                             user_query=q,
                             search_fn=wrap_search_fn(search_google_web),
                             fetch_fn=default_fetcher,
-                            image_search_fn=lambda q_str: search_web_images(q_str, max_images=4),
+                            image_search_fn=lambda q_str: search_web_images(q_str, max_images=search_cfg.max_images),
+                            cfg=search_cfg,
+                            progress_cb=_on_research_progress,
                         )
                         obs_summary = res_intel.summary_text
                         structured_obs = {
@@ -539,7 +677,7 @@ def _prepare_inference_payload(
                         web_prompt_addon = f"\n\n{res_intel.prompt_block}\n"
                     except Exception as e_intel:
                         print(f"[Research Error Fallback]: {e_intel}")
-                        s_res = search_google_web(q, max_results=6, include_images=True)
+                        s_res = search_google_web(q, max_results=max(6, search_cfg.max_sources), include_images=True)
                         obs_summary = s_res.get("summary", "")
                         structured_obs = {
                             "sources": s_res.get("results") or [],
@@ -611,13 +749,18 @@ def _prepare_inference_payload(
                 if custom_agent_prompt:
                     web_prompt_addon = custom_agent_prompt
                 elif not web_prompt_addon:
+                    style_hint = (
+                        "sampaikan dengan gaya bicara santai dan hangat khas Shiro tanpa menyebut nama tool internal."
+                        if roleplay_enabled
+                        else "sampaikan secara profesional, objektif, dan lugas sebagai AI Agent tanpa menyebut nama tool internal."
+                    )
                     web_prompt_addon = (
                         f"\n\n[Informasi / Fakta Web Nyata Real-time]:\n"
                         f"{obs_summary}\n\n"
-                        f"[Instruksi Karakter]:\n"
-                        f"1. Jawab pertanyaan Kakak secara akurat menggunakan fakta & tautan sumber di atas.\n"
+                        f"[Instruksi Penyajian]:\n"
+                        f"1. Jawab pertanyaan pengguna secara akurat menggunakan fakta & tautan sumber di atas.\n"
                         f"2. Jangan pernah mengatakan 'loading', 'tunggu sebentar', atau pura-pura mengecek karena datanya SUDAH tersedia di atas.\n"
-                        f"3. Cantumkan tautan sumber `[Judul](URL)` atau gambar `![Judul](url)` yang tersedia jika relevan, dan sampaikan murni dengan gaya bicara manis dan hangat khas Shiro tanpa menyebut nama tool internal.\n"
+                        f"3. Cantumkan tautan sumber `[Judul](URL)` atau gambar `![Judul](url)` yang tersedia jika relevan, dan {style_hint}\n"
                     )
         except Exception as e_agent:
             print(f"[Inference Agent Warning]: {e_agent}")
@@ -889,10 +1032,17 @@ def _prepare_inference_payload(
     except Exception:
         pass
 
+    active_model_display = (
+        f"{lyra_tier_info['label']} (seri {active_model_name})"
+        if (lyra_tier_info and active_model_name and lyra_tier_info.get("label") != active_model_name)
+        else ((lyra_tier_info or {}).get("label") or active_model_name or "ShiroHaru-Lyra-Agent")
+    )
+
     if api_version == "v2":
         system_prompt = build_vtuber_system_prompt(
             owner_name=user_name,
-            custom_instruction=custom_persona
+            custom_instruction=custom_persona,
+            active_model_name=active_model_display,
         ) + tools_addon + reasoning_addon + time_ctx_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
     elif api_version == "v3":
         base_p = custom_system_prompt or custom_persona or ""
@@ -910,13 +1060,32 @@ def _prepare_inference_payload(
             assistant_name=ai_name,
             custom_persona=custom_persona,
             user_name=user_name,
-            user_context=user_context
+            user_context=user_context,
+            active_model_name=active_model_display,
+            roleplay_enabled=roleplay_enabled,
         ) + tools_addon + reasoning_addon + time_ctx_addon + visual_guidance_addon
+
+    is_heavy_task = _is_heavy_agent_task(
+        raw_user_typed=raw_user_typed,
+        agent_intent=agent_intent_detected,
+        has_doc=has_doc,
+        has_image=has_image,
+        has_video=has_video,
+        api_version=api_version,
+        tools=tools,
+        include_reasoning=include_reasoning,
+        reasoning_effort=reasoning_effort,
+    )
 
     # Mode Kecepatan & Penalaran khusus per-tier ShiroHaru-Lyra-Agent
     lyra_thinking_mode = lyra_tier_info.get("thinking_mode", "standard") if lyra_tier_info else None
-    if is_lyra_model and not is_reasoning_enabled and api_version != "v3":
-        if lyra_thinking_mode == "off":
+    if is_lyra_model and not is_reasoning_enabled and api_version not in ("v2", "v3"):
+        if not is_heavy_task:
+            system_prompt += (
+                "\n\n[Mode Respons Langsung]: Ini adalah obrolan/pertanyaan ringan tanpa tugas agen berat. "
+                "Jawab langsung secara natural, hangat, dan ringkas tanpa blok analisis panjang."
+            )
+        elif lyra_thinking_mode == "off":
             system_prompt += (
                 "\n\n[Mode Cepat ShiroHaru-Lyra Low]: Jawab cepat, padat, langsung ke inti, "
                 "dan tetap fungsional tanpa bertele-tele."
@@ -930,8 +1099,9 @@ def _prepare_inference_payload(
             system_prompt += (
                 "\n\n[Antigravity Internal Analysis Mode]:\n"
                 "Before writing your final response, analyze the user's request carefully inside <think>...</think> "
-                "in clear, structured ENGLISH covering: (1) Request & Intent, (2) Technical/Contextual Plan & any helpful feedback/clarifications, "
-                "(3) Exact Filenames & Verification. Wait until after </think> to write your user-facing answer in the user's language (100% Indonesian for Indonesian input)."
+                "in clear, structured ENGLISH organized into numbered reasoning stages (1., 2., 3., ... up to as many stages as the task genuinely requires) covering: "
+                "Request & Intent, Multi-Angle Technical/Research Plan, Exact Filenames & Verification. "
+                "Wait until after </think> to write your user-facing answer in the user's language (100% Indonesian for Indonesian input)."
             )
 
     visual_evidence_text = ""
@@ -1031,18 +1201,31 @@ def _prepare_inference_payload(
 
         # Anti-drift anchor: kunci bahasa sesuai bahasa pengguna dan larang code-switching di tengah kalimat/narasi
         if not is_user_english_query and raw_user_typed:
-            parts_user.append(
-                f"\n[Pedoman Bahasa]: {user_name} berbicara dalam Bahasa Indonesia. "
-                f"Jawab 100% dalam Bahasa Indonesia santai khas {ai_name} dari awal sampai akhir. "
-                f"DILARANG KERAS mencampur atau beralih ke Bahasa Inggris pada narasi tindakan *...* maupun dialog "
-                f"(jangan menulis frasa seperti 'my head against his shoulder', 'Shiro here', 'you don\'t gotta', 'swallows hard', 'whispers', dll; gunakan Bahasa Indonesia alami sepenuhnya)."
-            )
+            if roleplay_enabled and api_version != "v3":
+                parts_user.append(
+                    f"\n[Pedoman Bahasa]: {user_name} berbicara dalam Bahasa Indonesia. "
+                    f"Jawab 100% dalam Bahasa Indonesia santai khas {ai_name} dari awal sampai akhir. "
+                    f"DILARANG KERAS mencampur atau beralih ke Bahasa Inggris pada narasi tindakan *...* maupun dialog "
+                    f"(jangan menulis frasa seperti 'my head against his shoulder', 'Shiro here', 'you don\'t gotta', 'swallows hard', 'whispers', dll; gunakan Bahasa Indonesia alami sepenuhnya)."
+                )
+            elif api_version != "v3":
+                parts_user.append(
+                    f"\n[Pedoman Bahasa]: Pengguna berbicara dalam Bahasa Indonesia. "
+                    f"Jawab 100% dalam Bahasa Indonesia profesional yang bersih, langsung, dan bebas narasi roleplay (*...*) maupun sapaan 'Kakak'."
+                )
 
         user_text = "\n".join(parts_user)
         user_turn_msg = {"role": "user", "content": user_text}
 
-    # Soft-switch resmi Qwen3/Qwen3.8 (/no_think) pada mode Low & Medium agar respons langsung keluar tanpa blok <think> panjang
-    if is_lyra_model and not is_reasoning_enabled and api_version != "v3" and lyra_thinking_mode in ("off", "light"):
+    if api_version == "v2":
+        disable_thinking = True
+    elif is_lyra_model and not is_reasoning_enabled and api_version != "v3":
+        disable_thinking = bool((not is_heavy_task) or (lyra_thinking_mode in ("off", "light")))
+    else:
+        disable_thinking = False
+
+    # Soft-switch (/no_think) pada mode cepat, obrolan ringan, atau VTuber v2 agar respons langsung keluar tanpa blok <think>
+    if is_lyra_model and disable_thinking and api_version != "v3":
         c_val = user_turn_msg.get("content")
         if isinstance(c_val, list):
             new_parts = list(c_val)
@@ -1106,13 +1289,6 @@ def _prepare_inference_payload(
     remaining_space = max(256, effective_ctx - prompt_tokens_est - 128)
     max_output_tokens = min(desired_max, remaining_space)
 
-    disable_thinking = bool(
-        is_lyra_model
-        and not is_reasoning_enabled
-        and api_version != "v3"
-        and lyra_thinking_mode in ("off", "light")
-    )
-
     stop_tokens = [
         "<|im_end|>", "<|im_start|>", "<|eot_id|>", "<|end|>", "<|end_of_text|>",
         "\nUser:", "\nKakak:", "\nuser:", "\nAssistant:", "\nassistant:",
@@ -1137,80 +1313,90 @@ def _prepare_inference_payload(
 
     tier_lbl_en = lyra_tier_info["label"] if lyra_tier_info else (active_model_name or "Standard")
     mode_en = "Fast Agent Path" if disable_thinking else f"English Analysis ({lyra_thinking_mode or 'standard'})"
-    agent_steps: List[Dict[str, Any]] = [
-        {
-            "id": "analyze",
-            "title": "Analyze Request & Context",
-            "status": "done",
-            "feedback": (
-                f"Intent: {agent_intent_detected} · Profile: {tier_lbl_en} · "
-                f"Memory: {len(relevant_facts)} fact(s), {len(clean_context)} turn(s) · Mode: {mode_en}"
-            ),
-        }
-    ]
-    if agent_action_data and agent_action_data.get("tool") not in ("archive_packager", "video_renderer"):
-        t_key = agent_action_data.get("tool")
-        if t_key in ("multi_source_web_research", "google_web_search"):
-            src_cnt = len(agent_action_data.get("sources") or [])
-            img_cnt = len(agent_action_data.get("web_images") or [])
-            agent_steps.append({
-                "id": "web_search",
-                "title": "Search Web & Browser Sources",
-                "status": "done" if agent_action_data.get("status") == "success" else "failed",
-                "feedback": f"Collected {src_cnt} web source(s) & {img_cnt} image(s) for grounded synthesis.",
-            })
-        elif t_key == "web_browser_reader":
-            src_cnt = len(agent_action_data.get("sources") or [])
-            img_cnt = len(agent_action_data.get("web_images") or [])
-            agent_steps.append({
-                "id": "web_browse",
-                "title": "Open & Read Webpage",
-                "status": "done" if agent_action_data.get("status") == "success" else "failed",
-                "feedback": f"Extracted webpage content ({src_cnt} URL, {img_cnt} image(s)).",
-            })
-        else:
-            agent_steps.append({
-                "id": f"tool_{agent_action_data['tool']}",
-                "title": f"Execute Tool ({agent_action_data['tool']})",
-                "status": "done" if agent_action_data.get("status") == "success" else "failed",
-                "feedback": str(agent_action_data.get("description") or "")[:160],
-            })
-    elif pending_archive_request:
-        found_cnt = len(available_archive_files)
-        agent_steps.append({
-            "id": "scan_files",
-            "title": "Inspect Workspace & Conversation Files",
-            "status": "done",
-            "feedback": f"Found {found_cnt} file(s) across history/uploads; packaging will run after AI completes its response.",
-        })
+    max_agent_rounds = (
+        1
+        if api_version == "v2"
+        else get_max_agent_rounds(lyra_tier_info["id"] if lyra_tier_info else None)
+    )
 
-    if has_doc and all_docs:
-        total_chars_read = sum(len(str(d.get("text") or "")) for d in all_docs)
-        file_list_str = ", ".join(str(d.get("filename") or "doc") for d in all_docs[:6])
-        if len(all_docs) > 6:
-            file_list_str += f" (+{len(all_docs) - 6} more)"
-        agent_steps.append({
-            "id": "read_files",
-            "title": f"Read All Uploaded Files ({len(all_docs)} file{'s' if len(all_docs) > 1 else ''})",
-            "status": "done",
-            "feedback": f"Loaded {total_chars_read:,} chars across: {file_list_str}",
-        })
-        agent_steps.append({
-            "id": "plan",
-            "title": "Diagnose Issues & Formulate Fix Plan",
-            "status": "done" if not disable_thinking else "done",
-            "feedback": f"Cross-referencing all {len(all_docs)} file(s) and planning targeted fixes before code output.",
-        })
+    if api_version == "v2" or not is_heavy_task:
+        agent_steps: List[Dict[str, Any]] = []
+    else:
+        agent_steps = [
+            {
+                "id": "analyze",
+                "title": "Analyze Request & Context",
+                "status": "done",
+                "feedback": (
+                    f"Intent: {agent_intent_detected} · Profile: {tier_lbl_en} · "
+                    f"Memory: {len(relevant_facts)} fact(s), {len(clean_context)} turn(s) · Mode: {mode_en}"
+                ),
+            }
+        ]
+        if agent_action_data and agent_action_data.get("tool") not in ("archive_packager", "video_renderer"):
+            t_key = agent_action_data.get("tool")
+            if t_key in ("multi_source_web_research", "google_web_search"):
+                for sub_s in research_substeps:
+                    agent_steps.append(sub_s)
+                src_cnt = len(agent_action_data.get("sources") or [])
+                img_cnt = len(agent_action_data.get("web_images") or [])
+                agent_steps.append({
+                    "id": "web_search",
+                    "title": "Search Web & Browser Sources",
+                    "status": "done" if agent_action_data.get("status") == "success" else "failed",
+                    "feedback": f"Collected {src_cnt} web source(s) & {img_cnt} image(s) for grounded synthesis.",
+                })
+            elif t_key == "web_browser_reader":
+                src_cnt = len(agent_action_data.get("sources") or [])
+                img_cnt = len(agent_action_data.get("web_images") or [])
+                agent_steps.append({
+                    "id": "web_browse",
+                    "title": "Open & Read Webpage",
+                    "status": "done" if agent_action_data.get("status") == "success" else "failed",
+                    "feedback": f"Extracted webpage content ({src_cnt} URL, {img_cnt} image(s)).",
+                })
+            else:
+                agent_steps.append({
+                    "id": f"tool_{agent_action_data['tool']}",
+                    "title": f"Execute Tool ({agent_action_data['tool']})",
+                    "status": "done" if agent_action_data.get("status") == "success" else "failed",
+                    "feedback": str(agent_action_data.get("description") or "")[:160],
+                })
+        elif pending_archive_request:
+            found_cnt = len(available_archive_files)
+            agent_steps.append({
+                "id": "scan_files",
+                "title": "Inspect Workspace & Conversation Files",
+                "status": "done",
+                "feedback": f"Found {found_cnt} file(s) across history/uploads; packaging will run after AI completes its response.",
+            })
 
-    if has_video and all_videos:
-        vid_list_str = ", ".join(str(v.get("filename") or "video") for v in all_videos[:4])
-        total_sampled = sum(int(v.get("sampled_frame_count") or len(v.get("frames") or [])) for v in all_videos)
-        agent_steps.append({
-            "id": "read_video",
-            "title": f"Inspect Video Keyframes ({len(all_videos)} video, {total_sampled} frames)",
-            "status": "done",
-            "feedback": f"Sampled chronological frames from: {vid_list_str}",
-        })
+        if has_doc and all_docs:
+            total_chars_read = sum(len(str(d.get("text") or "")) for d in all_docs)
+            file_list_str = ", ".join(str(d.get("filename") or "doc") for d in all_docs[:6])
+            if len(all_docs) > 6:
+                file_list_str += f" (+{len(all_docs) - 6} more)"
+            agent_steps.append({
+                "id": "read_files",
+                "title": f"Read All Uploaded Files ({len(all_docs)} file{'s' if len(all_docs) > 1 else ''})",
+                "status": "done",
+                "feedback": f"Loaded {total_chars_read:,} chars across: {file_list_str}",
+            })
+            agent_steps.append({
+                "id": "plan",
+                "title": "Diagnose Issues & Formulate Fix Plan",
+                "status": "done",
+                "feedback": f"Cross-referencing all {len(all_docs)} file(s) and planning targeted fixes before code output.",
+            })
+
+        if has_video and all_videos:
+            vid_list_str = ", ".join(str(v.get("filename") or "video") for v in all_videos[:4])
+            agent_steps.append({
+                "id": "read_video",
+                "title": f"Analyze Uploaded Video ({len(all_videos)} video)",
+                "status": "done",
+                "feedback": f"Inspecting video timeline & visual scenes from: {vid_list_str}",
+            })
 
     return {
         "t_start_total": t_start_total,
@@ -1221,6 +1407,9 @@ def _prepare_inference_payload(
         "is_lyra_model": is_lyra_model,
         "lyra_tier_info": lyra_tier_info,
         "disable_thinking": disable_thinking,
+        "is_heavy_task": is_heavy_task,
+        "roleplay_enabled": roleplay_enabled,
+        "max_agent_rounds": max_agent_rounds,
         "raw_user_typed": raw_user_typed,
         "msgs": msgs,
         "call_kwargs": call_kwargs,
@@ -1295,7 +1484,7 @@ def _finalize_inference_output(
         "color": "#f59e0b",
         "status": "success",
         "duration_ms": round(t_llm_dur, 2),
-        "summary": f"{round(t_llm_dur)}ms • {active_model_name or 'Qwen'}",
+        "summary": f"{round(t_llm_dur)}ms • {active_model_name or 'ShiroHaru'}",
         "data_in": {
             "model": active_model_name or "LLM",
             "parameters": gen_params
@@ -1348,9 +1537,15 @@ def _finalize_inference_output(
                 pass
 
     if api_version == "v2":
+        reasoning_content = None
         cleaned_reply = clean_vtuber_response(raw_reply, raw_user_typed)
     else:
-        cleaned_reply = clean_response(raw_reply, assistant_name=prep.get("ai_name", "Shiro"), user_input=raw_user_typed)
+        cleaned_reply = clean_response(
+            raw_reply,
+            assistant_name=prep.get("ai_name", "Shiro"),
+            user_input=raw_user_typed,
+            roleplay_enabled=prep.get("roleplay_enabled", True),
+        )
 
     if not cleaned_reply and raw_reply:
         cleaned_reply = raw_reply.strip()
@@ -1361,7 +1556,11 @@ def _finalize_inference_output(
 
     # Post-LLM Packaging, Deferred Video Rendering & Exact Filename Artifacts
     artifacts: List[Dict[str, Any]] = list(prep.get("generated_artifacts") or [])
-    agent_steps: List[Dict[str, Any]] = [dict(s) for s in (prep.get("agent_steps") or [])]
+    agent_steps: List[Dict[str, Any]] = (
+        []
+        if api_version == "v2"
+        else [dict(s) for s in (prep.get("agent_steps") or [])]
+    )
     pending_arch = prep.get("pending_archive_request")
     pending_video = prep.get("pending_video_request")
     ai_archive_call = next((tc for tc in reversed(inline_tool_calls) if tc.get("name") == "create_archive"), None)
@@ -1671,7 +1870,10 @@ def get_shiro_reply(
             raise RuntimeError("Model LLM belum dimuat di memori server.")
 
         t0 = time.perf_counter()
-        for react_round in range(3):
+        max_agent_rounds = int(prep.get("max_agent_rounds", 12))
+        sync_tier_id = (prep.get("lyra_tier_info") or {}).get("id")
+        executed_tool_sigs = set()
+        for react_round in range(max_agent_rounds):
             t_round = time.perf_counter()
             active_model_path = prep.get("active_model_path", "")
             disable_thinking = bool(prep.get("disable_thinking", False))
@@ -1752,14 +1954,21 @@ def get_shiro_reply(
                 raw_reply = (res['choices'][0]['message'].get('content', '') or '').strip()
 
             round_calls, _ = _parse_agent_tool_calls(raw_reply)
-            research_calls = [tc for tc in round_calls if tc.get("name") in ("web_search", "open_url", "screenshot")]
-            if research_calls and react_round < 2:
+            research_calls = []
+            for tc in round_calls:
+                if tc.get("name") in ("web_search", "open_url", "screenshot"):
+                    sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
+                    if sig not in executed_tool_sigs:
+                        research_calls.append((tc, sig))
+            if research_calls and react_round + 1 < max_agent_rounds:
+                is_heavy_task_stream = True
                 obs_chunks: List[str] = []
                 agg_sources: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("sources") or [])
                 agg_images: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("web_images") or [])
                 last_img_url = (prep.get("agent_action_data") or {}).get("image_url")
-                for tc in research_calls[:3]:
-                    tool_res = _execute_live_research_tool(tc)
+                for tc, sig in research_calls[:4]:
+                    executed_tool_sigs.add(sig)
+                    tool_res = _execute_live_research_tool(tc, tier_id=sync_tier_id)
                     obs_chunks.append(f"[{tool_res['title']}]\n{tool_res['observation']}")
                     for src_it in tool_res.get("sources") or []:
                         if src_it.get("url") and not any(s.get("url") == src_it["url"] for s in agg_sources):
@@ -1776,7 +1985,7 @@ def get_shiro_reply(
                         "feedback": f"Retrieved {len(tool_res.get('sources') or [])} source(s) & {len(tool_res.get('web_images') or [])} image(s).",
                     })
                 prep["agent_action_data"] = {
-                    "tool": research_calls[0].get("name") if research_calls[0].get("name") != "web_search" else "multi_source_web_research",
+                    "tool": research_calls[0][0].get("name") if research_calls[0][0].get("name") != "web_search" else "multi_source_web_research",
                     "description": f"Live browser search round {react_round + 1}",
                     "observation": "\n\n".join(obs_chunks),
                     "details": {"sources": agg_sources, "images": agg_images, "image_url": last_img_url},
@@ -1930,44 +2139,62 @@ def stream_shiro_reply(
     """
     t_start_total = time.perf_counter()
     try:
-        # Pre-detect intent untuk memancarkan status & langkah analisis agen langsung ke UI
+        # Pre-detect intent: hanya tampilkan step agent berat bila benar-benar diperlukan (bukan casual chat / VTuber v2)
         raw_user_typed = (user_input or "").strip()
-        yield {
-            "type": "agent_trace_step",
-            "step": {
-                "id": "analyze",
-                "title": "Analyzing Request & Intent",
-                "status": "running",
-                "feedback": "Inspecting prompt context, active memory, and available agent tools...",
-            },
-        }
+        pre_intent = "none"
+        pre_has_doc = bool(document_info or documents)
+        pre_has_image = bool(image_base64 or images_base64)
+        pre_has_video = bool(videos)
         if raw_user_typed:
             try:
                 from shiro.agent.tools import detect_agent_intent
                 mem_inst = state.init_memory()
                 intent_info = detect_agent_intent(raw_user_typed, conversation_history=getattr(mem_inst, 'short_term_history', None))
-                intent = intent_info.get("intent", "none")
-                if intent == "archive":
+                pre_intent = intent_info.get("intent", "none")
+                if api_version == "v2" and pre_intent in ("archive", "generate_video", "powershell"):
+                    pre_intent = "none"
+                pre_is_heavy = _is_heavy_agent_task(
+                    raw_user_typed=raw_user_typed,
+                    agent_intent=pre_intent,
+                    has_doc=pre_has_doc,
+                    has_image=pre_has_image,
+                    has_video=pre_has_video,
+                    api_version=api_version,
+                    tools=tools,
+                    include_reasoning=include_reasoning,
+                    reasoning_effort=reasoning_effort,
+                )
+                if pre_is_heavy:
+                    yield {
+                        "type": "agent_trace_step",
+                        "step": {
+                            "id": "analyze",
+                            "title": "Analyzing Request & Intent",
+                            "status": "running",
+                            "feedback": "Inspecting prompt context, active memory, and available agent tools...",
+                        },
+                    }
+                if pre_intent == "archive":
                     arch_fmt = intent_info.get("params", {}).get("format", "zip")
                     yield {"type": "status", "status": f"Menganalisis & mengompres berkas ke .{arch_fmt}..."}
-                elif intent == "generate_video":
+                elif pre_intent == "generate_video":
                     yield {"type": "status", "status": "Sedang merender video MP4..."}
-                elif intent == "screenshot":
+                elif pre_intent == "screenshot":
                     target_u = intent_info.get("params", {}).get("url", "")
                     yield {"type": "status", "status": f"Sedang mengambil tangkapan layar website ({target_u or 'web'})..."}
-                elif intent == "search":
+                elif pre_intent == "search":
                     q = intent_info.get("params", {}).get("query", raw_user_typed)
                     yield {"type": "status", "status": f"Sedang mencari di Google/Web: '{q[:32]}'..."}
-                elif intent == "browse":
+                elif pre_intent == "browse":
                     target_u = intent_info.get("params", {}).get("url", "")
                     yield {"type": "status", "status": f"Sedang membaca isi halaman web: {target_u[:32]}..."}
-                elif intent == "weather":
+                elif pre_intent == "weather":
                     yield {"type": "status", "status": "Sedang memeriksa data satelit cuaca..."}
-                elif intent == "powershell":
+                elif pre_intent == "powershell":
                     yield {"type": "status", "status": "Sedang menjalankan perintah terminal PC..."}
-                elif intent == "math":
+                elif pre_intent == "math":
                     yield {"type": "status", "status": "Sedang menghitung kalkulasi matematika..."}
-                elif intent == "time":
+                elif pre_intent == "time":
                     yield {"type": "status", "status": "Sedang mengecek jam dan kalender dunia..."}
                 else:
                     try:
@@ -1975,10 +2202,31 @@ def stream_shiro_reply(
                         _ai_name, _, _, _ = load_active_profiles()
                     except Exception:
                         _ai_name = "Shiro"
-                    yield {"type": "status", "status": f"{_ai_name} sedang menganalisis..."}
+                    yield {"type": "status", "status": f"{_ai_name} sedang merangkai jawaban..."}
             except Exception:
                 yield {"type": "status", "status": "Sedang berpikir..."}
         else:
+            pre_is_heavy = _is_heavy_agent_task(
+                raw_user_typed="",
+                agent_intent="none",
+                has_doc=pre_has_doc,
+                has_image=pre_has_image,
+                has_video=pre_has_video,
+                api_version=api_version,
+                tools=tools,
+                include_reasoning=include_reasoning,
+                reasoning_effort=reasoning_effort,
+            )
+            if pre_is_heavy:
+                yield {
+                    "type": "agent_trace_step",
+                    "step": {
+                        "id": "analyze",
+                        "title": "Analyzing Request & Intent",
+                        "status": "running",
+                        "feedback": "Inspecting uploaded files/media and workspace context...",
+                    },
+                }
             try:
                 from shiro.persona import load_active_profiles
                 _ai_name, _, _, _ = load_active_profiles()
@@ -2004,26 +2252,29 @@ def stream_shiro_reply(
             lyra_tier=lyra_tier,
             t_start_total=t_start_total
         )
-        for st_step in prep.get("agent_steps") or []:
-            yield {"type": "agent_trace_step", "step": st_step}
+        is_heavy_task_stream = bool(prep.get("is_heavy_task", False)) and api_version != "v2"
+        if is_heavy_task_stream:
+            for st_step in prep.get("agent_steps") or []:
+                yield {"type": "agent_trace_step", "step": st_step}
         if prep.get("agent_action_data"):
             yield {"type": "agent_action", "agent_action": prep["agent_action_data"]}
 
-        tier_lbl_live = (prep.get("lyra_tier_info") or {}).get("label") or (prep.get("active_model_name") or "Agent")
-        reason_fb = (
-            f"Running English reasoning & solution design ({tier_lbl_live})..."
-            if not prep.get("disable_thinking")
-            else f"Synthesizing direct response ({tier_lbl_live})..."
-        )
-        yield {
-            "type": "agent_trace_step",
-            "step": {
-                "id": "reason",
-                "title": "Reasoning & Solution Synthesis",
-                "status": "running",
-                "feedback": reason_fb,
-            },
-        }
+        if is_heavy_task_stream:
+            tier_lbl_live = (prep.get("lyra_tier_info") or {}).get("label") or (prep.get("active_model_name") or "Agent")
+            reason_fb = (
+                f"Running English reasoning & solution design ({tier_lbl_live})..."
+                if not prep.get("disable_thinking")
+                else f"Synthesizing direct response ({tier_lbl_live})..."
+            )
+            yield {
+                "type": "agent_trace_step",
+                "step": {
+                    "id": "reason",
+                    "title": "Reasoning & Solution Synthesis",
+                    "status": "running",
+                    "feedback": reason_fb,
+                },
+            }
 
         llm = prep["llm"]
         msgs = prep["msgs"]
@@ -2064,6 +2315,11 @@ def stream_shiro_reply(
         t_first_token = None
         max_clause_len = 48 if lyra_tier_id == "low" else 80
         any_visible_streamed = False
+        max_agent_rounds = int(prep.get("max_agent_rounds", 12))
+        executed_tool_sigs = set()
+        think_stage_idx = 0
+        think_line_buf = ""
+        seen_think_headings = set()
 
         def _flush_stream_seg(seg: str) -> str:
             if not seg or not seg.strip():
@@ -2073,13 +2329,55 @@ def stream_shiro_reply(
                 if lyra_tier_id != "low" and is_predominantly_english(replaced.strip()):
                     lead_ws = re.match(r'^\s*', replaced).group(0)
                     trail_ws = re.search(r'\s*$', replaced).group(0)
-                    tr = translate_to_indonesian_fast(replaced.strip())
+                    tr = translate_to_indonesian_fast(
+                        replaced.strip(),
+                        roleplay_enabled=prep.get("roleplay_enabled", True),
+                    )
                     if tr and tr.strip():
                         return lead_ws + tr.strip() + trail_ws
                 return replaced
             return seg
 
-        for react_round in range(3):
+        def _extract_dynamic_think_stages(th_piece: str):
+            nonlocal think_line_buf, think_stage_idx
+            if not is_heavy_task_stream:
+                return []
+            ev_list = []
+            think_line_buf += th_piece
+            while "\n" in think_line_buf:
+                line_raw, think_line_buf = think_line_buf.split("\n", 1)
+                line_cln = line_raw.strip()
+                m_stage = re.match(
+                    r'^(?:(\d{1,2})[\.\)]\s+|\#{1,3}\s+|(?:Step|Phase|Stage|Analysis)\s+(\d{1,2})[:.\s-]+)(.{6,85})$',
+                    line_cln,
+                    flags=re.IGNORECASE,
+                )
+                if m_stage and think_stage_idx < max_agent_rounds:
+                    heading = re.sub(r'[*_`]+', '', m_stage.group(3)).strip().rstrip(':')
+                    norm_h = heading.lower()
+                    if norm_h and norm_h not in seen_think_headings:
+                        seen_think_headings.add(norm_h)
+                        if think_stage_idx > 0:
+                            ev_list.append({
+                                "type": "agent_trace_step",
+                                "step": {
+                                    "id": f"think_stage_{think_stage_idx}",
+                                    "status": "done",
+                                },
+                            })
+                        think_stage_idx += 1
+                        ev_list.append({
+                            "type": "agent_trace_step",
+                            "step": {
+                                "id": f"think_stage_{think_stage_idx}",
+                                "title": f"Analysis Step {think_stage_idx}: {heading[:58]}",
+                                "status": "running",
+                                "feedback": f"Deep reasoning step {think_stage_idx} ({tier_lbl_live if 'tier_lbl_live' in locals() else lyra_tier_id})...",
+                            },
+                        })
+            return ev_list
+
+        for react_round in range(max_agent_rounds):
             if react_round > 0 and any_visible_streamed:
                 yield {"type": "reset_stream"}
                 any_visible_streamed = False
@@ -2326,24 +2624,35 @@ def stream_shiro_reply(
                                 if thought_acc and not thought_acc.endswith("\n") and react_round > 0:
                                     thought_acc += "\n"
                                 thought_acc += th_seg
-                                events_out.append({"type": "thought", "token": th_seg})
+                                if api_version != "v2":
+                                    events_out.append({"type": "thought", "token": th_seg})
+                                    events_out.extend(_extract_dynamic_think_stages(th_seg))
                             in_think = False
+                            if think_stage_idx > 0 and is_heavy_task_stream:
+                                events_out.append({
+                                    "type": "agent_trace_step",
+                                    "step": {"id": f"think_stage_{think_stage_idx}", "status": "done"},
+                                })
                             dur_s = round(max(0.1, time.perf_counter() - (thought_started_at or time.perf_counter())), 1)
                             thought_duration_sec = round((thought_duration_sec or 0.0) + dur_s, 1) if react_round > 0 else dur_s
-                            events_out.append({"type": "thought_done", "duration_sec": thought_duration_sec})
-                            events_out.append({
-                                "type": "agent_trace_step",
-                                "step": {
-                                    "id": "reason",
-                                    "title": "Reasoning & Solution Synthesis",
-                                    "status": "running",
-                                    "feedback": f"English analysis complete ({thought_duration_sec}s) — streaming response...",
-                                },
-                            })
+                            if api_version != "v2":
+                                events_out.append({"type": "thought_done", "duration_sec": thought_duration_sec})
+                            if is_heavy_task_stream:
+                                events_out.append({
+                                    "type": "agent_trace_step",
+                                    "step": {
+                                        "id": "reason",
+                                        "title": "Reasoning & Solution Synthesis",
+                                        "status": "running",
+                                        "feedback": f"English analysis complete ({thought_duration_sec}s) — streaming response...",
+                                    },
+                                })
                             cur = cur[m_close.end():]
                         else:
                             thought_acc += cur
-                            events_out.append({"type": "thought", "token": cur})
+                            if api_version != "v2":
+                                events_out.append({"type": "thought", "token": cur})
+                                events_out.extend(_extract_dynamic_think_stages(cur))
                             now_th = time.perf_counter()
                             if now_th - last_ping_time > ping_interval:
                                 events_out.append({"type": "ping"})
@@ -2443,31 +2752,39 @@ def stream_shiro_reply(
                         pass
 
             round_calls, _ = _parse_agent_tool_calls(round_raw_reply)
-            research_calls = [tc for tc in round_calls if tc.get("name") in ("web_search", "open_url", "screenshot")]
-            if research_calls and react_round < 2:
+            research_calls = []
+            for tc in round_calls:
+                if tc.get("name") in ("web_search", "open_url", "screenshot"):
+                    sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
+                    if sig not in executed_tool_sigs:
+                        research_calls.append((tc, sig))
+            if research_calls and react_round + 1 < max_agent_rounds:
+                is_heavy_task_stream = True
                 obs_chunks: List[str] = []
                 agg_sources: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("sources") or [])
                 agg_images: List[Dict[str, Any]] = list((prep.get("agent_action_data") or {}).get("web_images") or [])
                 last_img_url = (prep.get("agent_action_data") or {}).get("image_url")
                 t_react = time.perf_counter()
-                for idx_rc, tc in enumerate(research_calls[:3]):
+                for idx_rc, (tc, sig) in enumerate(research_calls[:4]):
+                    executed_tool_sigs.add(sig)
                     step_id = f"react_{react_round}_{idx_rc}_{tc.get('name')}"
                     step_label = (
                         f"Searching Browser ({(tc.get('args') or {}).get('query', '')[:36]})"
                         if tc.get("name") == "web_search"
                         else f"Opening Webpage ({(tc.get('args') or {}).get('url', '')[:36]})"
                     )
-                    yield {
-                        "type": "agent_trace_step",
-                        "step": {
-                            "id": step_id,
-                            "title": step_label,
-                            "status": "running",
-                            "feedback": "Fetching live browser sources & images...",
-                        },
-                    }
+                    if is_heavy_task_stream:
+                        yield {
+                            "type": "agent_trace_step",
+                            "step": {
+                                "id": step_id,
+                                "title": step_label,
+                                "status": "running",
+                                "feedback": "Fetching live browser sources & images...",
+                            },
+                        }
                     yield {"type": "status", "status": "Menelusuri informasi & gambar di browser..."}
-                    tool_res = _execute_live_research_tool(tc)
+                    tool_res = _execute_live_research_tool(tc, tier_id=lyra_tier_id)
                     obs_chunks.append(f"[{tool_res['title']}]\n{tool_res['observation']}")
                     for src_it in tool_res.get("sources") or []:
                         if src_it.get("url") and not any(s.get("url") == src_it["url"] for s in agg_sources):
@@ -2483,11 +2800,12 @@ def stream_shiro_reply(
                         "status": tool_res["status"],
                         "feedback": f"Found {len(tool_res.get('sources') or [])} source(s) & {len(tool_res.get('web_images') or [])} image(s).",
                     }
-                    prep.setdefault("agent_steps", []).append(done_step)
-                    yield {"type": "agent_trace_step", "step": done_step}
+                    if is_heavy_task_stream:
+                        prep.setdefault("agent_steps", []).append(done_step)
+                        yield {"type": "agent_trace_step", "step": done_step}
 
                 prep["agent_action_data"] = {
-                    "tool": research_calls[0].get("name") if research_calls[0].get("name") != "web_search" else "multi_source_web_research",
+                    "tool": research_calls[0][0].get("name") if research_calls[0][0].get("name") != "web_search" else "multi_source_web_research",
                     "description": f"Live browser search round {react_round + 1}",
                     "observation": "\n\n".join(obs_chunks),
                     "details": {"sources": agg_sources, "images": agg_images, "image_url": last_img_url},
@@ -2509,15 +2827,16 @@ def stream_shiro_reply(
                         ),
                     },
                 ]
-                yield {
-                    "type": "agent_trace_step",
-                    "step": {
-                        "id": "reason",
-                        "title": "Reasoning & Solution Synthesis",
-                        "status": "running",
-                        "feedback": "Synthesizing grounded response from browser sources...",
-                    },
-                }
+                if is_heavy_task_stream:
+                    yield {
+                        "type": "agent_trace_step",
+                        "step": {
+                            "id": "reason",
+                            "title": "Reasoning & Solution Synthesis",
+                            "status": "running",
+                            "feedback": f"Synthesizing grounded response from browser sources (round {react_round + 2})...",
+                        },
+                    }
                 continue
 
             raw_reply = round_raw_reply
@@ -2543,33 +2862,34 @@ def stream_shiro_reply(
             prep=prep,
             raw_reply=raw_reply,
             t_llm_dur=t_llm_dur,
-            thought_content_override=thought_acc or None,
-            thought_duration_sec=thought_duration_sec,
+            thought_content_override=None if api_version == "v2" else (thought_acc or None),
+            thought_duration_sec=None if api_version == "v2" else thought_duration_sec,
         )
 
-        reason_done_step = {
-            "id": "reason",
-            "title": "Reasoning & Solution Synthesis",
-            "status": "done",
-            "feedback": (
-                f"English analysis ({thought_duration_sec}s) & answer complete ({round(t_llm_dur / 1000.0, 1)}s total)"
-                if thought_duration_sec is not None
-                else f"Response synthesized in {round(t_llm_dur / 1000.0, 1)}s"
-            ),
-        }
-        final_steps = list(details.get("agent_steps") or [])
-        replaced_reason = False
-        for idx_s, s_item in enumerate(final_steps):
-            if s_item.get("id") == "reason":
-                final_steps[idx_s] = reason_done_step
-                replaced_reason = True
-                break
-        if not replaced_reason:
-            final_steps.append(reason_done_step)
+        final_steps = list(details.get("agent_steps") or []) if is_heavy_task_stream else []
+        if is_heavy_task_stream:
+            reason_done_step = {
+                "id": "reason",
+                "title": "Reasoning & Solution Synthesis",
+                "status": "done",
+                "feedback": (
+                    f"English analysis ({thought_duration_sec}s) & answer complete ({round(t_llm_dur / 1000.0, 1)}s total)"
+                    if thought_duration_sec is not None
+                    else f"Response synthesized in {round(t_llm_dur / 1000.0, 1)}s"
+                ),
+            }
+            replaced_reason = False
+            for idx_s, s_item in enumerate(final_steps):
+                if s_item.get("id") == "reason":
+                    final_steps[idx_s] = reason_done_step
+                    replaced_reason = True
+                    break
+            if not replaced_reason:
+                final_steps.append(reason_done_step)
 
-        for st_emit in final_steps:
-            if st_emit.get("id") in ("reason", "package", "files", "render_video"):
-                yield {"type": "agent_trace_step", "step": st_emit}
+            for st_emit in final_steps:
+                if st_emit.get("id") in ("reason", "package", "files", "render_video"):
+                    yield {"type": "agent_trace_step", "step": st_emit}
 
         if details.get("artifacts"):
             yield {"type": "artifacts", "artifacts": details["artifacts"]}
@@ -2578,8 +2898,8 @@ def stream_shiro_reply(
             "type": "done",
             "reply": delivery_reply,
             "raw_reply": raw_reply,
-            "thought_content": details.get("reasoning_content"),
-            "thought_duration_sec": thought_duration_sec,
+            "thought_content": None if api_version == "v2" else details.get("reasoning_content"),
+            "thought_duration_sec": None if api_version == "v2" else thought_duration_sec,
             "agent_steps": final_steps,
             "artifacts": details.get("artifacts") or [],
             "active_context_window": details.get("active_context_window"),
@@ -2589,7 +2909,7 @@ def stream_shiro_reply(
 
     except Exception as e:
         print(f"[Inference Stream Error]: {e}")
-        err_msg = f"*menatap cemas* Maaf Kakak... sistem AI mengalami kendala teknis: {str(e)[:80]}"
+        err_msg = f"Maaf, sistem AI mengalami kendala teknis: {str(e)[:80]}"
         yield {
             "type": "error",
             "error": str(e),

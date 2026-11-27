@@ -234,7 +234,7 @@ def _normalize_persona_pronouns(text: str) -> str:
     res = re.sub(r'\bsaya\b', 'aku', res)
     return res
 
-def _translate_chunk_en_to_id(chunk_text: str) -> str:
+def _translate_chunk_en_to_id(chunk_text: str, roleplay_enabled: bool = True) -> str:
     """
     Menerjemahkan teks Inggris / campuran (code-switching) ke Bahasa Indonesia
     menggunakan Google Translate GTX (sl=en&tl=id) dengan fallback ke MyMemory API.
@@ -258,11 +258,11 @@ def _translate_chunk_en_to_id(chunk_text: str) -> str:
             if isinstance(res_data, list) and res_data and isinstance(res_data[0], list):
                 trans = ''.join(part[0] for part in res_data[0] if part and part[0])
                 if trans and len(trans.strip()) > 1:
-                    return _normalize_persona_pronouns(trans)
+                    return _normalize_persona_pronouns(trans) if roleplay_enabled else trans
             elif isinstance(res_data, dict):
                 trans = res_data.get('responseData', {}).get('translatedText')
                 if trans and len(trans.strip()) > 1 and "MYMEMORY WARNING" not in trans.upper():
-                    return _normalize_persona_pronouns(trans)
+                    return _normalize_persona_pronouns(trans) if roleplay_enabled else trans
     except Exception:
         pass
 
@@ -276,13 +276,13 @@ def _translate_chunk_en_to_id(chunk_text: str) -> str:
             if isinstance(res_data, dict):
                 trans = res_data.get('responseData', {}).get('translatedText')
                 if trans and len(trans.strip()) > 1 and "MYMEMORY WARNING" not in trans.upper():
-                    return _normalize_persona_pronouns(trans)
+                    return _normalize_persona_pronouns(trans) if roleplay_enabled else trans
     except Exception:
         pass
 
     return chunk_text
 
-def translate_to_indonesian_fast(text: str) -> str:
+def translate_to_indonesian_fast(text: str, roleplay_enabled: bool = True) -> str:
     """
     Menerjemahkan teks bahasa Inggris atau bagian kalimat/paragraf yang menyasar ke bahasa Inggris
     ke Bahasa Indonesia secara presisi:
@@ -309,13 +309,13 @@ def translate_to_indonesian_fast(text: str) -> str:
                 translated.append(p)
                 continue
             if is_predominantly_english(p_strip):
-                translated.append(_translate_chunk_en_to_id(p_strip))
+                translated.append(_translate_chunk_en_to_id(p_strip, roleplay_enabled=roleplay_enabled))
             elif contains_english_segments(p_strip):
                 sents = re.split(r'(?<=[.!?~])\s+', p_strip)
                 out_sents = []
                 for s in sents:
                     if is_english_text_segment(s):
-                        out_sents.append(_translate_chunk_en_to_id(s))
+                        out_sents.append(_translate_chunk_en_to_id(s, roleplay_enabled=roleplay_enabled))
                     else:
                         out_sents.append(s)
                 translated.append(' '.join(out_sents))
@@ -375,7 +375,12 @@ def should_translate_english_fallback(response_text: str, user_input: Optional[s
     #    dan respons model AI mengandung bagian/segmen bahasa Inggris (baik sebagian maupun penuh).
     return contains_english_segments(response_text)
 
-def clean_response(response: str, assistant_name: Optional[str] = None, user_input: Optional[str] = None) -> str:
+def clean_response(
+    response: str,
+    assistant_name: Optional[str] = None,
+    user_input: Optional[str] = None,
+    roleplay_enabled: bool = True,
+) -> str:
     """Aggressive cleanup dari reasoning/CoT, artifacts & tokens, dengan preservasi baris baru & indentasi kode"""
     if not response:
         return ""
@@ -461,11 +466,12 @@ def clean_response(response: str, assistant_name: Optional[str] = None, user_inp
     response = re.sub(rf'^\*(?:{name_pat}Shiro)\s+', '*', response, flags=re.IGNORECASE)
     response = re.sub(r'^\*?Kau\s+(masih|melirik|menatap|tersenyum)[^*]*\*?\s*', '', response, flags=re.IGNORECASE)
     
-    # 10. Bersihkan halusinasi 'kami semua' & tokoh lain
-    response = re.sub(r'\bkami semua\b', 'Shiro', response, flags=re.IGNORECASE)
-    response = re.sub(r'\bkami\b', 'kita', response, flags=re.IGNORECASE)
-    response = re.sub(r'\bmereka semua\b', '', response, flags=re.IGNORECASE)
-    response = re.sub(r'\blingkaran emosional mereka\b', 'pelukan Shiro', response, flags=re.IGNORECASE)
+    # 10. Bersihkan halusinasi narasi kelompok saat mode roleplay aktif
+    if roleplay_enabled:
+        response = re.sub(r'\bkami semua\b', 'Shiro', response, flags=re.IGNORECASE)
+        response = re.sub(r'\bkami\b', 'kita', response, flags=re.IGNORECASE)
+        response = re.sub(r'\bmereka semua\b', '', response, flags=re.IGNORECASE)
+        response = re.sub(r'\blingkaran emosional mereka\b', 'pelukan Shiro', response, flags=re.IGNORECASE)
 
     # 10b. Hapus badge robot, AI Agent Web Tool, dan technical prefix eksekusi tool
     response = re.sub(r'^\s*>?\s*[\U0001f310\U0001f30d\U0001f30e\U0001f30f][^\n]*(?:\n|$)', '', response, flags=re.MULTILINE)
@@ -500,7 +506,7 @@ def clean_response(response: str, assistant_name: Optional[str] = None, user_inp
     cleaned_text = response.strip()
     if user_input and should_translate_english_fallback(cleaned_text, user_input):
         try:
-            trans = translate_to_indonesian_fast(cleaned_text)
+            trans = translate_to_indonesian_fast(cleaned_text, roleplay_enabled=roleplay_enabled)
             if trans and len(trans.strip()) > 5:
                 cleaned_text = trans.strip()
         except Exception:

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.6.0">
+    <link rel="stylesheet" href="/static/style.css?v=3.7.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
     <script src="/static/theme.js?v=3.2.0"></script>
@@ -230,7 +230,7 @@
                     ></textarea>
                     <div class="composer-bar">
                         <div class="media-input-buttons">
-                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan banyak berkas sekaligus (kode, PDF, DOCX, ZIP, dll.)" data-i18n-title="attach_file_tooltip" aria-label="Lampirkan dokumen" type="button">
+                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan banyak berkas sekaligus (kode, video, PDF, DOCX, ZIP, dll.)" data-i18n-title="attach_file_tooltip" aria-label="Lampirkan dokumen" type="button">
                                 <i class="ph ph-paperclip"></i>
                                 <span class="media-btn-label" data-i18n="files_btn">Berkas</span>
                             </button>
@@ -239,16 +239,11 @@
                                 <i class="ph ph-image"></i>
                                 <span class="media-btn-label" data-i18n="images_btn">Gambar</span>
                             </button>
-                            <button id="upload-video-btn" class="btn-media btn-media-labeled" title="Lampirkan video (MP4, WebM, MOV, MKV, GIF) untuk dilihat &amp; dianalisis Shiro" aria-label="Lampirkan video" type="button">
-                                <i class="ph ph-film-strip"></i>
-                                <span class="media-btn-label">Video</span>
-                            </button>
                             <button id="open-camera-btn" class="btn-media btn-media-labeled" title="Ambil foto dengan kamera" data-i18n-title="open_cam_tooltip" aria-label="Buka kamera" type="button">
                                 <i class="ph ph-camera"></i>
                                 <span class="media-btn-label" data-i18n="camera_btn">Kamera</span>
                             </button>
                             <input type="file" id="image-file-input" accept="image/*" multiple class="hidden">
-                            <input type="file" id="video-file-input" accept="video/*,.mp4,.webm,.mov,.mkv,.avi,.m4v,.gif" multiple class="hidden">
                         </div>
                         <div class="input-actions">
                             <div id="lyra-tier-picker" class="lyra-tier-picker hidden">
@@ -528,6 +523,25 @@
 
                 <!-- Tab Shiro (Persona Asisten) -->
                 <div id="ai-tab" class="tab-content">
+                    <div class="settings-panel">
+                        <div class="settings-panel-head">
+                            <span class="settings-panel-title"><i class="ph ph-masks-theater"></i> <span data-i18n="roleplay_panel_title">Mode Roleplay Karakter</span></span>
+                        </div>
+                        <div class="privacy-toggle-row">
+                            <div class="privacy-info">
+                                <strong data-i18n="roleplay_toggle_title">Aktifkan Roleplay Bawaan (Shiro)</strong>
+                                <span class="field-help" data-i18n="roleplay_toggle_desc">Jika aktif, asisten menggunakan persona adik manja Shiro. Jika nonaktif, asisten bekerja penuh sebagai AI Agent profesional ShiroHaru tanpa roleplay atau panggilan Kakak.</span>
+                            </div>
+                            <label class="shiro-switch" title="On/Off Mode Roleplay">
+                                <input type="checkbox" id="roleplay-enabled-toggle" checked onchange="toggleRoleplayMode(this.checked)">
+                                <span class="shiro-slider"></span>
+                            </label>
+                        </div>
+                        <div id="roleplay-mode-banner" class="training-mode-banner mode-on roleplay-mode-banner">
+                            <i id="roleplay-mode-icon" class="ph ph-sparkle"></i>
+                            <span id="roleplay-mode-status-text" data-i18n="roleplay_status_on">Mode Roleplay AKTIF — Asisten merespons dengan persona hangat khas Shiro.</span>
+                        </div>
+                    </div>
                     <form id="ai-form" enctype="multipart/form-data">
                         <div class="settings-panel">
                             <div class="settings-panel-head">
@@ -891,6 +905,7 @@
             </div>
             <div class="lightbox-content-box">
                 <img id="lightbox-img" src="" alt="Pratinjau gambar">
+                <video id="lightbox-video" class="lightbox-video hidden" controls playsinline></video>
             </div>
         </div>
     </div>
@@ -944,6 +959,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
-    <script src="/static/script.js?v=3.6.0"></script>
+    <script src="/static/script.js?v=3.7.0"></script>
 </body>
 </html>

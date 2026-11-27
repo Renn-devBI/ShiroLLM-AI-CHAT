@@ -113,7 +113,7 @@ def _process_single_uploaded_storage(f_storage, doc_max_chars: Optional[int] = N
     import base64
     from werkzeug.utils import secure_filename
     from shiro.document import extract_text_from_file, SUPPORTED_EXTENSIONS, is_probably_text_file, extract_documents_from_archive
-    from shiro.vision.video import is_video_filename, extract_video_frames_and_metadata
+    from shiro.vision.video import is_video_filename, probe_video_metadata
 
     raw_name = os.path.basename(f_storage.filename or "")
     if not raw_name:
@@ -123,18 +123,18 @@ def _process_single_uploaded_storage(f_storage, doc_max_chars: Optional[int] = N
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
     archive_exts = {".zip", ".tar", ".tgz", ".gz", ".bz2", ".xz"}
 
-    # 1. Video -> simpan & ekstrak keyframe kronologis
+    # 1. Video -> simpan langsung & baca metadata ringan TANPA mengekstrak frame saat upload
     if is_video_filename(raw_name):
         vid_dir = os.path.join("data", "uploads", "videos")
         os.makedirs(vid_dir, exist_ok=True)
         safe_base = secure_filename(raw_name) or f"video_{os.urandom(3).hex()}{ext or '.mp4'}"
         save_path = os.path.join(vid_dir, safe_base)
         f_storage.save(save_path)
-        max_frames = int(os.environ.get("SHIRO_VIDEO_MAX_FRAMES", "12"))
-        vid_meta = extract_video_frames_and_metadata(save_path, filename=raw_name, max_frames=max_frames)
+        vid_meta = probe_video_metadata(save_path, filename=raw_name)
         if not vid_meta.get("success"):
             return {"kind": "error", "filename": raw_name, "error": vid_meta.get("error", "Gagal membaca video.")}
         vid_meta["kind"] = "video"
+        vid_meta["saved_filename"] = safe_base
         vid_meta["url"] = f"/api/videos/{safe_base}"
         return vid_meta
 
@@ -271,12 +271,13 @@ def upload_video_route():
 
 @documents_bp.route('/api/videos/<path:filename>', methods=['GET'])
 def get_uploaded_video(filename):
-    """Menyajikan berkas video unggahan dengan dukungan range/seeking browser."""
+    """Menyajikan berkas video unggahan dengan MIME tepat & dukungan range/seeking browser."""
+    from shiro.vision.video import get_video_mime_type
     vid_dir = os.path.abspath(os.path.join("data", "uploads", "videos"))
     target = os.path.abspath(os.path.join(vid_dir, filename))
     if os.path.commonpath([vid_dir, target]) != vid_dir or not os.path.isfile(target):
         return jsonify({"error": "Video tidak ditemukan"}), 404
-    return send_file(target, conditional=True)
+    return send_file(target, mimetype=get_video_mime_type(target), conditional=True)
 
 @documents_bp.route('/api/document/preview', methods=['GET'])
 def preview_document():

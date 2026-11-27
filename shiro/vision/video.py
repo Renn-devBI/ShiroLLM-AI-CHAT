@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Shiro Video Understanding & Programmatic MP4 Rendering Engine
-- Ekstraksi keyframe kronologis + metadata video (MP4, WebM, MOV, MKV, AVI, M4V, GIF)
-  untuk dianalisis langsung oleh model multimodal Qwen3.8-27B.
+Shiro Video Understanding Metadata Probe & Programmatic MP4 Rendering Engine
+- Pembacaan metadata video cepat (durasi, resolusi, fps, ukuran, MIME) tanpa mengekstrak frame saat upload.
+- Ekstraksi frame kronologis internal on-demand saat inferensi multimodal berlangsung.
 - Generator video MP4 programatik (slideshow gambar / motion-graphic teks) dengan output
   yang langsung dapat diputar di browser maupun diunduh.
 """
@@ -14,6 +14,7 @@ import glob
 import uuid
 import shutil
 import base64
+import mimetypes
 import tempfile
 import subprocess
 import urllib.parse
@@ -25,6 +26,28 @@ VIDEO_EXTENSIONS = {
     ".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v", ".mpeg", ".mpg", ".ogv", ".gif"
 }
 
+VIDEO_MIME_MAP = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+    ".mpeg": "video/mpeg",
+    ".mpg": "video/mpeg",
+    ".ogv": "video/ogg",
+    ".gif": "image/gif",
+}
+
+
+def get_video_mime_type(filename: str) -> str:
+    """Mengembalikan MIME type video yang akurat untuk pemutaran HTML5."""
+    ext = os.path.splitext(str(filename or "").strip())[1].lower()
+    if ext in VIDEO_MIME_MAP:
+        return VIDEO_MIME_MAP[ext]
+    guessed, _ = mimetypes.guess_type(str(filename or ""))
+    return guessed or "video/mp4"
+
 
 def is_video_filename(filename: str) -> bool:
     """Memeriksa apakah nama berkas berekstensi video / animasi yang didukung."""
@@ -32,6 +55,108 @@ def is_video_filename(filename: str) -> bool:
         return False
     ext = os.path.splitext(str(filename).strip())[1].lower()
     return ext in VIDEO_EXTENSIONS
+
+
+def probe_video_metadata(video_path: str, filename: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Membaca metadata ringan video (durasi, fps, resolusi, ukuran, MIME) TANPA
+    mendekode atau mengekstrak frame base64 agar proses upload berlangsung instan.
+    """
+    display_name = filename or os.path.basename(video_path)
+    if not video_path or not os.path.exists(video_path):
+        return {
+            "success": False,
+            "filename": display_name,
+            "error": "Berkas video tidak ditemukan.",
+        }
+
+    ext = os.path.splitext(display_name)[1].lower()
+    size_bytes = os.path.getsize(video_path)
+    mime_type = get_video_mime_type(display_name)
+    duration_sec = 0.0
+    fps = 0.0
+    width = 0
+    height = 0
+    total_frames = 0
+
+    if ext == ".gif":
+        try:
+            from PIL import Image
+            with Image.open(video_path) as im:
+                width, height = im.size
+                total_frames = int(getattr(im, "n_frames", 1) or 1)
+                dur_ms = 0
+                for idx in range(min(total_frames, 300)):
+                    try:
+                        im.seek(idx)
+                        dur_ms += max(20, int(im.info.get("duration", 100) or 100))
+                    except Exception:
+                        dur_ms += 100
+                duration_sec = round(dur_ms / 1000.0, 2)
+                fps = round(total_frames / max(0.1, duration_sec), 2) if duration_sec > 0 else 10.0
+        except Exception:
+            pass
+
+    if width <= 0 or height <= 0 or duration_sec <= 0.0:
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                try:
+                    raw_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                    fps = round(raw_fps, 2) if 0.0 < raw_fps <= 240.0 else 24.0
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                    if total_frames > 0 and fps > 0:
+                        duration_sec = round(total_frames / fps, 2)
+                finally:
+                    cap.release()
+        except Exception:
+            pass
+
+    if width <= 0 or height <= 0 or duration_sec <= 0.0:
+        ffprobe_bin = shutil.which("ffprobe")
+        if ffprobe_bin:
+            try:
+                probe = subprocess.run(
+                    [ffprobe_bin, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", video_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=8,
+                )
+                if probe.returncode == 0 and probe.stdout:
+                    import json as _json
+                    pdata = _json.loads(probe.stdout)
+                    duration_sec = round(float((pdata.get("format") or {}).get("duration") or duration_sec or 0.0), 2)
+                    for st in pdata.get("streams") or []:
+                        if st.get("codec_type") == "video":
+                            width = int(st.get("width") or width or 0)
+                            height = int(st.get("height") or height or 0)
+                            rfps = str(st.get("r_frame_rate") or "24/1")
+                            if "/" in rfps:
+                                num, den = rfps.split("/", 1)
+                                if float(den or 1) > 0:
+                                    fps = round(float(num) / float(den), 2)
+                            break
+            except Exception:
+                pass
+
+    res_label = f"{width}x{height}" if (width > 0 and height > 0) else ""
+    return {
+        "success": True,
+        "filename": display_name,
+        "mime_type": mime_type,
+        "duration_sec": round(duration_sec, 2) if duration_sec > 0 else None,
+        "fps": round(fps, 2) if fps > 0 else None,
+        "width": width,
+        "height": height,
+        "resolution": res_label,
+        "total_frames": total_frames,
+        "size_bytes": size_bytes,
+        "size_label": format_size(size_bytes),
+    }
 
 
 def _pil_to_jpeg_data_uri(pil_img: Any, max_dim: int = 768, quality: int = 82) -> str:

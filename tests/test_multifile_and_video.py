@@ -167,7 +167,57 @@ class TestMultiFileAndVideo(unittest.TestCase):
             self.assertEqual(len(up_data["videos"]), 1)
             self.assertEqual(len(up_data["documents"]), 1)
             self.assertEqual(up_data["videos"][0]["filename"], "demo_clip.mp4")
-            self.assertGreaterEqual(len(up_data["videos"][0]["frames"]), 4)
+            # Unggahan video tidak lagi mengekstrak frame base64 saat upload agar cepat dan ringan
+            self.assertFalse(up_data["videos"][0].get("frames"))
+            self.assertEqual(up_data["videos"][0]["resolution"], "160x120")
+            self.assertGreater(up_data["videos"][0]["duration_sec"], 1.0)
+            vid_url = up_data["videos"][0]["url"]
+            self.assertTrue(vid_url.startswith("/api/videos/"))
+
+            # Video harus dapat diputar langsung via HTTP GET dengan Content-Type video/mp4
+            with self.client.get(vid_url) as vid_resp:
+                self.assertEqual(vid_resp.status_code, 200)
+                self.assertIn("video/mp4", vid_resp.content_type)
+                self.assertEqual(vid_resp.data, vid_bytes)
+
+            # Verifikasi stream_shiro_reply melakukan lazy extraction dari disk & mengirim bersamaan file app.py ke vision chat handler
+            captured_msgs = []
+
+            class MockVisionQwen38:
+                model_path = "model/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf"
+                chat_handler = MagicMock()
+
+                def n_ctx(self):
+                    return 500000
+
+                def create_chat_completion(self, messages, stream=False, **kwargs):
+                    captured_msgs.append(messages)
+                    def _gen():
+                        yield {"choices": [{"delta": {"content": "Shiro sudah menonton video demo_clip.mp4 dan membaca app.py."}}]}
+                    return _gen()
+
+            state.llm = MockVisionQwen38()
+            state.vision_chat_handler = state.llm.chat_handler
+            with patch("shiro.models.get_gpu_layers", return_value=-1), \
+                 patch.dict(os.environ, {"SHIRO_VIDEO_MAX_FRAMES": "6"}):
+                events = list(stream_shiro_reply(
+                    "analisa video dan file app.py ini bersamaan",
+                    documents=[{"filename": "app.py", "text": "print('hi')\n", "file_type": "py"}],
+                    videos=[up_data["videos"][0]],
+                    lyra_tier="high",
+                ))
+
+            step_ids = [e["step"]["id"] for e in events if e.get("type") == "agent_trace_step"]
+            self.assertIn("read_video", step_ids)
+            self.assertIn("read_files", step_ids)
+            self.assertEqual(len(captured_msgs), 1)
+            last_user = captured_msgs[0][-1]
+            self.assertIsInstance(last_user["content"], list)
+            img_parts = [p for p in last_user["content"] if isinstance(p, dict) and p.get("type") == "image_url"]
+            self.assertEqual(len(img_parts), 6)
+            sys_txt = captured_msgs[0][0]["content"]
+            self.assertIn("demo_clip.mp4", sys_txt)
+            self.assertIn("app.py", sys_txt)
         finally:
             for p in (uploaded_vid_disk, uploaded_py_disk):
                 if os.path.exists(p):
@@ -175,44 +225,6 @@ class TestMultiFileAndVideo(unittest.TestCase):
                         os.remove(p)
                     except OSError:
                         pass
-
-        # Verifikasi stream_shiro_reply mengirim frame video + file secara bersamaan ke vision chat handler
-        captured_msgs = []
-
-        class MockVisionQwen38:
-            model_path = "model/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf"
-            chat_handler = MagicMock()
-
-            def n_ctx(self):
-                return 500000
-
-            def create_chat_completion(self, messages, stream=False, **kwargs):
-                captured_msgs.append(messages)
-                def _gen():
-                    yield {"choices": [{"delta": {"content": "Shiro sudah menonton video demo_clip.mp4 dan membaca app.py."}}]}
-                return _gen()
-
-        state.llm = MockVisionQwen38()
-        state.vision_chat_handler = state.llm.chat_handler
-        with patch("shiro.models.get_gpu_layers", return_value=-1):
-            events = list(stream_shiro_reply(
-                "analisa video dan file app.py ini bersamaan",
-                documents=[{"filename": "app.py", "text": "print('hi')\n", "file_type": "py"}],
-                videos=[vid_meta],
-                lyra_tier="high",
-            ))
-
-        step_ids = [e["step"]["id"] for e in events if e.get("type") == "agent_trace_step"]
-        self.assertIn("read_video", step_ids)
-        self.assertIn("read_files", step_ids)
-        self.assertEqual(len(captured_msgs), 1)
-        last_user = captured_msgs[0][-1]
-        self.assertIsInstance(last_user["content"], list)
-        img_parts = [p for p in last_user["content"] if isinstance(p, dict) and p.get("type") == "image_url"]
-        self.assertEqual(len(img_parts), 6)
-        sys_txt = captured_msgs[0][0]["content"]
-        self.assertIn("demo_clip.mp4", sys_txt)
-        self.assertIn("app.py", sys_txt)
 
     def test_programmatic_video_generation_and_intent_guard(self):
         """detect_video_generation_request dan render_video_artifact membuat video MP4 nyata."""

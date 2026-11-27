@@ -592,7 +592,8 @@ def build_queries(
     user_input: str,
     detected_lang: Optional[str] = None,
     current_year: Optional[int] = None,
-    llm_rewrite: Optional[Callable[[str, str], str]] = None
+    llm_rewrite: Optional[Callable[[str, str], str]] = None,
+    max_queries: int = 2
 ) -> List[SearchQuery]:
     """
     Membuat kueri pencarian yang dioptimalkan:
@@ -685,7 +686,28 @@ def build_queries(
         if en_query and en_query.strip().lower() != clean.lower():
             queries.append(SearchQuery(query=en_query.strip(), lang="en", is_primary=False))
 
-    return queries
+    # Kueri tambahan multi-sudut pandang jika tingkat tier (High / Extra High / Ultra High) mengizinkan deep search
+    target_cap = max(1, int(max_queries or 2))
+    if target_cap > 2 and clean:
+        base_en = next((q.query for q in queries if q.lang == "en"), clean)
+        deep_angles: List[Tuple[str, str]] = [
+            (f"{clean} {yr}", lang),
+            (f"{base_en} official specs documentation overview {yr}", "en"),
+            (f"{clean} ulasan fakta lengkap sumber resmi", lang),
+            (f"{base_en} latest news updates comparison", "en"),
+            (f"{clean} analisis mendalam detail terbaru", lang),
+            (f"{base_en} technical details benchmark review", "en"),
+        ]
+        seen_q_low = {q.query.strip().lower() for q in queries}
+        for dq, dl in deep_angles:
+            if len(queries) >= target_cap:
+                break
+            norm_dq = dq.strip().lower()
+            if norm_dq not in seen_q_low:
+                seen_q_low.add(norm_dq)
+                queries.append(SearchQuery(query=dq.strip(), lang=dl, is_primary=False))
+
+    return queries[:target_cap] if target_cap < len(queries) else queries
 
 # ---------------------------------------------------------------------------
 # 4. KREDIBILITAS DOMAIN & KONFIGURASI PENELITIAN
@@ -750,7 +772,22 @@ class ResearchConfig:
     min_agree: int = 2
     min_confidence: float = 0.6
     cluster_overlap: float = 0.50
+    max_queries: int = 2
+    max_images: int = 4
     credibility: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_DOMAIN_CREDIBILITY))
+
+
+def get_research_config_for_tier(tier_id: Optional[str]) -> ResearchConfig:
+    """Mengembalikan konfigurasi kedalaman riset browser yang skalanya mengikuti level Lyra-Agent."""
+    tid = str(tier_id or "").strip().lower()
+    tier_presets = {
+        "low": ResearchConfig(default_sources=2, max_sources=4, batch_size=2, max_queries=1, max_images=2),
+        "medium": ResearchConfig(default_sources=3, max_sources=8, batch_size=2, max_queries=2, max_images=3),
+        "high": ResearchConfig(default_sources=5, max_sources=16, batch_size=3, max_queries=4, max_images=5),
+        "extra_high": ResearchConfig(default_sources=8, max_sources=24, batch_size=4, max_queries=6, max_images=6),
+        "ultra_high": ResearchConfig(default_sources=12, max_sources=36, batch_size=5, max_queries=8, max_images=8),
+    }
+    return tier_presets.get(tid, ResearchConfig(default_sources=4, max_sources=12, batch_size=3, max_queries=3, max_images=4))
 
 # ---------------------------------------------------------------------------
 # 5. PEMROSESAN TEKS, ANTI-SINDIKASI, & VERIFIKASI SILANG
@@ -1150,21 +1187,27 @@ def research(
     cfg: Optional[ResearchConfig] = None,
     llm_rewrite: Optional[Callable[[str, str], str]] = None,
     image_search_fn: Optional[Callable[[str], List[Dict[str, str]]]] = None,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> ResearchResult:
     """
     Menjalankan alur pencarian multi-sumber adaptif:
-    1. Buat kueri cerdas (asli + varian global)
-    2. Cari di provider secara paralel
+    1. Buat kueri cerdas (asli + varian global + sudut pandang deep search sesuai tier)
+    2. Cari di provider
     3. Fusi peringkat RRF x kredibilitas
-    4. Ronde 1: Baca minimal 3 sumber independen
-    5. Verifikasi silang; eskalasi +2 sumber per ronde jika keyakinan < 0.6 (maks 10)
-    6. Bangun hasil akhir terverifikasi
+    4. Baca sumber independen & verifikasi silang bertahap sesuai kapasitas tier
+    5. Bangun hasil akhir terverifikasi + daftar sumber + gambar web
     """
     config = cfg or ResearchConfig()
     lang = detect_query_language(user_query)
     current_year = datetime.now().year
 
-    queries = build_queries(user_query, detected_lang=lang, current_year=current_year, llm_rewrite=llm_rewrite)
+    queries = build_queries(
+        user_query,
+        detected_lang=lang,
+        current_year=current_year,
+        llm_rewrite=llm_rewrite,
+        max_queries=getattr(config, "max_queries", 2),
+    )
     if not queries:
         queries = [SearchQuery(query=user_query, lang="id", is_primary=True)]
 
@@ -1172,9 +1215,16 @@ def research(
     all_raw_candidates: List[RawSearchResult] = []
     seen_urls: Set[str] = set()
 
-    for q in queries:
+    for q_idx, q in enumerate(queries, 1):
         try:
-            results = search_fn(q.query, q.lang, 8)
+            if progress_cb:
+                progress_cb({
+                    "stage": "search_query",
+                    "index": q_idx,
+                    "total": len(queries),
+                    "query": q.query,
+                })
+            results = search_fn(q.query, q.lang, 10)
             for r in results:
                 if r.url and r.url not in seen_urls:
                     seen_urls.add(r.url)
@@ -1186,7 +1236,7 @@ def research(
         discovered_imgs: List[Dict[str, str]] = []
         if image_search_fn:
             try:
-                discovered_imgs = list(image_search_fn(queries[0].query) or [])[:4]
+                discovered_imgs = list(image_search_fn(queries[0].query) or [])[:max(2, getattr(config, "max_images", 4))]
             except Exception:
                 discovered_imgs = []
         empty_prompt = build_research_prompt_block(user_query, [], 0.0, 0, sources=[], images=discovered_imgs)
@@ -1225,12 +1275,19 @@ def research(
 
     target_sources = config.default_sources
     cand_idx = 0
-    max_fetch_attempts = min(20, len(ranked_candidates))
+    max_fetch_attempts = min(max(20, config.max_sources * 2), len(ranked_candidates))
 
     while cand_idx < len(ranked_candidates) and cand_idx < max_fetch_attempts:
         # Ambil batch calon sumber
         batch = ranked_candidates[cand_idx : cand_idx + config.batch_size]
         cand_idx += len(batch)
+
+        if progress_cb and batch:
+            progress_cb({
+                "stage": "fetch_batch",
+                "domains": [extract_domain(c.url) for c in batch],
+                "total_checked": cand_idx,
+            })
 
         for cand in batch:
             dom = extract_domain(cand.url)
@@ -1268,8 +1325,7 @@ def research(
         verified_facts = facts
         confidence = conf
 
-        # Berhenti jika syarat kecukupan terpenuhi:
-        # >= 3 domain independen dan keyakinan >= 0.6
+        # Berhenti jika syarat kecukupan terpenuhi
         if len(independent_domains) >= target_sources and confidence >= config.min_confidence:
             break
 
@@ -1281,8 +1337,9 @@ def research(
 
     collected_sources: List[Dict[str, str]] = []
     seen_src_urls: Set[str] = set()
+    max_src_out = max(6, min(12, config.max_sources))
     for d_item in fetched_docs:
-        if d_item.url and d_item.url not in seen_src_urls:
+        if d_item.url and d_item.url not in seen_src_urls and len(collected_sources) < max_src_out:
             seen_src_urls.add(d_item.url)
             collected_sources.append({
                 "title": d_item.title or d_item.domain,
@@ -1290,8 +1347,8 @@ def research(
                 "domain": d_item.domain,
                 "snippet": (d_item.snippet or "")[:220],
             })
-    for cand_r in ranked_candidates[:6]:
-        if cand_r.url and cand_r.url not in seen_src_urls and len(collected_sources) < 8:
+    for cand_r in ranked_candidates[:max_src_out]:
+        if cand_r.url and cand_r.url not in seen_src_urls and len(collected_sources) < max_src_out:
             seen_src_urls.add(cand_r.url)
             collected_sources.append({
                 "title": cand_r.title or extract_domain(cand_r.url),
@@ -1303,7 +1360,7 @@ def research(
     collected_images: List[Dict[str, str]] = []
     if image_search_fn:
         try:
-            collected_images = list(image_search_fn(queries[0].query) or [])[:4]
+            collected_images = list(image_search_fn(queries[0].query) or [])[:max(2, getattr(config, "max_images", 4))]
         except Exception:
             collected_images = []
 

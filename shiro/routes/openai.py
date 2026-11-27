@@ -108,13 +108,17 @@ def handle_openai_chat_completions(api_version="v1"):
         tools = data.get("tools")
         tool_choice = data.get("tool_choice")
 
-        # Controlled reasoning parameters
-        reasoning_effort = data.get("reasoning_effort") or data.get("thinking_budget")
-        include_reasoning = bool(
-            data.get("include_reasoning") or 
-            (data.get("thinking") is not None) or 
-            (reasoning_effort and str(reasoning_effort).lower() not in ["none", "false", "0"])
-        )
+        # Controlled reasoning parameters (untuk VTuber v2 wajib langsung menjawab tanpa <think>/CoT)
+        if effective_version == "v2":
+            reasoning_effort = None
+            include_reasoning = False
+        else:
+            reasoning_effort = data.get("reasoning_effort") or data.get("thinking_budget")
+            include_reasoning = bool(
+                data.get("include_reasoning") or 
+                (data.get("thinking") is not None) or 
+                (reasoning_effort and str(reasoning_effort).lower() not in ["none", "false", "0"])
+            )
 
         # Token output limit parameter
         client_max_tokens = data.get("max_tokens") or data.get("max_completion_tokens")
@@ -179,7 +183,7 @@ def handle_openai_chat_completions(api_version="v1"):
             "role": "assistant",
             "content": reply
         }
-        if details.get("reasoning_content"):
+        if effective_version != "v2" and details.get("reasoning_content"):
             msg_obj["reasoning_content"] = details["reasoning_content"]
         if details.get("tool_calls"):
             msg_obj["tool_calls"] = details["tool_calls"]

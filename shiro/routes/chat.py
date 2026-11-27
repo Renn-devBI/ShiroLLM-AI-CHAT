@@ -56,6 +56,7 @@ def get_history():
             "agent_persona": memory.agent_persona,
             "topics": memory.system_metadata.get("topics_discussed", []),
             "enable_training_logging": memory.system_metadata.get("enable_training_logging", True),
+            "roleplay_enabled": bool(memory.system_metadata.get("roleplay_enabled", True)),
             "ui_language": memory.system_metadata.get("ui_language", "id")
         })
 
@@ -173,7 +174,7 @@ def chat():
 
         has_any_docs = bool(document_info or (documents_list and any(isinstance(d, dict) and (d.get("text") or "").strip() for d in documents_list)))
         has_any_imgs = bool(image_base64 or (images_list and any(images_list)))
-        has_any_vids = bool(videos_list and any(isinstance(v, dict) and (v.get("frames") or v.get("thumbnail")) for v in videos_list))
+        has_any_vids = bool(videos_list and any(isinstance(v, dict) and (v.get("url") or v.get("saved_filename") or v.get("filename") or v.get("frames") or v.get("thumbnail")) for v in videos_list))
 
         if not user_message and not has_any_imgs and not has_any_docs and not has_any_vids:
             return jsonify({"error": "Empty message"}), 400

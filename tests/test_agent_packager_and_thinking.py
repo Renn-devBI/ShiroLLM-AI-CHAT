@@ -250,8 +250,8 @@ class TestAgentPackagerAndThinking(unittest.TestCase):
         idx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "index.html")
         with open(idx_path, "r", encoding="utf-8") as f:
             html = f.read()
-        self.assertIn("script.js?v=3.6.0", html)
-        self.assertIn("style.css?v=3.6.0", html)
+        self.assertIn("script.js?v=3.7.0", html)
+        self.assertIn("style.css?v=3.7.0", html)
 
 
 if __name__ == "__main__":

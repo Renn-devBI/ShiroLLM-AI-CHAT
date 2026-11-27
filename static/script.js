@@ -68,11 +68,13 @@ let attachedImage = null;
 let attachedDocuments = [];
 let attachedImages = [];
 let attachedVideos = [];
+let pendingUploads = [];
 let queuedMessages = [];
 let queuedPanelCollapsed = false;
 let inFlightUploadsCount = 0;
 let activeUploadPromises = [];
 let enableTrainingLogging = true;
+let roleplayEnabled = true;
 let currentLang = localStorage.getItem('shiro_lang') || 'id';
 let currentUILang = currentLang;
 
@@ -147,7 +149,7 @@ const SHIRO_I18N = {
         remove_img: 'Hapus gambar',
         input_placeholder: 'Tulis pesan...',
         doc_input_placeholder: "Ketik perintah (contoh: 'Rangkum isi berkas ini' atau 'Periksa kode ini')...",
-        attach_file_tooltip: 'Lampirkan berkas atau kode (.js, .py, .ts, .cpp, PDF, Word, TXT, CSV, MD, dll.)',
+        attach_file_tooltip: 'Lampirkan banyak berkas sekaligus (kode, video MP4/WebM/MOV, PDF, Word, ZIP, TXT, dll.)',
         files_btn: 'Berkas',
         attach_img_tooltip: 'Lampirkan gambar',
         images_btn: 'Gambar',
@@ -288,7 +290,25 @@ const SHIRO_I18N = {
         choose_file: 'Pilih Berkas',
         no_file_chosen: 'Belum ada berkas dipilih',
         link_copied_toast: 'Tautan percakapan berhasil disalin ke clipboard!',
-        session_not_found_toast: 'Sesi percakapan tidak ditemukan.'
+        session_not_found_toast: 'Sesi percakapan tidak ditemukan.',
+        roleplay_panel_title: 'Mode Roleplay Karakter',
+        roleplay_toggle_title: 'Aktifkan Roleplay Bawaan (Shiro)',
+        roleplay_toggle_desc: 'Jika aktif, asisten menggunakan persona adik manja Shiro. Jika nonaktif, asisten bekerja penuh sebagai AI Agent profesional ShiroHaru tanpa roleplay atau panggilan Kakak.',
+        roleplay_status_on: 'Mode Roleplay AKTIF — Asisten merespons dengan persona hangat khas Shiro.',
+        roleplay_status_off: 'Mode Roleplay NONAKTIF — Asisten bekerja sebagai AI Agent penuh ShiroHaru (tanpa roleplay/panggilan Kakak).',
+        roleplay_toast_on: 'Mode Roleplay Shiro diaktifkan.',
+        roleplay_toast_off: 'Mode Full Agent ShiroHaru diaktifkan (tanpa roleplay).',
+        uploading_file: 'Mengunggah berkas...',
+        uploading_video: 'Mengunggah video...',
+        uploading_image: 'Memuat gambar...',
+        video_ready_sub: 'Video siap diputar & dianalisis',
+        click_to_play_video: 'Klik untuk memutar video',
+        video_preview: 'Pratinjau Video',
+        image_preview: 'Pratinjau Gambar',
+        image_ready_sub: 'Gambar siap',
+        queued_title: 'Pesan Terantre',
+        queued_subtitle: 'Terkirim otomatis setelah asisten selesai bekerja',
+        sources_browser: 'Sumber Browser'
     },
     en: {
         new_chat: 'New chat',
@@ -327,7 +347,7 @@ const SHIRO_I18N = {
         remove_img: 'Remove image',
         input_placeholder: 'Write a message...',
         doc_input_placeholder: "Type instructions (e.g., 'Summarize this file' or 'Review this code')...",
-        attach_file_tooltip: 'Attach file or source code (.js, .py, .ts, .cpp, PDF, Word, TXT, CSV, MD, etc.)',
+        attach_file_tooltip: 'Attach multiple files at once (code, video MP4/WebM/MOV, PDF, Word, ZIP, TXT, etc.)',
         files_btn: 'Files',
         attach_img_tooltip: 'Attach image',
         images_btn: 'Images',
@@ -468,7 +488,25 @@ const SHIRO_I18N = {
         choose_file: 'Choose File',
         no_file_chosen: 'No file chosen',
         link_copied_toast: 'Conversation link copied to clipboard!',
-        session_not_found_toast: 'Conversation session not found.'
+        session_not_found_toast: 'Conversation session not found.',
+        roleplay_panel_title: 'Character Roleplay Mode',
+        roleplay_toggle_title: 'Enable Default Roleplay (Shiro)',
+        roleplay_toggle_desc: 'When enabled, uses Shiro affectionate sister persona. When disabled, works purely as a professional ShiroHaru AI Agent without roleplay or calling you Kakak.',
+        roleplay_status_on: 'Roleplay Mode ON — Assistant responds with Shiro warm sister persona.',
+        roleplay_status_off: 'Roleplay Mode OFF — Assistant works as full ShiroHaru AI Agent (no roleplay).',
+        roleplay_toast_on: 'Shiro Roleplay mode enabled.',
+        roleplay_toast_off: 'Full ShiroHaru Agent mode enabled (roleplay disabled).',
+        uploading_file: 'Uploading file...',
+        uploading_video: 'Uploading video...',
+        uploading_image: 'Loading image...',
+        video_ready_sub: 'Video ready to play & analyze',
+        click_to_play_video: 'Click to play video',
+        video_preview: 'Video Preview',
+        image_preview: 'Image Preview',
+        image_ready_sub: 'Image ready',
+        queued_title: 'Queued Messages',
+        queued_subtitle: 'Sends after agent finishes working',
+        sources_browser: 'Browser Sources'
     }
 };
 
@@ -507,8 +545,11 @@ function applyI18nToDOM() {
     document.querySelectorAll('.lang-btn-en').forEach(btn => btn.classList.toggle('active', currentLang === 'en'));
 
     updateTrainingBannerUI(enableTrainingLogging);
+    updateRoleplayModeUI(roleplayEnabled);
     updateMemoryCount();
     renderPinnedDrawer();
+    renderAttachmentPreviewBars();
+    renderQueuedMessagesPanel();
 }
 
 async function setUILanguage(lang, syncBackend = true) {
@@ -577,6 +618,45 @@ async function toggleTrainingLogging(enabled) {
     }
 }
 
+function updateRoleplayModeUI(enabled) {
+    roleplayEnabled = Boolean(enabled);
+    const toggle = document.getElementById('roleplay-enabled-toggle');
+    if (toggle) toggle.checked = roleplayEnabled;
+
+    const banner = document.getElementById('roleplay-mode-banner');
+    const icon = document.getElementById('roleplay-mode-icon');
+    const text = document.getElementById('roleplay-mode-status-text');
+    if (banner) {
+        banner.classList.toggle('mode-on', roleplayEnabled);
+        banner.classList.toggle('mode-off', !roleplayEnabled);
+    }
+    if (icon) {
+        icon.className = roleplayEnabled ? 'ph ph-sparkle' : 'ph ph-terminal-window';
+    }
+    if (text) {
+        text.setAttribute('data-i18n', roleplayEnabled ? 'roleplay_status_on' : 'roleplay_status_off');
+        text.textContent = t(roleplayEnabled ? 'roleplay_status_on' : 'roleplay_status_off');
+    }
+}
+
+async function toggleRoleplayMode(enabled) {
+    updateRoleplayModeUI(enabled);
+    try {
+        const res = await fetch('/api/settings/privacy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roleplay_enabled: Boolean(enabled) })
+        });
+        const data = await res.json();
+        if (data.success && typeof data.roleplay_enabled === 'boolean') {
+            updateRoleplayModeUI(data.roleplay_enabled);
+            showToast(data.roleplay_enabled ? t('roleplay_toast_on') : t('roleplay_toast_off'));
+        }
+    } catch (e) {
+        console.error('Failed to update roleplay setting:', e);
+    }
+}
+
 async function loadPrivacySettings() {
     try {
         const res = await fetch('/api/settings/privacy');
@@ -584,6 +664,12 @@ async function loadPrivacySettings() {
         const data = await res.json();
         if (typeof data.enable_training_logging === 'boolean') {
             updateTrainingBannerUI(data.enable_training_logging);
+        }
+        if (typeof data.roleplay_enabled === 'boolean') {
+            updateRoleplayModeUI(data.roleplay_enabled);
+        }
+        if (typeof data.roleplay_enabled === 'boolean') {
+            updateRoleplayModeUI(data.roleplay_enabled);
         }
         const savedLocalLang = localStorage.getItem('shiro_lang');
         if (!savedLocalLang && data.ui_language && (data.ui_language === 'id' || data.ui_language === 'en')) {
@@ -1512,7 +1598,7 @@ function renderWebSourcesHTML(agentActionData) {
 
     return `
         <div class="ag-sources-wrap">
-            ${sources.length ? `<div class="ag-sources-title"><i class="ph ph-globe"></i> <span>Sumber Browser (${sources.length})</span></div><div class="ag-sources-chips">${chipsHTML}</div>` : ''}
+            ${sources.length ? `<div class="ag-sources-title"><i class="ph ph-globe"></i> <span>${escapeHtml(t('sources_browser'))} (${sources.length})</span></div><div class="ag-sources-chips">${chipsHTML}</div>` : ''}
             ${webImages.length ? `<div class="ag-web-images-row">${imgsHTML}</div>` : ''}
         </div>
     `;
@@ -1622,12 +1708,14 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
     if (metaVideos) {
         metaVideos.forEach(vItem => {
             if (!vItem || !vItem.filename) return;
-            const vUrl = vItem.url || '';
-            const metaTxt = `${vItem.filename}${vItem.duration_sec ? ` · ${vItem.duration_sec}s` : ''}${vItem.resolution ? ` · ${vItem.resolution}` : ''}`;
+            const vUrl = vItem.blobUrl || vItem.url || '';
+            const metaTxt = `${vItem.filename}${vItem.duration_sec ? ` · ${Number(vItem.duration_sec).toFixed(1)}s` : ''}${vItem.resolution ? ` · ${vItem.resolution}` : ''}`;
+            const jsVidUrl = String(vUrl).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const jsVidName = String(vItem.filename).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             attachmentHTML += `
                 <div class="chat-video-wrap">
                     ${vUrl ? `<video class="chat-video-player" controls playsinline preload="metadata" src="${escapeHtml(vUrl)}"></video>` : ''}
-                    <div class="chat-video-caption"><i class="ph ph-film-strip"></i> <span>${escapeHtml(metaTxt)}</span></div>
+                    <div class="chat-video-caption ${vUrl ? 'is-clickable' : ''}" ${vUrl ? `onclick="openVideoLightbox('${jsVidUrl}', '${jsVidName}')" title="${escapeHtml(t('click_to_play_video'))}"` : ''}><i class="ph-fill ph-play-circle"></i> <span>${escapeHtml(metaTxt)}</span></div>
                 </div>
             `;
         });
@@ -2062,9 +2150,7 @@ function renderQueuedMessagesPanel() {
     panel.classList.remove('hidden');
     panel.classList.toggle('is-collapsed', queuedPanelCollapsed);
 
-    const subtitleTxt = currentLang === 'en'
-        ? 'Sends after agent finishes working'
-        : 'Terkirim otomatis setelah Shiro selesai bekerja';
+    const subtitleTxt = t('queued_subtitle');
 
     const itemsHTML = queuedMessages.map((qItem, idx) => {
         const qImgs = Array.isArray(qItem.images) ? qItem.images : [];
@@ -2118,7 +2204,7 @@ function renderQueuedMessagesPanel() {
     panel.innerHTML = `
         <div class="queued-panel-header" onclick="toggleQueuedMessagesPanel()">
             <div class="queued-header-left">
-                <span class="queued-title">Queued Messages</span>
+                <span class="queued-title" data-i18n="queued_title">${escapeHtml(t('queued_title'))}</span>
                 <span class="queued-count-badge">${queuedMessages.length}</span>
                 <span class="queued-subtitle">${escapeHtml(subtitleTxt)}</span>
             </div>
@@ -2224,13 +2310,9 @@ function setInputLock(locked) {
     }
     if (uploadDocBtn) uploadDocBtn.disabled = false;
     if (uploadImageBtn) uploadImageBtn.disabled = false;
-    const uploadVideoBtnEl = document.getElementById('upload-video-btn');
-    if (uploadVideoBtnEl) uploadVideoBtnEl.disabled = false;
     if (openCameraBtn) openCameraBtn.disabled = false;
     if (docFileInput) docFileInput.disabled = false;
     if (imageFileInput) imageFileInput.disabled = false;
-    const videoFileInputEl = document.getElementById('video-file-input');
-    if (videoFileInputEl) videoFileInputEl.disabled = false;
 
     const lyraBtn = document.getElementById('lyra-tier-btn');
     if (lyraBtn) {
@@ -2416,7 +2498,7 @@ async function sendMessage(overridePayload = null) {
             payload.document_name = sendingDocs[0].filename;
         }
         if (sendingVideos.length) {
-            payload.videos = sendingVideos;
+            payload.videos = sendingVideos.map(({ blobUrl, ...rest }) => rest);
         }
 
         const response = await fetch('/api/chat', {
@@ -3173,6 +3255,9 @@ async function loadChatHistory() {
         
         if (typeof data.enable_training_logging === 'boolean') {
             updateTrainingBannerUI(data.enable_training_logging);
+        }
+        if (typeof data.roleplay_enabled === 'boolean') {
+            updateRoleplayModeUI(data.roleplay_enabled);
         }
 
         renderMessagesList(data.history || []);
@@ -4588,7 +4673,9 @@ function readFileAsDataUrl(file) {
 
 function renderAttachmentChipList(barEl, items, kind) {
     if (!barEl) return;
-    if (!Array.isArray(items) || items.length === 0) {
+    const uploadingItems = pendingUploads.filter((u) => u.kind === kind);
+    const hasItems = Array.isArray(items) && items.length > 0;
+    if (!hasItems && uploadingItems.length === 0) {
         barEl.classList.add('hidden');
         barEl.innerHTML = '';
         return;
@@ -4600,9 +4687,49 @@ function renderAttachmentChipList(barEl, items, kind) {
     const strip = document.createElement('div');
     strip.className = 'multi-attach-strip';
 
-    items.forEach((item, idx) => {
+    uploadingItems.forEach((uItem) => {
         const chip = document.createElement('div');
-        chip.className = `attach-chip attach-chip-${kind}`;
+        chip.className = `attach-chip attach-chip-${kind} is-uploading`;
+
+        const icon = document.createElement('span');
+        icon.className = 'attach-chip-icon';
+        icon.innerHTML = '<span class="ag-spinner-ring" aria-hidden="true"></span>';
+        chip.appendChild(icon);
+
+        const info = document.createElement('div');
+        info.className = 'attach-chip-info';
+
+        const title = document.createElement('span');
+        title.className = 'attach-chip-name';
+        title.textContent = uItem.name || 'file';
+        title.title = title.textContent;
+        info.appendChild(title);
+
+        const sub = document.createElement('span');
+        sub.className = 'attach-chip-sub';
+        sub.textContent = uItem.kind === 'video'
+            ? t('uploading_video')
+            : (uItem.kind === 'image' ? t('uploading_image') : t('uploading_file'));
+        info.appendChild(sub);
+        chip.appendChild(info);
+
+        const bar = document.createElement('div');
+        bar.className = 'attach-upload-progress';
+        chip.appendChild(bar);
+        strip.appendChild(chip);
+    });
+
+    (items || []).forEach((item, idx) => {
+        const chip = document.createElement('div');
+        const playUrl = kind === 'video' ? (item.blobUrl || item.url || '') : (kind === 'image' ? (item.dataUrl || '') : '');
+        const isPlayable = Boolean(playUrl && (kind === 'video' || kind === 'image'));
+        chip.className = `attach-chip attach-chip-${kind}${isPlayable ? ' is-clickable' : ''}`;
+        if (kind === 'video' && playUrl) {
+            chip.title = t('click_to_play_video');
+            chip.addEventListener('click', () => openVideoLightbox(playUrl, item.filename || item.name || t('video_preview')));
+        } else if (kind === 'image' && item.dataUrl) {
+            chip.addEventListener('click', () => openImageLightbox(item.dataUrl, item.name || t('image_preview')));
+        }
 
         if (kind === 'image' && item.dataUrl) {
             const thumb = document.createElement('img');
@@ -4613,7 +4740,9 @@ function renderAttachmentChipList(barEl, items, kind) {
         } else {
             const icon = document.createElement('span');
             icon.className = 'attach-chip-icon';
-            icon.textContent = kind === 'video' ? '🎬' : '📄';
+            icon.innerHTML = kind === 'video'
+                ? '<i class="ph-fill ph-play-circle"></i>'
+                : '<i class="ph-fill ph-file-text"></i>';
             chip.appendChild(icon);
         }
 
@@ -4633,12 +4762,12 @@ function renderAttachmentChipList(barEl, items, kind) {
             const ftype = item.file_type ? String(item.file_type).toUpperCase() : 'FILE';
             sub.textContent = `${ftype} · ${chars} chars`;
         } else if (kind === 'video') {
+            const extLabel = getFileExtLower(item.filename || item.name || '').replace('.', '').toUpperCase();
             const dur = item.duration_sec ? `${Number(item.duration_sec).toFixed(1)}s` : '';
             const res = item.resolution || '';
-            const fc = item.sampled_frame_count || (Array.isArray(item.frames) ? item.frames.length : 0);
-            sub.textContent = [dur, res, fc ? `${fc} frame` : ''].filter(Boolean).join(' · ') || 'Video siap dianalisis';
+            sub.textContent = [extLabel, dur, res].filter(Boolean).join(' · ') || t('video_ready_sub');
         } else {
-            sub.textContent = 'Gambar siap';
+            sub.textContent = t('image_ready_sub');
         }
         info.appendChild(sub);
         chip.appendChild(info);
@@ -4659,7 +4788,7 @@ function renderAttachmentChipList(barEl, items, kind) {
         strip.appendChild(chip);
     });
 
-    if (items.length > 1) {
+    if ((items || []).length > 1) {
         const clearBtn = document.createElement('button');
         clearBtn.type = 'button';
         clearBtn.className = 'attach-clear-all-btn';
@@ -4771,17 +4900,11 @@ function setAttachedVideo(videoData) {
 function removeAttachedVideo(index) {
     if (index < 0 || index >= attachedVideos.length) return;
     attachedVideos.splice(index, 1);
-    if (attachedVideos.length === 0) {
-        const videoInputEl = document.getElementById('video-file-input');
-        if (videoInputEl) videoInputEl.value = '';
-    }
     renderAttachmentPreviewBars();
 }
 
 function clearAttachedVideo() {
     attachedVideos = [];
-    const videoInputEl = document.getElementById('video-file-input');
-    if (videoInputEl) videoInputEl.value = '';
     renderAttachmentPreviewBars();
 }
 
@@ -4794,25 +4917,51 @@ async function uploadMixedFiles(fileList, { preferVideo = false } = {}) {
         updateComposerSendButton();
         const localImages = [];
         const serverFiles = [];
+        const localVideoBlobMap = new Map();
+        const taskPendingEntries = [];
 
         for (const file of files) {
-            if (!preferVideo && isImageFileObj(file)) {
-                localImages.push(file);
+            const isImg = !preferVideo && isImageFileObj(file);
+            const isVid = isVideoFileObj(file, preferVideo);
+            const pKind = isImg ? 'image' : (isVid ? 'video' : 'document');
+            const pEntry = {
+                id: `${Date.now()}_${Math.random()}`,
+                name: file.name,
+                kind: pKind,
+            };
+            taskPendingEntries.push(pEntry);
+            pendingUploads.push(pEntry);
+            if (isImg) {
+                localImages.push({ file, pendingEntry: pEntry });
             } else {
+                if (isVid && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+                    try {
+                        localVideoBlobMap.set(file.name, URL.createObjectURL(file));
+                    } catch (_) {}
+                }
                 serverFiles.push(file);
             }
         }
+        renderAttachmentPreviewBars();
+
+        const removePendingEntry = (entry) => {
+            const pIdx = pendingUploads.indexOf(entry);
+            if (pIdx >= 0) pendingUploads.splice(pIdx, 1);
+        };
 
         try {
             if (localImages.length > 0) {
                 status.textContent = currentLang === 'en'
                     ? `Loading ${localImages.length} image(s)...`
                     : `Memuat ${localImages.length} gambar...`;
-                for (const imgFile of localImages) {
+                for (const { file: imgFile, pendingEntry } of localImages) {
                     try {
                         const dataUrl = await readFileAsDataUrl(imgFile);
+                        removePendingEntry(pendingEntry);
                         setAttachedImage(dataUrl, imgFile.name);
                     } catch (err) {
+                        removePendingEntry(pendingEntry);
+                        renderAttachmentPreviewBars();
                         console.error('Image read error:', err);
                         showToast(`${imgFile.name}: ${err.message || 'Gagal membaca gambar'}`);
                     }
@@ -4825,8 +4974,8 @@ async function uploadMixedFiles(fileList, { preferVideo = false } = {}) {
 
                 const hasVideo = serverFiles.some((f) => isVideoFileObj(f, preferVideo));
                 status.textContent = hasVideo
-                    ? (currentLang === 'en' ? `Extracting frames & files (${serverFiles.length})...` : `Mengekstrak frame video & ${serverFiles.length} berkas...`)
-                    : (currentLang === 'en' ? `Reading ${serverFiles.length} file(s)...` : `Membaca ${serverFiles.length} berkas...`);
+                    ? (currentLang === 'en' ? `Uploading video & files (${serverFiles.length})...` : `Mengunggah video & ${serverFiles.length} berkas...`)
+                    : (currentLang === 'en' ? `Uploading ${serverFiles.length} file(s)...` : `Mengunggah ${serverFiles.length} berkas...`);
 
                 try {
                     const res = await fetch('/api/upload/documents', {
@@ -4834,6 +4983,7 @@ async function uploadMixedFiles(fileList, { preferVideo = false } = {}) {
                         body: formData
                     });
                     const data = await res.json();
+                    taskPendingEntries.forEach(removePendingEntry);
                     if (data.success) {
                         (data.documents || []).forEach((doc) => setAttachedDocument(doc));
                         (data.images || []).forEach((img) => {
@@ -4841,21 +4991,30 @@ async function uploadMixedFiles(fileList, { preferVideo = false } = {}) {
                                 setAttachedImage(img.dataUrl || img.data_url, img.name || img.filename || 'image.png');
                             }
                         });
-                        (data.videos || []).forEach((vid) => setAttachedVideo(vid));
+                        (data.videos || []).forEach((vid) => {
+                            const blobUrl = localVideoBlobMap.get(vid.filename);
+                            if (blobUrl) vid.blobUrl = blobUrl;
+                            setAttachedVideo(vid);
+                        });
                         if (Array.isArray(data.errors) && data.errors.length > 0) {
                             const previewErr = data.errors.slice(0, 2).join('; ');
                             showToast((currentLang === 'en' ? 'Some files could not be read: ' : 'Sebagian berkas gagal dibaca: ') + previewErr);
                         }
                     } else {
+                        renderAttachmentPreviewBars();
                         showToast(`${currentLang === 'en' ? 'Upload failed' : 'Gagal mengunggah berkas'}: ${data.error || 'Format tidak didukung'}`);
                     }
                 } catch (err) {
+                    taskPendingEntries.forEach(removePendingEntry);
+                    renderAttachmentPreviewBars();
                     console.error('Multi-file upload error:', err);
                     showToast((currentLang === 'en' ? 'Failed to upload files: ' : 'Gagal mengunggah berkas: ') + (err.message || 'Koneksi bermasalah'));
                 }
             }
         } finally {
+            taskPendingEntries.forEach(removePendingEntry);
             inFlightUploadsCount = Math.max(0, inFlightUploadsCount - 1);
+            renderAttachmentPreviewBars();
             const totalCount = attachedDocuments.length + attachedImages.length + attachedVideos.length;
             if (!isGenerating) {
                 status.textContent = totalCount > 0
@@ -5018,23 +5177,6 @@ if (uploadImageBtn && imageFileInput) {
         if (files && files.length > 0) {
             uploadMixedFiles(files).finally(() => {
                 imageFileInput.value = '';
-            });
-        }
-    });
-}
-
-const uploadVideoBtn = document.getElementById('upload-video-btn');
-const videoFileInput = document.getElementById('video-file-input');
-if (uploadVideoBtn && videoFileInput) {
-    uploadVideoBtn.addEventListener('click', () => {
-        videoFileInput.click();
-    });
-
-    videoFileInput.addEventListener('change', (e) => {
-        const files = e.target.files;
-        if (files && files.length > 0) {
-            uploadMixedFiles(files, { preferVideo: true }).finally(() => {
-                videoFileInput.value = '';
             });
         }
     });
@@ -5583,9 +5725,10 @@ if (pipelineModal) {
     });
 }
 
-// --- Image Lightbox Modal Controller ---
+// --- Image & Video Lightbox Modal Controller ---
 const imageLightboxModal = document.getElementById('image-lightbox-modal');
 const lightboxImg = document.getElementById('lightbox-img');
+const lightboxVideo = document.getElementById('lightbox-video');
 const lightboxTitle = document.getElementById('lightbox-title');
 const lightboxOpenNewtab = document.getElementById('lightbox-open-newtab');
 const lightboxDownloadBtn = document.getElementById('lightbox-download-btn');
@@ -5593,6 +5736,12 @@ const closeLightboxBtn = document.getElementById('close-lightbox-btn');
 
 function openImageLightbox(src, title = 'Pratinjau Gambar') {
     if (!imageLightboxModal || !lightboxImg) return;
+    if (lightboxVideo) {
+        try { lightboxVideo.pause(); } catch (_) {}
+        lightboxVideo.src = '';
+        lightboxVideo.classList.add('hidden');
+    }
+    lightboxImg.classList.remove('hidden');
     lightboxImg.src = src;
     if (lightboxTitle) lightboxTitle.textContent = title;
     if (lightboxOpenNewtab) lightboxOpenNewtab.href = src;
@@ -5603,10 +5752,33 @@ function openImageLightbox(src, title = 'Pratinjau Gambar') {
     imageLightboxModal.classList.remove('hidden');
 }
 
+function openVideoLightbox(src, title = 'Pratinjau Video') {
+    if (!imageLightboxModal || !lightboxVideo) return;
+    if (lightboxImg) {
+        lightboxImg.src = '';
+        lightboxImg.classList.add('hidden');
+    }
+    lightboxVideo.classList.remove('hidden');
+    lightboxVideo.src = src;
+    if (lightboxTitle) lightboxTitle.textContent = title || t('video_preview');
+    if (lightboxOpenNewtab) lightboxOpenNewtab.href = src;
+    if (lightboxDownloadBtn) {
+        lightboxDownloadBtn.href = src;
+        lightboxDownloadBtn.download = title || `shiro_video_${Date.now()}.mp4`;
+    }
+    imageLightboxModal.classList.remove('hidden');
+    try { lightboxVideo.play().catch(() => {}); } catch (_) {}
+}
+
 function closeImageLightbox() {
     if (!imageLightboxModal) return;
     imageLightboxModal.classList.add('hidden');
     if (lightboxImg) lightboxImg.src = '';
+    if (lightboxVideo) {
+        try { lightboxVideo.pause(); } catch (_) {}
+        lightboxVideo.src = '';
+        lightboxVideo.classList.add('hidden');
+    }
 }
 
 function handleLightboxBackdropClick(e) {
