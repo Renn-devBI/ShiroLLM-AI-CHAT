@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.8.0">
+    <link rel="stylesheet" href="/static/style.css?v=3.9.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
     <script src="/static/theme.js?v=3.2.0"></script>
@@ -83,6 +83,11 @@
                 </div>
 
                 <div class="nav-actions">
+                    <button id="quick-files-btn" class="nav-quick-files-btn hidden" type="button" onclick="toggleChatFilesDrawer()" title="Unduh cepat file &amp; kode dari AI tanpa scroll" data-i18n-title="quick_files_tooltip" aria-label="Unduh file dari percakapan">
+                        <i class="ph ph-download-simple"></i>
+                        <span class="quick-files-label" data-i18n="quick_files_btn">Unduh File</span>
+                        <span id="quick-files-count" class="quick-files-count">0</span>
+                    </button>
                     <div class="chat-menu-container">
                         <button id="chat-actions-btn" class="chat-actions-btn" type="button" title="Opsi percakapan" data-i18n-title="chat_options" aria-label="Opsi percakapan" aria-haspopup="true" aria-expanded="false">
                             <i class="ph ph-dots-three-vertical"></i>
@@ -959,6 +964,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
-    <script src="/static/script.js?v=3.8.0"></script>
+    <script src="/static/script.js?v=3.9.0"></script>
 </body>
 </html>

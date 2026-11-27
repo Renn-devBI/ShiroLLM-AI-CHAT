@@ -333,6 +333,7 @@ function reattachActiveSessionRunDOM(run) {
                         try { hljs.highlightElement(block); } catch (_) {}
                     });
                 }
+                syncQuickCodeDownloadsInMsg(run.assistantMsgEl);
             }
         }
     }
@@ -450,6 +451,10 @@ const SHIRO_I18N = {
         download_code: 'Unduh',
         download_code_tooltip: 'Unduh kode sebagai berkas',
         downloaded_code: 'Tersimpan',
+        quick_files_btn: 'Unduh File',
+        quick_files_tooltip: 'Unduh cepat berkas & kode dari AI tanpa scroll',
+        download_all_files: 'Unduh semua',
+        ai_generated_tag: 'Dari AI',
         copy_code: 'Salin',
         copy_code_tooltip: 'Salin kode ke papan klip',
         copied_code: 'Tersalin',
@@ -654,6 +659,10 @@ const SHIRO_I18N = {
         download_code: 'Download',
         download_code_tooltip: 'Download code as file',
         downloaded_code: 'Downloaded',
+        quick_files_btn: 'Downloads',
+        quick_files_tooltip: 'Quick download AI files & code without scrolling',
+        download_all_files: 'Download all',
+        ai_generated_tag: 'AI File',
         copy_code: 'Copy',
         copy_code_tooltip: 'Copy code to clipboard',
         copied_code: 'Copied',
@@ -1445,18 +1454,16 @@ const CODE_LANG_EXT_MAP = {
     'text': 'txt'
 };
 
-function downloadCodeSnippet(btn) {
-    const wrapper = btn.closest('.code-block-wrapper');
-    if (!wrapper) return;
+function resolveCodeBlockMeta(wrapper) {
+    if (!wrapper) return null;
     const codeEl = wrapper.querySelector('code');
-    if (!codeEl) return;
+    if (!codeEl) return null;
     const text = codeEl.innerText || codeEl.textContent;
-    if (!text) return;
+    if (!text) return null;
 
     const rawLang = (wrapper.dataset.lang || '').trim().toLowerCase();
     const ext = CODE_LANG_EXT_MAP[rawLang] || (rawLang && /^[a-z0-9]+$/.test(rawLang) ? rawLang : 'txt');
 
-    // 1. Gunakan nama berkas persis dari atribut data-filename (misal login.app) atau komentar kode
     let filename = sanitizeDownloadFilename(wrapper.dataset.filename || '');
     if (!filename) {
         const firstLines = text.split('\n').slice(0, 5).join('\n');
@@ -1470,7 +1477,6 @@ function downloadCodeSnippet(btn) {
         filename = sanitizeDownloadFilename(rawLang);
     }
 
-    // 2. Default nama file ala ChatGPT
     if (!filename) {
         if (ext === 'html') filename = 'index.html';
         else if (ext === 'css') filename = 'style.css';
@@ -1489,7 +1495,6 @@ function downloadCodeSnippet(btn) {
         else filename = `shiro_${rawLang || 'code'}.${ext}`;
     }
 
-    // 3. Tentukan MIME Type
     const mimeTypes = {
         'html': 'text/html;charset=utf-8',
         'css': 'text/css;charset=utf-8',
@@ -1505,46 +1510,123 @@ function downloadCodeSnippet(btn) {
         'txt': 'text/plain;charset=utf-8'
     };
     const mimeType = mimeTypes[ext] || 'text/plain;charset=utf-8';
+    return { text, filename, mimeType, ext, lang: rawLang };
+}
 
-    // 4. Unduh berkas langsung di browser via Blob
+function downloadCodeFromWrapper(wrapper, feedbackBtn = null, silent = false) {
+    const meta = resolveCodeBlockMeta(wrapper);
+    if (!meta) return null;
     try {
-        const blob = new Blob([text], { type: mimeType });
+        const blob = new Blob([meta.text], { type: meta.mimeType });
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = blobUrl;
-        link.download = filename;
+        link.download = meta.filename;
         link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
 
-        // Feedback visual tombol
-        const span = btn.querySelector('span');
-        const icon = btn.querySelector('i');
-        const oldText = span ? span.textContent : '';
-        if (span) span.textContent = t('downloaded_code') || 'Tersimpan';
-        if (icon) icon.className = 'ph ph-check';
-        btn.classList.add('download-success');
+        if (feedbackBtn) {
+            const span = feedbackBtn.querySelector('span');
+            const icon = feedbackBtn.querySelector('i');
+            const oldText = span ? span.textContent : '';
+            const origIconCls = icon ? icon.className : 'ph ph-download-simple';
+            if (span && feedbackBtn.classList.contains('btn-download-code')) {
+                span.textContent = t('downloaded_code') || 'Tersimpan';
+            }
+            if (icon) icon.className = 'ph ph-check';
+            feedbackBtn.classList.add('download-success');
+            setTimeout(() => {
+                if (span && feedbackBtn.classList.contains('btn-download-code')) {
+                    span.textContent = oldText || t('download_code') || 'Unduh';
+                }
+                if (icon) icon.className = origIconCls;
+                feedbackBtn.classList.remove('download-success');
+            }, 2000);
+        }
 
-        setTimeout(() => {
-            if (span) span.textContent = oldText || t('download_code') || 'Unduh';
-            if (icon) icon.className = 'ph ph-download-simple';
-            btn.classList.remove('download-success');
-        }, 2000);
-
-        if (typeof showToast === 'function') {
+        if (!silent && typeof showToast === 'function') {
             const toastMsg = currentLang === 'en'
-                ? `File "${filename}" downloaded`
-                : `Berkas "${filename}" berhasil diunduh`;
+                ? `File "${meta.filename}" downloaded`
+                : `Berkas "${meta.filename}" berhasil diunduh`;
             showToast(toastMsg);
         }
+        return meta.filename;
     } catch (err) {
         console.error('Error downloading code snippet:', err);
-        if (typeof showToast === 'function') {
+        if (!silent && typeof showToast === 'function') {
             showToast(currentLang === 'en' ? 'Download failed' : 'Gagal mengunduh berkas');
         }
+        return null;
     }
+}
+
+function downloadCodeSnippet(btn) {
+    const wrapper = btn ? btn.closest('.code-block-wrapper') : null;
+    if (!wrapper) return;
+    downloadCodeFromWrapper(wrapper, btn, false);
+}
+
+function syncQuickCodeDownloadsInMsg(msgEl) {
+    if (!msgEl || !msgEl.classList.contains('assistant')) return;
+    const container = msgEl.querySelector('.bubble-container');
+    if (!container) return;
+    const wrappers = Array.from(container.querySelectorAll('.code-block-wrapper'));
+    const existingBar = container.querySelector('.msg-quick-downloads');
+    if (!wrappers.length) {
+        if (existingBar) existingBar.remove();
+        return;
+    }
+
+    const bar = existingBar || document.createElement('div');
+    bar.className = 'msg-quick-downloads';
+    bar.innerHTML = '';
+
+    wrappers.forEach((wr) => {
+        const meta = resolveCodeBlockMeta(wr);
+        if (!meta) return;
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'msg-quick-dl-chip';
+        chip.title = `${t('download_code')}: ${meta.filename}`;
+        chip.innerHTML = `<i class="ph ph-download-simple"></i> <span>${escapeHtml(meta.filename)}</span>`;
+        chip.addEventListener('click', () => downloadCodeFromWrapper(wr, chip, false));
+        bar.appendChild(chip);
+    });
+
+    if (wrappers.length > 1) {
+        const allBtn = document.createElement('button');
+        allBtn.type = 'button';
+        allBtn.className = 'msg-quick-dl-all';
+        allBtn.title = t('download_all_files');
+        allBtn.innerHTML = `<i class="ph ph-download-simple"></i> <span>${escapeHtml(t('download_all_files'))} (${wrappers.length})</span>`;
+        allBtn.addEventListener('click', () => {
+            const downloaded = [];
+            wrappers.forEach((wr, idx) => {
+                setTimeout(() => {
+                    const nm = downloadCodeFromWrapper(wr, idx === 0 ? allBtn : null, true);
+                    if (nm) downloaded.push(nm);
+                    if (idx === wrappers.length - 1 && downloaded.length && typeof showToast === 'function') {
+                        showToast(
+                            currentLang === 'en'
+                                ? `Downloaded ${downloaded.length} files`
+                                : `${downloaded.length} berkas berhasil diunduh`
+                        );
+                    }
+                }, idx * 180);
+            });
+        });
+        bar.appendChild(allBtn);
+    }
+
+    if (!existingBar) {
+        const anchor = container.querySelector('.ag-artifacts-wrap') || container.querySelector('.msg-actions-bar');
+        if (anchor) container.insertBefore(bar, anchor);
+        else container.appendChild(bar);
+    }
+    updateQuickFilesBadge();
 }
 
 function copyCodeSnippet(btn) {
@@ -2195,6 +2277,11 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
             }
         });
     }
+
+    if (role === 'assistant') {
+        syncQuickCodeDownloadsInMsg(messageDiv);
+    }
+    updateQuickFilesBadge();
 
     return messageDiv;
 }
@@ -3249,6 +3336,8 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                     }
                 }
                 clearPipelineSimulation();
+                syncQuickCodeDownloadsInMsg(run.assistantMsgEl);
+                updateQuickFilesBadge();
                 if (run.finalData && run.finalData.pipeline_trace) {
                     activePipelineTrace = run.finalData.pipeline_trace;
                     renderModalPipeline(activePipelineTrace);
@@ -3629,6 +3718,7 @@ function renderMessagesList(messages) {
     }
     
     renderPinnedDrawer();
+    updateQuickFilesBadge();
     const drawer = document.getElementById('chat-files-drawer');
     if (drawer && !drawer.classList.contains('hidden')) {
         renderChatFilesList();
@@ -3830,6 +3920,7 @@ async function createNewSession() {
                 chatMessages.appendChild(typingIndicator);
             }
             renderPinnedDrawer();
+            updateQuickFilesBadge();
             const drawer = document.getElementById('chat-files-drawer');
             if (drawer && !drawer.classList.contains('hidden')) {
                 renderChatFilesList();
@@ -4234,17 +4325,50 @@ function showChatFiles() {
     openChatFilesDrawer();
 }
 
-function renderChatFilesList() {
-    const listContainer = document.getElementById('chat-files-list');
-    const emptyState = document.getElementById('chat-files-empty');
-    if (!listContainer) return;
-    listContainer.innerHTML = '';
-
-    // Collect all files from current session attachments & messages
+function collectSessionDownloadableFiles() {
     const files = [];
     const seen = new Set();
 
-    // 1. Current active attachments
+    // 1. Artifact & blok kode dari AI (terbaru di atas agar langsung terlihat tanpa scroll)
+    const assistantMsgs = Array.from(document.querySelectorAll('#chat-messages .message.assistant')).reverse();
+    assistantMsgs.forEach((el) => {
+        el.querySelectorAll('.ag-artifact-card').forEach((card) => {
+            const dlLink = card.querySelector('.ag-artifact-dl-btn');
+            const nameEl = card.querySelector('.ag-artifact-name');
+            const subEl = card.querySelector('.ag-artifact-sub');
+            const fname = (nameEl && nameEl.textContent ? nameEl.textContent.trim() : '') || (dlLink ? dlLink.getAttribute('download') : '');
+            const url = dlLink ? dlLink.getAttribute('href') : '';
+            if (!fname || !url) return;
+            const key = `art_${fname}_${url}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                files.push({
+                    type: 'artifact',
+                    filename: fname,
+                    url: url,
+                    metaText: subEl ? subEl.textContent.trim() : '',
+                    sourceLabel: t('ai_generated_tag'),
+                    targetEl: card,
+                });
+            }
+        });
+
+        const wrappers = Array.from(el.querySelectorAll('.code-block-wrapper')).reverse();
+        wrappers.forEach((wr, idx) => {
+            const meta = resolveCodeBlockMeta(wr);
+            if (!meta) return;
+            const key = `code_${meta.filename}_${meta.text.length}_${idx}`;
+            files.push({
+                type: 'ai_code',
+                filename: meta.filename,
+                fileType: meta.ext || meta.lang || 'txt',
+                sourceLabel: t('ai_generated_tag'),
+                wrapperEl: wr,
+            });
+        });
+    });
+
+    // 2. Lampiran aktif di composer
     if (attachedDocument && attachedDocument.filename) {
         const key = 'doc_' + attachedDocument.filename;
         if (!seen.has(key)) {
@@ -4272,32 +4396,26 @@ function renderChatFilesList() {
         }
     }
 
-    // 2. Scan all messages in DOM
+    // 3. Dokumen & gambar unggahan pada riwayat chat
     const msgEls = document.querySelectorAll('#chat-messages .message');
     msgEls.forEach(el => {
-        // Document badge
-        const docBadge = el.querySelector('.msg-attachment-badge');
-        if (docBadge) {
-            const fname = docBadge.getAttribute('data-filename') || docBadge.textContent.trim();
-            const furl = docBadge.getAttribute('data-doc-url') || '';
-            const ftype = docBadge.getAttribute('data-file-type') || '';
-            const ftext = docBadge.getAttribute('data-doc-text') || '';
+        el.querySelectorAll('.chat-doc-card').forEach(card => {
+            const nameEl = card.querySelector('.chat-doc-name');
+            const fname = nameEl ? nameEl.textContent.trim() : '';
             const key = 'doc_' + fname;
             if (fname && !seen.has(key)) {
                 seen.add(key);
                 files.push({
                     type: 'doc',
                     filename: fname,
-                    url: furl,
-                    fileType: ftype,
-                    textContent: ftext
+                    url: `/api/files/${encodeURIComponent(fname)}`,
+                    fileType: fname.split('.').pop() || ''
                 });
             }
-        }
-        // Image attachment
-        const imgEl = el.querySelector('.msg-image-thumb');
+        });
+        const imgEl = el.querySelector('.chat-img-attachment');
         if (imgEl) {
-            const src = imgEl.getAttribute('data-full-src') || imgEl.getAttribute('src');
+            const src = imgEl.getAttribute('src');
             const fname = imgEl.getAttribute('alt') || 'gambar.png';
             const key = 'img_' + (src || fname);
             if (src && !seen.has(key)) {
@@ -4310,6 +4428,36 @@ function renderChatFilesList() {
             }
         }
     });
+
+    return files;
+}
+
+function updateQuickFilesBadge() {
+    const btn = document.getElementById('quick-files-btn');
+    const cntEl = document.getElementById('quick-files-count');
+    if (!btn || !cntEl) return;
+    const aiCount = document.querySelectorAll('#chat-messages .message.assistant .code-block-wrapper, #chat-messages .message.assistant .ag-artifact-card').length;
+    const totalCount = aiCount || collectSessionDownloadableFiles().length;
+    if (totalCount > 0) {
+        cntEl.textContent = String(totalCount);
+        btn.classList.remove('hidden');
+    } else {
+        cntEl.textContent = '0';
+        btn.classList.add('hidden');
+    }
+    const drawer = document.getElementById('chat-files-drawer');
+    if (drawer && !drawer.classList.contains('hidden')) {
+        renderChatFilesList();
+    }
+}
+
+function renderChatFilesList() {
+    const listContainer = document.getElementById('chat-files-list');
+    const emptyState = document.getElementById('chat-files-empty');
+    if (!listContainer) return;
+    listContainer.innerHTML = '';
+
+    const files = collectSessionDownloadableFiles();
 
     if (files.length === 0) {
         if (emptyState) emptyState.classList.remove('hidden');
@@ -4332,13 +4480,58 @@ function renderChatFilesList() {
             } else {
                 iconHtml = `<div class="chat-file-card-icon is-image"><i class="ph ph-image"></i></div>`;
             }
-        } else if (isCodeExt) {
+        } else if (f.type === 'artifact') {
+            iconHtml = `<div class="chat-file-card-icon is-code"><i class="ph ph-file-zip"></i></div>`;
+        } else if (isCodeExt || f.type === 'ai_code') {
             iconHtml = `<div class="chat-file-card-icon is-code"><i class="ph ph-file-code"></i></div>`;
         } else {
             iconHtml = `<div class="chat-file-card-icon is-doc"><i class="ph ph-file-text"></i></div>`;
         }
 
         const typeLabel = ext ? ext.toUpperCase() : (f.type === 'image' ? 'IMG' : 'DOC');
+
+        if (f.type === 'ai_code' || f.type === 'artifact') {
+            item.innerHTML = `
+                ${iconHtml}
+                <div class="chat-file-card-info">
+                    <span class="chat-file-card-name" title="${escapeHtml(f.filename)}">${escapeHtml(f.filename)}</span>
+                    <span class="chat-file-card-meta">
+                        <span class="file-ext-tag">${escapeHtml(typeLabel)}</span>
+                        • ${escapeHtml(f.sourceLabel || t('ai_generated_tag'))}${f.metaText ? ` · ${escapeHtml(f.metaText)}` : ''}
+                    </span>
+                </div>
+                <div class="chat-file-card-actions">
+                    <button type="button" class="btn-file-action download-btn" title="${escapeHtml(t('download_code'))} ${escapeHtml(f.filename)}" data-action="download">
+                        <i class="ph ph-download-simple"></i>
+                    </button>
+                </div>
+            `;
+            const dlBtn = item.querySelector('.btn-file-action.download-btn');
+            if (dlBtn) {
+                dlBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (f.type === 'ai_code' && f.wrapperEl) {
+                        downloadCodeFromWrapper(f.wrapperEl, dlBtn, false);
+                    } else if (f.url) {
+                        const a = document.createElement('a');
+                        a.href = f.url;
+                        a.download = f.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    }
+                });
+            }
+            item.addEventListener('click', () => {
+                if (f.wrapperEl) {
+                    f.wrapperEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else if (f.targetEl) {
+                    f.targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            });
+            listContainer.appendChild(item);
+            return;
+        }
 
         item.innerHTML = `
             ${iconHtml}

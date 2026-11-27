@@ -247,11 +247,20 @@ class TestAgentPackagerAndThinking(unittest.TestCase):
                 shutil.rmtree(b, ignore_errors=True)
 
     def test_index_html_cache_version_updated(self):
-        idx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "index.html")
-        with open(idx_path, "r", encoding="utf-8") as f:
+        root = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(root, "templates", "index.html"), "r", encoding="utf-8") as f:
             html = f.read()
-        self.assertIn("script.js?v=3.8.0", html)
-        self.assertIn("style.css?v=3.8.0", html)
+        with open(os.path.join(root, "static", "style.css"), "r", encoding="utf-8") as f:
+            css = f.read()
+        with open(os.path.join(root, "static", "script.js"), "r", encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn("script.js?v=3.9.0", html)
+        self.assertIn("style.css?v=3.9.0", html)
+        self.assertIn('id="quick-files-btn"', html)
+        self.assertIn("position: sticky;", css)
+        self.assertIn("overflow: visible;", css)
+        self.assertIn("function syncQuickCodeDownloadsInMsg", js)
+        self.assertIn("function updateQuickFilesBadge", js)
 
 
 if __name__ == "__main__":
