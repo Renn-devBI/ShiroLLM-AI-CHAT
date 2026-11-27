@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.4.0">
+    <link rel="stylesheet" href="/static/style.css?v=3.5.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
     <script src="/static/theme.js?v=3.2.0"></script>
@@ -214,11 +214,13 @@
                     </div>
                 </div>
 
-                <div class="input-card">
+                <div id="video-preview-bar" class="image-preview-bar multi-attach-strip hidden"></div>
+
+                <div class="input-card" id="composer-input-card">
                     <textarea
                         id="user-input"
                         class="chat-input"
-                        placeholder="Tulis pesan... (atau ketik /agent untuk tugas PC lokal)"
+                        placeholder="Tulis pesan, atau tarik &amp; lepas banyak file / gambar / video di sini..."
                         data-i18n-placeholder="input_placeholder"
                         aria-label="Pesan untuk Shiro"
                         autocomplete="off"
@@ -226,20 +228,25 @@
                     ></textarea>
                     <div class="composer-bar">
                         <div class="media-input-buttons">
-                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan berkas atau kode (.js, .py, .ts, .cpp, PDF, Word, TXT, CSV, MD, dll.)" data-i18n-title="attach_file_tooltip" aria-label="Lampirkan dokumen" type="button">
+                            <button id="upload-doc-btn" class="btn-media btn-media-labeled" title="Lampirkan banyak berkas sekaligus (kode, PDF, DOCX, ZIP, dll.)" data-i18n-title="attach_file_tooltip" aria-label="Lampirkan dokumen" type="button">
                                 <i class="ph ph-paperclip"></i>
                                 <span class="media-btn-label" data-i18n="files_btn">Berkas</span>
                             </button>
-                            <input type="file" id="doc-file-input" accept=".pdf,.docx,.doc,.txt,.md,.markdown,.rtf,.log,.js,.jsx,.mjs,.cjs,.ts,.tsx,.vue,.svelte,.astro,.html,.htm,.css,.scss,.sass,.less,.py,.pyw,.pyi,.ipynb,.java,.c,.cpp,.cc,.cxx,.h,.hpp,.hh,.cs,.go,.rs,.php,.rb,.swift,.kt,.kts,.scala,.dart,.lua,.pl,.pm,.r,.jl,.zig,.nim,.sh,.bash,.zsh,.fish,.ps1,.psm1,.bat,.cmd,.awk,.sed,.dockerfile,.sql,.prisma,.graphql,.gql,.json,.jsonl,.json5,.yaml,.yml,.toml,.xml,.csv,.tsv,.ini,.cfg,.conf,.config,.properties,.env,.gitignore,.proto" class="hidden">
-                            <button id="upload-image-btn" class="btn-media btn-media-labeled" title="Lampirkan gambar" data-i18n-title="attach_img_tooltip" aria-label="Lampirkan gambar" type="button">
+                            <input type="file" id="doc-file-input" multiple class="hidden">
+                            <button id="upload-image-btn" class="btn-media btn-media-labeled" title="Lampirkan banyak gambar sekaligus" data-i18n-title="attach_img_tooltip" aria-label="Lampirkan gambar" type="button">
                                 <i class="ph ph-image"></i>
                                 <span class="media-btn-label" data-i18n="images_btn">Gambar</span>
+                            </button>
+                            <button id="upload-video-btn" class="btn-media btn-media-labeled" title="Lampirkan video (MP4, WebM, MOV, MKV, GIF) untuk dilihat &amp; dianalisis Shiro" aria-label="Lampirkan video" type="button">
+                                <i class="ph ph-film-strip"></i>
+                                <span class="media-btn-label">Video</span>
                             </button>
                             <button id="open-camera-btn" class="btn-media btn-media-labeled" title="Ambil foto dengan kamera" data-i18n-title="open_cam_tooltip" aria-label="Buka kamera" type="button">
                                 <i class="ph ph-camera"></i>
                                 <span class="media-btn-label" data-i18n="camera_btn">Kamera</span>
                             </button>
-                            <input type="file" id="image-file-input" accept="image/*" class="hidden">
+                            <input type="file" id="image-file-input" accept="image/*" multiple class="hidden">
+                            <input type="file" id="video-file-input" accept="video/*,.mp4,.webm,.mov,.mkv,.avi,.m4v,.gif" multiple class="hidden">
                         </div>
                         <div class="input-actions">
                             <div id="lyra-tier-picker" class="lyra-tier-picker hidden">
@@ -935,6 +942,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
-    <script src="/static/script.js?v=3.4.0"></script>
+    <script src="/static/script.js?v=3.5.0"></script>
 </body>
 </html>

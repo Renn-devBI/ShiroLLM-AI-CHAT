@@ -46,7 +46,7 @@ def get_history():
         memory._ensure_message_ids(memory.short_term_history)
         valid_history = [
             _format_message_for_api(m) for m in memory.short_term_history
-            if (m.get("content") or "").strip() or m.get("image") or m.get("document_name") or m.get("document_text") or m.get("artifacts")
+            if (m.get("content") or "").strip() or m.get("image") or m.get("images") or m.get("videos") or m.get("document_name") or m.get("documents") or m.get("document_text") or m.get("artifacts")
         ]
         return jsonify({
             "history": valid_history,
@@ -157,8 +157,11 @@ def chat():
         # Murni teks yang diketik pengguna
         user_message = data.get('message', '').strip()
         image_base64 = data.get('image', None)
+        images_list = data.get('images') if isinstance(data.get('images'), list) else None
         document_text = data.get('document_text', None)
         document_name = data.get('document_name', None)
+        documents_list = data.get('documents') if isinstance(data.get('documents'), list) else None
+        videos_list = data.get('videos') if isinstance(data.get('videos'), list) else None
         user_max_tokens = data.get('max_tokens') or data.get('max_completion_tokens')
         
         document_info = None
@@ -168,7 +171,11 @@ def chat():
                 "filename": document_name or "Dokumen"
             }
 
-        if not user_message and not image_base64 and not document_info:
+        has_any_docs = bool(document_info or (documents_list and any(isinstance(d, dict) and (d.get("text") or "").strip() for d in documents_list)))
+        has_any_imgs = bool(image_base64 or (images_list and any(images_list)))
+        has_any_vids = bool(videos_list and any(isinstance(v, dict) and (v.get("frames") or v.get("thumbnail")) for v in videos_list))
+
+        if not user_message and not has_any_imgs and not has_any_docs and not has_any_vids:
             return jsonify({"error": "Empty message"}), 400
 
         # Perintah eksplisit: /moe on|off|auto|concurrent|swap|status
@@ -248,20 +255,34 @@ def chat():
         memory = state.init_memory()
         training_enabled = memory.system_metadata.get("enable_training_logging", True)
         
+        primary_img_b64 = image_base64 or (images_list[0] if images_list else None)
         saved_img_rel = None
+        saved_images_urls = []
+        raw_images_to_save = []
         if image_base64:
+            raw_images_to_save.append(image_base64)
+        if images_list:
+            for im_item in images_list:
+                if im_item and im_item not in raw_images_to_save:
+                    raw_images_to_save.append(im_item)
+
+        if raw_images_to_save:
             try:
                 if training_enabled:
                     v_dir = os.path.join("training_data", "vision", "images")
                 else:
                     v_dir = os.path.join("data", "uploads")
                 os.makedirs(v_dir, exist_ok=True)
-                fn = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.jpg"
-                fp = os.path.join(v_dir, fn)
-                raw = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
-                with open(fp, "wb") as f_out:
-                    f_out.write(base64.b64decode(raw))
-                saved_img_rel = os.path.join("images", fn).replace("\\", "/")
+                for im_b64 in raw_images_to_save:
+                    fn = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.jpg"
+                    fp = os.path.join(v_dir, fn)
+                    raw = im_b64.split(",", 1)[1] if "," in im_b64 else im_b64
+                    with open(fp, "wb") as f_out:
+                        f_out.write(base64.b64decode(raw))
+                    rel_u = "/" + os.path.join("images", fn).replace("\\", "/")
+                    saved_images_urls.append(rel_u)
+                if saved_images_urls:
+                    saved_img_rel = saved_images_urls[0].lstrip("/")
             except Exception as e_img:
                 print(f"[Chat] Warning saving image: {e_img}")
 
@@ -275,23 +296,34 @@ def chat():
             # Log message murni dari apa yang dikirim user
             log_msg = user_message
             if not log_msg:
-                if image_base64:
-                    log_msg = "[Gambar Dikirim]"
-                elif document_name:
-                    log_msg = f"[Dokumen: {document_name}]"
+                if has_any_vids:
+                    v_names = ", ".join(str(v.get("filename", "video")) for v in (videos_list or [])[:3])
+                    log_msg = f"[Video: {v_names}]"
+                elif has_any_imgs:
+                    log_msg = "[Gambar Dikirim]" if len(raw_images_to_save) <= 1 else f"[{len(raw_images_to_save)} Gambar Dikirim]"
+                elif has_any_docs:
+                    if documents_list and len(documents_list) > 1:
+                        log_msg = f"[{len(documents_list)} Berkas Dokumen]"
+                    else:
+                        d_nm = document_name or (documents_list[0].get("filename") if documents_list else "Dokumen")
+                        log_msg = f"[Dokumen: {d_nm}]"
 
             img_url = f"/{saved_img_rel}" if saved_img_rel else None
-            doc_url = f"/api/files/{document_name}" if document_name else None
-            doc_type = os.path.splitext(document_name)[1].lower().replace(".", "") if document_name else None
+            first_doc_name = document_name or (documents_list[0].get("filename") if (documents_list and isinstance(documents_list[0], dict)) else None)
+            doc_url = f"/api/files/{first_doc_name}" if first_doc_name else None
+            doc_type = os.path.splitext(first_doc_name)[1].lower().replace(".", "") if first_doc_name else None
 
             user_msg_id = memory.add_message(
                 "user", 
                 log_msg, 
                 image_path=img_url,
-                document_name=document_name,
-                document_url=doc_url,
-                document_type=doc_type,
-                document_text=document_text
+                document_name=first_doc_name if not (documents_list and len(documents_list) > 1) else None,
+                document_url=doc_url if not (documents_list and len(documents_list) > 1) else None,
+                document_type=doc_type if not (documents_list and len(documents_list) > 1) else None,
+                document_text=document_text,
+                documents=documents_list,
+                images=saved_images_urls if len(saved_images_urls) > 1 else None,
+                videos=videos_list,
             )
             active_sess_id = getattr(memory, "active_session_id", "default")
             if hasattr(memory, "sessions_store") and active_sess_id in memory.sessions_store:
@@ -300,7 +332,7 @@ def chat():
             memory.save_memory()
 
         # 2. NON-STREAMING FALLBACK (Jika client eksplisit meminta stream: false)
-        agent_route = should_route_to_local_agent(user_message, has_image=bool(image_base64))
+        agent_route = should_route_to_local_agent(user_message, has_image=bool(has_any_imgs or has_any_vids))
 
         def _needs_lyra_ctx_reload(llm_inst, target_ctx: int) -> bool:
             if llm_inst is None:
@@ -385,7 +417,10 @@ def chat():
             reply, details = get_shiro_reply(
                 user_message,
                 image_base64=image_base64,
+                images_base64=images_list,
                 document_info=document_info,
+                documents=documents_list,
+                videos=videos_list,
                 max_tokens=user_max_tokens,
                 lyra_tier=req_lyra_tier,
                 return_details=True
@@ -479,7 +514,8 @@ def chat():
                 "user_message_id": user_msg_id,
                 "active_session_id": active_sess_id,
                 "image_url": img_url,
-                "document_name": document_name
+                "document_name": document_name,
+                "images": saved_images_urls if len(saved_images_urls) > 1 else None,
             }
             yield f"data: {py_json.dumps(init_payload)}\n\n"
 
@@ -544,7 +580,10 @@ def chat():
                     active_stream_gen = stream_shiro_reply(
                         user_message,
                         image_base64=image_base64,
+                        images_base64=images_list,
                         document_info=document_info,
+                        documents=documents_list,
+                        videos=videos_list,
                         max_tokens=user_max_tokens,
                         lyra_tier=req_lyra_tier
                     )

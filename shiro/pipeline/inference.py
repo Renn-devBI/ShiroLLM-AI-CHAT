@@ -144,6 +144,8 @@ def _prepare_inference_payload(
     image_base64: Optional[Union[str, List[str]]] = None,
     images_base64: Optional[List[str]] = None,
     document_info: Optional[Dict[str, Any]] = None,
+    documents: Optional[List[Dict[str, Any]]] = None,
+    videos: Optional[List[Dict[str, Any]]] = None,
     api_version: str = "v1",
     custom_system_prompt: Optional[str] = None,
     incoming_messages: Optional[List[Dict[str, Any]]] = None,
@@ -175,23 +177,76 @@ def _prepare_inference_payload(
     has_vision = bool(getattr(llm, 'chat_handler', None) is not None or vision_chat_handler is not None)
 
     # -------------------------------------------------------------
-    # NODE 1: Input Ingestion
+    # NODE 1: Input Ingestion (Multi-Image + Multi-Video + Multi-Document)
     # -------------------------------------------------------------
     t0 = time.perf_counter()
-    all_images = []
+    raw_images: List[str] = []
     if isinstance(image_base64, list):
-        all_images.extend(image_base64)
+        raw_images.extend([x for x in image_base64 if x])
     elif image_base64:
-        all_images.append(image_base64)
+        raw_images.append(image_base64)
     if isinstance(images_base64, list):
         for img in images_base64:
-            if img not in all_images:
-                all_images.append(img)
+            if img and img not in raw_images:
+                raw_images.append(img)
+
+    all_videos: List[Dict[str, Any]] = [
+        v for v in (videos or [])
+        if isinstance(v, dict) and (v.get("frames") or v.get("thumbnail"))
+    ]
+    video_frames_pool: List[str] = []
+    video_meta_lines: List[str] = []
+    for v_idx, v_item in enumerate(all_videos, 1):
+        v_name = v_item.get("filename") or f"video_{v_idx}.mp4"
+        v_dur = v_item.get("duration_sec")
+        v_res = v_item.get("resolution") or "unknown"
+        v_fps = v_item.get("fps")
+        v_frames = list(v_item.get("frames") or ([v_item["thumbnail"]] if v_item.get("thumbnail") else []))
+        v_ts = list(v_item.get("frame_timestamps") or [])
+        ts_preview = ", ".join(f"{t}s" for t in v_ts[:12]) if v_ts else f"{len(v_frames)} frames"
+        dur_lbl = f"{v_dur}s" if v_dur is not None else "unknown duration"
+        fps_lbl = f", {v_fps} fps" if v_fps else ""
+        video_meta_lines.append(
+            f"- Video #{v_idx} `{v_name}` ({v_res}, durasi {dur_lbl}{fps_lbl}): "
+            f"{len(v_frames)} frame kronologis pada timestamp [{ts_preview}]"
+        )
+        video_frames_pool.extend(v_frames)
+
+    # Batasi total visual frames agar VRAM & waktu prefill tetap responsif (maks 16 frame gabungan)
+    MAX_MULTIMODAL_FRAMES = 16
+    all_images: List[str] = list(raw_images[:MAX_MULTIMODAL_FRAMES])
+    remaining_frame_slots = max(0, MAX_MULTIMODAL_FRAMES - len(all_images))
+    if video_frames_pool and remaining_frame_slots > 0:
+        if len(video_frames_pool) <= remaining_frame_slots:
+            chosen_vid_frames = video_frames_pool
+        else:
+            step = (len(video_frames_pool) - 1) / float(max(1, remaining_frame_slots - 1))
+            chosen_vid_frames = [
+                video_frames_pool[min(len(video_frames_pool) - 1, int(round(i * step)))]
+                for i in range(remaining_frame_slots)
+            ]
+        all_images.extend(chosen_vid_frames)
 
     has_image = bool(all_images)
-    is_video_stream = len(all_images) > 1
-    has_doc = bool(document_info and document_info.get("text"))
-    doc_name = document_info.get("filename", "Dokumen") if has_doc else None
+    has_video = bool(all_videos)
+    is_video_stream = has_video or len(all_images) > 1
+
+    all_docs: List[Dict[str, Any]] = []
+    if isinstance(documents, list):
+        for d_item in documents:
+            if isinstance(d_item, dict) and (d_item.get("text") or "").strip():
+                all_docs.append(d_item)
+    if document_info and isinstance(document_info, dict) and (document_info.get("text") or "").strip():
+        existing_names = {d.get("filename") for d in all_docs}
+        if document_info.get("filename") not in existing_names:
+            all_docs.append(document_info)
+
+    has_doc = bool(all_docs)
+    doc_name = (
+        f"{len(all_docs)} berkas ({', '.join(d.get('filename', 'Dokumen') for d in all_docs[:4])}{'...' if len(all_docs) > 4 else ''})"
+        if len(all_docs) > 1
+        else (all_docs[0].get("filename", "Dokumen") if has_doc else None)
+    )
 
     # AI Agent Autonomous Execution (Weather, Google/Web Search, Browser, Math, File/Archive Packager)
     agent_action_data = None
@@ -253,6 +308,17 @@ def _prepare_inference_payload(
                         )
                     )
                     extracted_files, inferred_proj = ([], None) if wants_new_generation else extract_files_from_conversation(hist_src)
+                    if not extracted_files and not wants_new_generation and all_docs:
+                        extracted_files = [
+                            {
+                                "filename": d.get("filename") or f"file_{i}.txt",
+                                "basename": os.path.basename(d.get("filename") or f"file_{i}.txt"),
+                                "content": str(d.get("text") or ""),
+                                "language": d.get("file_type") or "text",
+                            }
+                            for i, d in enumerate(all_docs, 1)
+                        ]
+                        inferred_proj = os.path.splitext(extracted_files[0]["basename"])[0] if len(extracted_files) == 1 else "shiro-bundle"
                     if extracted_files:
                         arch_art = create_archive_artifact(
                             extracted_files,
@@ -294,6 +360,38 @@ def _prepare_inference_payload(
                             f"Tulis setiap berkas secara LENGKAP dengan nama berkas eksplisit di judul atau header blok kode (contoh: `### File: app.py` atau ```` ```python:login.app ````). "
                             f"Jangan katakan kamu tidak bisa membuat .{req_fmt}.\n"
                         )
+                elif agent_intent == "generate_video":
+                    from shiro.vision.video import render_video_artifact
+                    tool_name = "video_renderer"
+                    vid_dur = float(agent_params.get("duration_sec") or 5.0)
+                    vid_out_name = agent_params.get("output_name")
+                    raw_scenes = [s.strip() for s in re.split(r'[;\n]+|->|\|', raw_user_typed) if s.strip()]
+                    if len(raw_scenes) <= 1 and len(raw_user_typed) > 65:
+                        raw_scenes = [p.strip() for p in re.split(r'[,.]', raw_user_typed) if len(p.strip()) > 6][:5]
+                    vid_art = render_video_artifact(
+                        title=raw_user_typed,
+                        scenes=raw_scenes,
+                        input_images_b64=raw_images if raw_images else None,
+                        output_name=vid_out_name,
+                        duration_sec=vid_dur,
+                    )
+                    generated_artifacts.append(vid_art)
+                    tool_desc = (
+                        f"Rendering MP4 video {vid_art['filename']} ({vid_art['resolution']}, "
+                        f"{vid_art['duration_sec']}s, {vid_art['size_label']})"
+                    )
+                    obs_summary = (
+                        f"Video MP4 nyata `{vid_art['filename']}` ({vid_art['resolution']}, durasi {vid_art['duration_sec']} detik, "
+                        f"ukuran {vid_art['size_label']}) berhasil dirender dan sudah disematkan pemutar video + tombol unduh di obrolan."
+                    )
+                    structured_obs = vid_art
+                    custom_agent_prompt = (
+                        f"\n\n[HASIL RENDER VIDEO MP4 PROGRAMATIK — SUDAH BERHASIL DIBUAT]:\n"
+                        f"{obs_summary}\n"
+                        f"Pemutar video dan tombol unduh `{vid_art['filename']}` sudah otomatis tersedia di bawah jawabanmu.\n"
+                        f"[INSTRUKSI]: Sampaikan ke Kakak bahwa video `{vid_art['filename']}` sudah selesai dibuat dan bisa langsung diputar/diunduh di bawah. "
+                        f"Catatan jujur bila diminta video sinematik AI/foto bergerak realistis: Qwen3.8-27B adalah model pemahaman video/gambar (video understanding), sehingga generator video di server saat ini merender MP4 motion-graphic / slideshow programatik.\n"
+                    )
                 elif agent_intent == "weather":
                     tool_name = "weather_sat_check"
                     locs = agent_params.get("locations", ["Jakarta", "Tokyo"])
@@ -579,20 +677,31 @@ def _prepare_inference_payload(
             exemplar_prompt += f"Kakak: \"{ex.get('user')}\"\nShiro: \"{ex.get('assistant')}\"\n"
 
     doc_prompt_addon = ""
-    if has_doc and document_info:
-        from shiro.document.reader import build_document_prompt
+    if has_doc and all_docs:
+        from shiro.document.reader import build_document_prompt, build_multi_document_prompt
         if is_qwen38_27b_uncensored(active_model_path or active_model_name) and effective_ctx > 65536:
             doc_token_budget = max(20000, effective_ctx - reserved_budget - 4096)
             max_doc_chars = min(3_000_000, doc_token_budget * 3)
         else:
-            max_doc_chars = max(10000, min(60000, (effective_ctx - 2000) * 3))
-        doc_full_text = document_info.get("text", "")
-        if len(doc_full_text) > max_doc_chars:
-            doc_full_text = doc_full_text[:max_doc_chars] + f"\n\n... [Sisa teks dokumen dipotong karena melampaui batas {max_doc_chars} karakter]"
-        doc_prompt_addon = build_document_prompt(
-            {"filename": doc_name, "text": doc_full_text},
-            user_query=raw_user_typed
-        )
+            max_doc_chars = max(12000, min(120000, (effective_ctx - 2000) * 3))
+        if len(all_docs) > 1 or any(
+            kw in (raw_user_typed or "").lower()
+            for kw in ("perbaiki", "fix", "bug", "error", "debug", "analisa", "analisis", "audit", "rencana", "plan", "kode", "masalah")
+        ):
+            doc_prompt_addon = build_multi_document_prompt(
+                all_docs,
+                user_query=raw_user_typed,
+                max_total_chars=max_doc_chars,
+            )
+        else:
+            single_doc = all_docs[0]
+            doc_full_text = single_doc.get("text", "")
+            if len(doc_full_text) > max_doc_chars:
+                doc_full_text = doc_full_text[:max_doc_chars] + f"\n\n... [Sisa teks dokumen dipotong karena melampaui batas {max_doc_chars} karakter]"
+            doc_prompt_addon = build_document_prompt(
+                {"filename": single_doc.get("filename", "Dokumen"), "text": doc_full_text},
+                user_query=raw_user_typed
+            )
 
     tools_addon = ""
     if tools:
@@ -626,12 +735,21 @@ def _prepare_inference_payload(
 
     visual_guidance_addon = ""
     if has_image:
-        visual_guidance_addon = (
-            f"\n\n### PANDUAN PENGAMATAN GAMBAR BARU:\n"
-            f"- {user_name} sedang melampirkan berkas gambar BARU pada giliran pesan ini.\n"
-            f"- Amati dan baca informasi, teks, diagram, serta objek pada gambar baru ini secara teliti dan langsung.\n"
-            f"- DILARANG KERAS mengaitkan atau berasumsi bahwa gambar baru ini adalah situs web, link, atau halaman dari percakapan masa lalu jika tidak disebutkan secara eksplisit oleh {user_name}.\n"
-        )
+        if has_video:
+            vid_summary_blk = "\n".join(video_meta_lines)
+            visual_guidance_addon = (
+                f"\n\n### 🎬 PANDUAN PENGAMATAN VIDEO & VISUAL MULTIMODAL:\n"
+                f"- {user_name} melampirkan VIDEO nyata berikut:\n{vid_summary_blk}\n"
+                f"- Seluruh {len(all_images)} frame gambar yang masuk adalah potongan adegan KRONOLOGIS dari awal hingga akhir (ditambah gambar tambahan jika ada).\n"
+                f"- Amati transisi gerakan, kejadian, teks di layar, serta perubahan antar frame secara berurutan untuk memahami keseluruhan isi video secara faktual.\n"
+            )
+        else:
+            visual_guidance_addon = (
+                f"\n\n### PANDUAN PENGAMATAN GAMBAR BARU:\n"
+                f"- {user_name} sedang melampirkan berkas gambar BARU pada giliran pesan ini.\n"
+                f"- Amati dan baca informasi, teks, diagram, serta objek pada gambar baru ini secara teliti dan langsung.\n"
+                f"- DILARANG KERAS mengaitkan atau berasumsi bahwa gambar baru ini adalah situs web, link, atau halaman dari percakapan masa lalu jika tidak disebutkan secara eksplisit oleh {user_name}.\n"
+            )
 
     time_ctx_addon = ""
     try:
@@ -718,8 +836,12 @@ def _prepare_inference_payload(
             prompt_parts = []
             if has_doc:
                 prompt_parts.append(f"[Melampirkan Dokumen: {doc_name}]")
+            if has_video:
+                prompt_parts.append(f"[Melampirkan Video ({len(all_images)} frame kronologis):\n" + "\n".join(video_meta_lines) + "]")
             if raw_user_typed:
                 prompt_parts.append(raw_user_typed)
+            elif has_video:
+                prompt_parts.append(f"{ai_name}, tolong tonton, amati rangkaian frame video, dan jelaskan isi video yang {user_name} lampirkan ini secara menyeluruh!")
             else:
                 prompt_parts.append(f"{ai_name}, coba perhatikan dan jelaskan gambar visual yang {user_name} lampirkan ini ya!")
             prompt_parts.append(lang_fact_rule)
@@ -897,18 +1019,54 @@ def _prepare_inference_payload(
     ]
     if generated_artifacts:
         first_art = generated_artifacts[0]
-        agent_steps.append({
-            "id": "package",
-            "title": f"Compress Archive ({first_art['filename']})",
-            "status": "done",
-            "feedback": f"Packaged {first_art['file_count']} file(s) into {first_art['filename']} ({first_art['format'].upper()}, {first_art['size_label']})",
-        })
-    elif agent_action_data and agent_action_data.get("tool") != "archive_packager":
+        if first_art.get("kind") == "video":
+            agent_steps.append({
+                "id": "render_video",
+                "title": f"Render MP4 Video ({first_art['filename']})",
+                "status": "done",
+                "feedback": f"Rendered {first_art['duration_sec']}s {first_art['resolution']} MP4 ({first_art['size_label']})",
+            })
+        else:
+            agent_steps.append({
+                "id": "package",
+                "title": f"Compress Archive ({first_art['filename']})",
+                "status": "done",
+                "feedback": f"Packaged {first_art['file_count']} file(s) into {first_art['filename']} ({first_art['format'].upper()}, {first_art['size_label']})",
+            })
+    elif agent_action_data and agent_action_data.get("tool") not in ("archive_packager", "video_renderer"):
         agent_steps.append({
             "id": f"tool_{agent_action_data['tool']}",
             "title": f"Execute Tool ({agent_action_data['tool']})",
             "status": "done" if agent_action_data.get("status") == "success" else "failed",
             "feedback": str(agent_action_data.get("description") or "")[:160],
+        })
+
+    if has_doc and all_docs:
+        total_chars_read = sum(len(str(d.get("text") or "")) for d in all_docs)
+        file_list_str = ", ".join(str(d.get("filename") or "doc") for d in all_docs[:6])
+        if len(all_docs) > 6:
+            file_list_str += f" (+{len(all_docs) - 6} more)"
+        agent_steps.append({
+            "id": "read_files",
+            "title": f"Read All Uploaded Files ({len(all_docs)} file{'s' if len(all_docs) > 1 else ''})",
+            "status": "done",
+            "feedback": f"Loaded {total_chars_read:,} chars across: {file_list_str}",
+        })
+        agent_steps.append({
+            "id": "plan",
+            "title": "Diagnose Issues & Formulate Fix Plan",
+            "status": "done" if not disable_thinking else "done",
+            "feedback": f"Cross-referencing all {len(all_docs)} file(s) and planning targeted fixes before code output.",
+        })
+
+    if has_video and all_videos:
+        vid_list_str = ", ".join(str(v.get("filename") or "video") for v in all_videos[:4])
+        total_sampled = sum(int(v.get("sampled_frame_count") or len(v.get("frames") or [])) for v in all_videos)
+        agent_steps.append({
+            "id": "read_video",
+            "title": f"Inspect Video Keyframes ({len(all_videos)} video, {total_sampled} frames)",
+            "status": "done",
+            "feedback": f"Sampled chronological frames from: {vid_list_str}",
         })
 
     return {
@@ -1253,6 +1411,8 @@ def get_shiro_reply(
     image_base64: Optional[Union[str, List[str]]] = None,
     images_base64: Optional[List[str]] = None,
     document_info: Optional[Dict[str, Any]] = None,
+    documents: Optional[List[Dict[str, Any]]] = None,
+    videos: Optional[List[Dict[str, Any]]] = None,
     return_trace: bool = False,
     return_details: bool = False,
     api_version: str = "v1",
@@ -1275,6 +1435,8 @@ def get_shiro_reply(
             image_base64=image_base64,
             images_base64=images_base64,
             document_info=document_info,
+            documents=documents,
+            videos=videos,
             api_version=api_version,
             custom_system_prompt=custom_system_prompt,
             incoming_messages=incoming_messages,
@@ -1484,6 +1646,8 @@ def stream_shiro_reply(
     image_base64: Optional[Union[str, List[str]]] = None,
     images_base64: Optional[List[str]] = None,
     document_info: Optional[Dict[str, Any]] = None,
+    documents: Optional[List[Dict[str, Any]]] = None,
+    videos: Optional[List[Dict[str, Any]]] = None,
     api_version: str = "v1",
     custom_system_prompt: Optional[str] = None,
     incoming_messages: Optional[List[Dict[str, Any]]] = None,
@@ -1529,6 +1693,8 @@ def stream_shiro_reply(
                 if intent == "archive":
                     arch_fmt = intent_info.get("params", {}).get("format", "zip")
                     yield {"type": "status", "status": f"Menganalisis & mengompres berkas ke .{arch_fmt}..."}
+                elif intent == "generate_video":
+                    yield {"type": "status", "status": "Sedang merender video MP4..."}
                 elif intent == "screenshot":
                     target_u = intent_info.get("params", {}).get("url", "")
                     yield {"type": "status", "status": f"Sedang mengambil tangkapan layar website ({target_u or 'web'})..."}
@@ -1568,6 +1734,8 @@ def stream_shiro_reply(
             image_base64=image_base64,
             images_base64=images_base64,
             document_info=document_info,
+            documents=documents,
+            videos=videos,
             api_version=api_version,
             custom_system_prompt=custom_system_prompt,
             incoming_messages=incoming_messages,

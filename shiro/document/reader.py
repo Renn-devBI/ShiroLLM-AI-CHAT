@@ -25,7 +25,7 @@ SUPPORTED_EXTENSIONS = {
     ".zig", ".nim", ".v", ".ex", ".exs", ".erl", ".hrl", ".hs", ".clj",
     # Shell, Scripting & DevOps
     ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".psd1", ".bat", ".cmd",
-    ".awk", ".sed", ".dockerfile", ".vagrantfile", ".makefile", ".cmake",
+    ".awk", ".sed", ".dockerfile", ".vagrantfile", ".makefile", ".cmake", ".app",
     # Data, Config & Database
     ".json", ".jsonl", ".json5", ".yaml", ".yml", ".toml", ".xml", ".csv",
     ".tsv", ".sql", ".prisma", ".graphql", ".gql", ".ini", ".cfg", ".conf",
@@ -268,3 +268,151 @@ def build_document_prompt(doc_info: Dict[str, Any], user_query: str) -> str:
         f"{guidance}\n"
     )
     return prompt
+
+
+def extract_documents_from_archive(
+    archive_path: str,
+    max_files: int = 100,
+    max_total_chars: int = 1_500_000,
+) -> List[Dict[str, Any]]:
+    """
+    Mengekstrak isi seluruh berkas teks/kode di dalam arsip unggahan (.zip, .tar.gz, .tgz, .tar)
+    untuk dibaca penuh oleh AI Agent tanpa batas 1 file.
+    """
+    import zipfile
+    import tarfile
+    import tempfile
+    import shutil
+
+    if not archive_path or not os.path.exists(archive_path):
+        return []
+
+    lower = archive_path.lower()
+    tmp_dir = tempfile.mkdtemp(prefix="shiro_arch_in_")
+    extracted_docs: List[Dict[str, Any]] = []
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
+    used_chars = 0
+
+    try:
+        safe_members: List[Tuple[str, bytes]] = []
+        if lower.endswith(".zip"):
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    rel = info.filename.replace("\\", "/").lstrip("/")
+                    parts = [p for p in rel.split("/") if p and p != "."]
+                    if not parts or ".." in parts or any(p in skip_dirs for p in parts):
+                        continue
+                    if len(safe_members) >= max_files:
+                        break
+                    safe_members.append(("/".join(parts), zf.read(info.filename)))
+        elif any(lower.endswith(s) for s in (".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar")):
+            with tarfile.open(archive_path, "r:*") as tf:
+                for mem in tf.getmembers():
+                    if not mem.isfile():
+                        continue
+                    rel = mem.name.replace("\\", "/").lstrip("/")
+                    parts = [p for p in rel.split("/") if p and p != "."]
+                    if not parts or ".." in parts or any(p in skip_dirs for p in parts):
+                        continue
+                    f_obj = tf.extractfile(mem)
+                    if f_obj is None:
+                        continue
+                    safe_members.append(("/".join(parts), f_obj.read()))
+                    if len(safe_members) >= max_files:
+                        break
+
+        for rel_path, raw_bytes in safe_members:
+            tmp_file = os.path.abspath(os.path.join(tmp_dir, rel_path.replace("/", os.sep)))
+            if os.path.commonpath([tmp_dir, tmp_file]) != tmp_dir:
+                continue
+            os.makedirs(os.path.dirname(tmp_file), exist_ok=True)
+            with open(tmp_file, "wb") as out_f:
+                out_f.write(raw_bytes)
+            ext = os.path.splitext(rel_path)[1].lower()
+            if ext not in SUPPORTED_EXTENSIONS and not is_probably_text_file(tmp_file):
+                continue
+            remaining = max(2000, max_total_chars - used_chars)
+            res = extract_text_from_file(tmp_file, filename=rel_path, max_chars=remaining)
+            if res.get("success") and res.get("text"):
+                extracted_docs.append(res)
+                used_chars += len(res["text"])
+                if used_chars >= max_total_chars:
+                    break
+    except Exception as e_arch:
+        print(f"[Archive Extract Warning]: {e_arch}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return extracted_docs
+
+
+def build_multi_document_prompt(
+    documents: List[Dict[str, Any]],
+    user_query: str,
+    max_total_chars: int = 1_500_000,
+) -> str:
+    """
+    Menyusun blok prompt terstruktur untuk 1 atau banyak berkas sekaligus.
+    Mewajibkan AI Agent membaca seluruh berkas, memetakan dependensi/masalah,
+    dan merancang rencana perbaikan sebelum menuliskan solusi atau kode.
+    """
+    valid_docs = [d for d in (documents or []) if isinstance(d, dict) and (d.get("text") or "").strip()]
+    if not valid_docs:
+        return ""
+
+    intent = detect_document_intent(user_query or "")
+    total_raw_chars = sum(len(str(d.get("text", ""))) for d in valid_docs)
+    n_docs = len(valid_docs)
+
+    inventory_lines: List[str] = []
+    file_blocks: List[str] = []
+
+    if total_raw_chars <= max_total_chars:
+        per_doc_caps = [len(str(d.get("text", ""))) for d in valid_docs]
+    else:
+        # Alokasikan anggaran karakter proporsional agar setiap berkas tetap terbaca adil
+        min_floor = min(4000, max_total_chars // max(1, n_docs))
+        per_doc_caps = []
+        for d in valid_docs:
+            raw_len = len(str(d.get("text", "")))
+            share = int((raw_len / float(max(1, total_raw_chars))) * max_total_chars)
+            per_doc_caps.append(max(min_floor, min(raw_len, share)))
+
+    for idx, (doc, cap) in enumerate(zip(valid_docs, per_doc_caps), 1):
+        fname = doc.get("filename") or f"file_{idx}"
+        raw_txt = str(doc.get("text") or "")
+        line_cnt = raw_txt.count("\n") + 1
+        inventory_lines.append(f"{idx}. `{fname}` ({line_cnt:,} baris · {len(raw_txt):,} karakter)")
+        if len(raw_txt) > cap:
+            shown = raw_txt[:cap] + f"\n... [Dipangkas {len(raw_txt) - cap:,} karakter untuk menjaga batas konteks]"
+        else:
+            shown = raw_txt
+        file_blocks.append(
+            f"=== [BERKAS {idx}/{n_docs}: {fname}] ===\n"
+            f"{shown}\n"
+            f"=== [AKHIR BERKAS {idx}/{n_docs}: {fname}] ==="
+        )
+
+    protocol_block = (
+        "### 🧠 PROTOKOL WAJIB AI AGENT (READ ALL -> DIAGNOSE -> PLAN -> FIX):\n"
+        f"1. **READ ALL FIRST**: Kamu baru saja menerima {n_docs} berkas secara bersamaan. "
+        "WAJIB baca dan silang-periksa (cross-reference) SELURUH isi ke-" + f"{n_docs} berkas di atas sebelum mengambil kesimpulan.\n"
+        "2. **ANALYZE & PLAN INSIDE `<think>`**: Di dalam blok `<think>...</think>` (dalam Bahasa Inggris yang terstruktur), "
+        "petakan hubungan antar berkas, identifikasi di berkas & baris/fungsi mana tepatnya sumber masalahnya, dan susun rencana perbaikan langkah demi langkah.\n"
+        "3. **PRESENT PLAN BEFORE FIXES**: Jika pengguna meminta debugging, audit, atau perbaikan masalah, jelaskan terlebih dahulu ringkasan diagnosa lokasi masalah serta **Rencana Perbaikan** yang jelas, lalu berikan solusi/kode perbaikan lengkap dengan nama berkas persis masing-masing.\n"
+    )
+    if intent == "summarize":
+        protocol_block += "4. **FOCUS (SUMMARIZE)**: Rangkum keterkaitan dan inti penting dari semua berkas di atas secara terstruktur.\n"
+    elif intent == "proofread":
+        protocol_block += "4. **FOCUS (FIX & IMPROVE)**: Perbaiki setiap bug/kesalahan di berkas terkait dengan mempertahankan nama berkas persisnya.\n"
+
+    return (
+        f"\n\n### 📂 INVENTARIS {n_docs} BERKAS YANG DIUNGGAH BERSAMAAN:\n"
+        + "\n".join(inventory_lines)
+        + "\n\n"
+        + "\n\n".join(file_blocks)
+        + "\n\n"
+        + protocol_block
+    )

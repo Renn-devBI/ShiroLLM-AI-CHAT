@@ -78,6 +78,8 @@ app = Flask(
     static_folder='static',
     static_url_path='/static'
 )
+_max_upload_mb = os.environ.get("SHIRO_MAX_UPLOAD_MB", "").strip()
+app.config["MAX_CONTENT_LENGTH"] = int(_max_upload_mb) * 1024 * 1024 if _max_upload_mb.isdigit() else None
 
 # Register Modular Blueprints
 app.register_blueprint(views_bp)

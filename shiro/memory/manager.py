@@ -586,6 +586,9 @@ class AdvancedMemoryManager:
         document_url: Optional[str] = None,
         document_type: Optional[str] = None,
         document_text: Optional[str] = None,
+        documents: Optional[List[Dict[str, Any]]] = None,
+        images: Optional[List[str]] = None,
+        videos: Optional[List[Dict[str, Any]]] = None,
         thought_content: Optional[str] = None,
         thought_duration_sec: Optional[float] = None,
         agent_steps: Optional[List[Dict[str, Any]]] = None,
@@ -594,7 +597,8 @@ class AdvancedMemoryManager:
         """Add message to short-term history and self-learn from conversation & response"""
         with self.lock:
             # Cegah penyimpanan pesan kosong/ghost asisten ke memori
-            if role == "assistant" and not (content or "").strip() and not image_path and not artifacts:
+            has_multi = bool(documents or images or videos)
+            if role == "assistant" and not (content or "").strip() and not image_path and not artifacts and not has_multi:
                 return ""
             now_iso = datetime.now().isoformat()
             raw_id = f"{now_iso}:{role}:{(content or '')[:40]}:{len(self.short_term_history)}"
@@ -618,6 +622,33 @@ class AdvancedMemoryManager:
                 message["document_type"] = document_type
             if document_text:
                 message["document_text"] = document_text[:5000]
+            if documents:
+                message["documents"] = [
+                    {
+                        "filename": d.get("filename"),
+                        "url": d.get("url") or (f"/api/files/{d.get('filename')}" if d.get("filename") else None),
+                        "file_type": d.get("file_type") or "text",
+                        "char_count": d.get("char_count") or len(str(d.get("text") or "")),
+                    }
+                    for d in documents
+                    if isinstance(d, dict) and d.get("filename")
+                ]
+            if images:
+                message["images"] = [str(im) for im in images if im]
+            if videos:
+                # Simpan metadata ringan saja (jangan simpan array base64 frames ke ingatan_shiro.json)
+                message["videos"] = [
+                    {
+                        "filename": v.get("filename"),
+                        "url": v.get("url"),
+                        "duration_sec": v.get("duration_sec"),
+                        "fps": v.get("fps"),
+                        "resolution": v.get("resolution"),
+                        "sampled_frame_count": v.get("sampled_frame_count") or len(v.get("frames") or []),
+                    }
+                    for v in videos
+                    if isinstance(v, dict) and v.get("filename")
+                ]
             if thought_content and str(thought_content).strip():
                 message["thought_content"] = str(thought_content).strip()[:16000]
             if thought_duration_sec is not None:

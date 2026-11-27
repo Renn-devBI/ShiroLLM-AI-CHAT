@@ -750,6 +750,18 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
     except Exception:
         pass
 
+    # 2c. Deteksi Permintaan Pembuatan / Render Video MP4 Programatik
+    try:
+        from shiro.vision.video import detect_video_generation_request
+        vid_req = detect_video_generation_request(text)
+        if vid_req:
+            return {
+                "intent": "generate_video",
+                "params": vid_req
+            }
+    except Exception:
+        pass
+
     # 3. Deteksi URL langsung untuk dibaca kontennya (browse)
     if urls:
         target_url = urls[0].rstrip(".,;:!?)'\"")

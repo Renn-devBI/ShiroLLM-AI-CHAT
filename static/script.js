@@ -64,6 +64,9 @@ let abortController = null;
 let activeSessionId = 'default';
 let attachedDocument = null;
 let attachedImage = null;
+let attachedDocuments = [];
+let attachedImages = [];
+let attachedVideos = [];
 let enableTrainingLogging = true;
 let currentLang = localStorage.getItem('shiro_lang') || 'id';
 let currentUILang = currentLang;
@@ -1394,12 +1397,16 @@ function renderArtifactsHTML(artifacts) {
     const cards = artifacts.map(art => {
         if (!art || !art.filename || !art.download_url) return '';
         const isArch = art.kind === 'archive';
-        const iconCls = isArch ? 'ph-file-zip' : 'ph-file-code';
+        const isVideo = art.kind === 'video';
+        const iconCls = isArch ? 'ph-file-zip' : (isVideo ? 'ph-film-strip' : 'ph-file-code');
         const fmtBadge = (art.format || 'file').toUpperCase();
-        const countStr = isArch && art.file_count ? ` · ${art.file_count} berkas` : '';
+        const countStr = isArch && art.file_count ? ` · ${art.file_count} berkas` : (isVideo && art.duration_sec ? ` · ${art.duration_sec}s · ${art.resolution || ''}` : '');
         const metaLine = `${fmtBadge} · ${art.size_label || ''}${countStr}`;
         const safeName = escapeHtml(art.filename);
         const safeUrl = escapeHtml(art.download_url);
+        const videoPlayerHTML = isVideo ? `
+            <video class="ag-artifact-video-player" controls playsinline preload="metadata" src="${escapeHtml(art.video_url || (art.download_url + '?inline=1'))}"></video>
+        ` : '';
 
         let subFilesHTML = '';
         if (isArch && Array.isArray(art.individual_files) && art.individual_files.length) {
@@ -1420,6 +1427,7 @@ function renderArtifactsHTML(artifacts) {
 
         return `
             <div class="ag-artifact-card">
+                ${videoPlayerHTML}
                 <div class="ag-artifact-main">
                     <div class="ag-artifact-info">
                         <span class="ag-artifact-icon"><i class="ph ${iconCls}"></i></span>
@@ -1463,7 +1471,8 @@ function syncArtifactsInMsg(msgEl, artifacts) {
 // Add message ke chat
 function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null, agentActionData = null, msgId = null, isPinned = false, meta = null) {
     const hasText = content !== null && content !== undefined && String(content).trim().length > 0;
-    const hasMeta = Boolean(meta && ((meta.agent_steps && meta.agent_steps.length) || meta.thought_content || (meta.artifacts && meta.artifacts.length) || meta.is_running));
+    const hasMultiAttach = Boolean(meta && ((meta.documents && meta.documents.length) || (meta.images && meta.images.length) || (meta.videos && meta.videos.length)));
+    const hasMeta = Boolean(hasMultiAttach || (meta && ((meta.agent_steps && meta.agent_steps.length) || meta.thought_content || (meta.artifacts && meta.artifacts.length) || meta.is_running)));
     if (!hasText && !imageUrl && !docName && !docText && !agentActionData && !hasMeta) {
         // Jangan pernah merender pesan hantu atau bubble kosong tanpa konten
         return null;
@@ -1495,37 +1504,23 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         .replace(/'/g, '&#39;');
     
     let attachmentHTML = '';
-    if (docName) {
-        const ext = (docName.split('.').pop() || '').toLowerCase();
+    const renderDocCardItem = (dName, dUrl, dType) => {
+        const ext = (dName.split('.').pop() || '').toLowerCase();
         let iconClass = 'ph-file-text';
         let badgeColor = 'badge-txt';
-        let typeLabel = (docType || ext).toUpperCase() || 'DOC';
-        
-        if (ext === 'pdf') {
-            iconClass = 'ph-file-pdf';
-            badgeColor = 'badge-pdf';
-            typeLabel = 'PDF';
-        } else if (['doc', 'docx'].includes(ext)) {
-            iconClass = 'ph-file-doc';
-            badgeColor = 'badge-doc';
-            typeLabel = 'WORD';
-        } else if (['csv', 'tsv'].includes(ext)) {
-            iconClass = 'ph-file-csv';
-            badgeColor = 'badge-csv';
-            typeLabel = 'CSV';
-        } else if (CODE_EXTENSIONS_SET.has(ext) || CODE_EXTENSIONS_SET.has((docType || '').toLowerCase())) {
-            iconClass = 'ph-file-code';
-            badgeColor = 'badge-code';
-            typeLabel = (ext || docType || 'CODE').toUpperCase();
+        let typeLabel = (dType || ext).toUpperCase() || 'DOC';
+        if (ext === 'pdf') { iconClass = 'ph-file-pdf'; badgeColor = 'badge-pdf'; typeLabel = 'PDF'; }
+        else if (['doc', 'docx'].includes(ext)) { iconClass = 'ph-file-doc'; badgeColor = 'badge-doc'; typeLabel = 'WORD'; }
+        else if (['csv', 'tsv'].includes(ext)) { iconClass = 'ph-file-csv'; badgeColor = 'badge-csv'; typeLabel = 'CSV'; }
+        else if (CODE_EXTENSIONS_SET.has(ext) || CODE_EXTENSIONS_SET.has((dType || '').toLowerCase())) {
+            iconClass = 'ph-file-code'; badgeColor = 'badge-code'; typeLabel = (ext || dType || 'CODE').toUpperCase();
         }
-
-        const safeFilename = (docName || 'document').replace(/"/g, '&quot;');
-        const safeDocUrl = docUrl || `/api/files/${encodeURIComponent(docName)}`;
-        const jsFilename = (docName || 'document').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const safeFilename = (dName || 'document').replace(/"/g, '&quot;');
+        const safeDocUrl = dUrl || `/api/files/${encodeURIComponent(dName)}`;
+        const jsFilename = (dName || 'document').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         const jsUrl = safeDocUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         const jsType = ext.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-
-        attachmentHTML += `
+        return `
             <div class="chat-doc-card ${badgeColor}" onclick="openDocModal('${jsFilename}', '${jsUrl}', '${jsType}')" title="Klik untuk membuka ${safeFilename}">
                 <div class="chat-doc-icon">
                     <i class="ph ${iconClass}"></i>
@@ -1542,9 +1537,41 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
                 </button>
             </div>
         `;
+    };
+
+    const metaDocs = (meta && Array.isArray(meta.documents) && meta.documents.length) ? meta.documents : null;
+    if (metaDocs) {
+        metaDocs.forEach(dItem => {
+            if (dItem && dItem.filename) {
+                attachmentHTML += renderDocCardItem(dItem.filename, dItem.url || `/api/files/${encodeURIComponent(dItem.filename)}`, dItem.file_type || '');
+            }
+        });
+    } else if (docName) {
+        attachmentHTML += renderDocCardItem(docName, docUrl, docType);
     }
 
-    if (imageUrl) {
+    const metaVideos = (meta && Array.isArray(meta.videos) && meta.videos.length) ? meta.videos : null;
+    if (metaVideos) {
+        metaVideos.forEach(vItem => {
+            if (!vItem || !vItem.filename) return;
+            const vUrl = vItem.url || '';
+            const metaTxt = `${vItem.filename}${vItem.duration_sec ? ` · ${vItem.duration_sec}s` : ''}${vItem.resolution ? ` · ${vItem.resolution}` : ''}`;
+            attachmentHTML += `
+                <div class="chat-video-wrap">
+                    ${vUrl ? `<video class="chat-video-player" controls playsinline preload="metadata" src="${escapeHtml(vUrl)}"></video>` : ''}
+                    <div class="chat-video-caption"><i class="ph ph-film-strip"></i> <span>${escapeHtml(metaTxt)}</span></div>
+                </div>
+            `;
+        });
+    }
+
+    const metaImages = (meta && Array.isArray(meta.images) && meta.images.length) ? meta.images : null;
+    if (metaImages && metaImages.length > 1) {
+        attachmentHTML += `<div class="chat-multi-img-grid">${metaImages.map((u, idx) => {
+            const jsImgUrl = String(u).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            return `<div class="chat-img-wrapper" onclick="openImageLightbox('${jsImgUrl}', 'Gambar #${idx + 1}')" title="Klik untuk membuka gambar"><img src="${escapeHtml(u)}" class="chat-img-attachment" alt="Foto #${idx + 1}" loading="lazy"></div>`;
+        }).join('')}</div>`;
+    } else if (imageUrl) {
         const jsImgUrl = imageUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         attachmentHTML += `
             <div class="chat-img-wrapper" onclick="openImageLightbox('${jsImgUrl}', 'Foto Lampiran Chat')" title="Klik untuk membuka gambar">
@@ -1585,6 +1612,9 @@ function addMessage(role, content, imageUrl = null, docName = null, docUrl = nul
         } else if (tool === 'archive_packager') {
             toolIcon = 'ph-file-zip';
             toolTitle = 'Agent Archive Packager';
+        } else if (tool === 'video_renderer') {
+            toolIcon = 'ph-film-strip';
+            toolTitle = 'Agent Video Renderer';
         } else if (tool === 'local_autonomous_agent') {
             toolIcon = 'ph-terminal-window';
             toolTitle = 'Antigravity Local Agent';
@@ -1925,9 +1955,13 @@ function setInputLock(locked) {
     }
     if (uploadDocBtn) uploadDocBtn.disabled = locked;
     if (uploadImageBtn) uploadImageBtn.disabled = locked;
+    const uploadVideoBtnEl = document.getElementById('upload-video-btn');
+    if (uploadVideoBtnEl) uploadVideoBtnEl.disabled = locked;
     if (openCameraBtn) openCameraBtn.disabled = locked;
     if (docFileInput) docFileInput.disabled = locked;
     if (imageFileInput) imageFileInput.disabled = locked;
+    const videoFileInputEl = document.getElementById('video-file-input');
+    if (videoFileInputEl) videoFileInputEl.disabled = locked;
 
     if (sendBtn) {
         sendBtn.disabled = locked;
@@ -1994,7 +2028,7 @@ function startTriggerTimer() {
 // Send message main function
 async function sendMessage() {
     const message = userInput.value.trim();
-    if ((!message && !attachedImage && !attachedDocument) || isGenerating) return;
+    if ((!message && !attachedImages.length && !attachedDocuments.length && !attachedVideos.length) || isGenerating) return;
 
     clearTimeout(triggerTimer); 
     isGenerating = true;
@@ -2005,24 +2039,26 @@ async function sendMessage() {
     }
     setInputLock(true);
     
-    const sendingImage = attachedImage;
+    const sendingImages = [...attachedImages];
+    const sendingImage = sendingImages[0] || null;
     const currentImgUrl = sendingImage ? sendingImage.dataUrl : null;
-    const sendingDoc = attachedDocument;
+    const sendingDocs = [...attachedDocuments];
+    const sendingDoc = sendingDocs[0] || null;
+    const sendingVideos = [...attachedVideos];
     
     userInput.value = '';
     adjustInputHeight();
     clearAttachedImage();
     clearAttachedDocument();
+    clearAttachedVideo();
     
     let displayMsg = message;
     if (!displayMsg) {
-        if (sendingDoc && sendingImage) {
-            displayMsg = `Kakak memperlihatkan gambar dan melampirkan berkas ${sendingDoc.filename}.`;
-        } else if (sendingDoc) {
-            displayMsg = `Kakak melampirkan berkas dokumen: ${sendingDoc.filename}. Shiro, tolong rangkum atau periksa ya!`;
-        } else if (sendingImage) {
-            displayMsg = 'Kakak memperlihatkan gambar visual ini.';
-        }
+        const partsDesc = [];
+        if (sendingVideos.length) partsDesc.push(`${sendingVideos.length} video (${sendingVideos.map(v => v.filename).join(', ')})`);
+        if (sendingImages.length) partsDesc.push(`${sendingImages.length} gambar`);
+        if (sendingDocs.length) partsDesc.push(`${sendingDocs.length} berkas (${sendingDocs.map(d => d.filename).slice(0, 4).join(', ')}${sendingDocs.length > 4 ? ', ...' : ''})`);
+        displayMsg = `Kakak melampirkan ${partsDesc.join(' + ')}. Shiro, tolong pelajari semuanya ya!`;
     }
     
     const userMsgEl = addMessage(
@@ -2032,7 +2068,15 @@ async function sendMessage() {
         sendingDoc ? sendingDoc.filename : null,
         sendingDoc ? sendingDoc.url : null,
         sendingDoc ? sendingDoc.file_type : null,
-        sendingDoc ? sendingDoc.text : null
+        sendingDoc ? sendingDoc.text : null,
+        null,
+        null,
+        false,
+        {
+            documents: sendingDocs,
+            images: sendingImages.map(im => im.dataUrl),
+            videos: sendingVideos,
+        }
     );
     
     status.textContent = t('status_thinking');
@@ -2074,12 +2118,23 @@ async function sendMessage() {
         if (isLyraActive && activeLyraTier) {
             payload.lyra_tier = activeLyraTier;
         }
-        if (currentImgUrl) {
-            payload.image = currentImgUrl;
+        if (sendingImages.length) {
+            payload.image = sendingImages[0].dataUrl;
+            payload.images = sendingImages.map(im => im.dataUrl);
         }
-        if (sendingDoc) {
-            payload.document_text = sendingDoc.text;
-            payload.document_name = sendingDoc.filename;
+        if (sendingDocs.length) {
+            payload.documents = sendingDocs.map(d => ({
+                filename: d.filename,
+                text: d.text,
+                file_type: d.file_type,
+                char_count: d.char_count,
+                url: d.url
+            }));
+            payload.document_text = sendingDocs[0].text;
+            payload.document_name = sendingDocs[0].filename;
+        }
+        if (sendingVideos.length) {
+            payload.videos = sendingVideos;
         }
 
         const response = await fetch('/api/chat', {
@@ -2765,6 +2820,9 @@ function renderMessagesList(messages) {
                     thought_duration_sec: msg.thought_duration_sec ?? null,
                     agent_steps: msg.agent_steps || [],
                     artifacts: msg.artifacts || [],
+                    documents: msg.documents || [],
+                    images: msg.images || [],
+                    videos: msg.videos || [],
                     is_running: false
                 }
             );
@@ -4173,77 +4231,314 @@ const cameraPlaceholder = document.getElementById('camera-placeholder');
 let cameraStream = null;
 let currentCameraFacing = 'user';
 
+const MULTI_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff']);
+const MULTI_VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.avi', '.flv', '.wmv', '.m4v', '.mpeg', '.mpg', '.gif']);
+
+function getFileExtLower(filename) {
+    const name = String(filename || '').toLowerCase();
+    const dot = name.lastIndexOf('.');
+    return dot >= 0 ? name.slice(dot) : '';
+}
+
+function isImageFileObj(file) {
+    if (!file) return false;
+    const ext = getFileExtLower(file.name);
+    if (MULTI_IMAGE_EXTS.has(ext)) return true;
+    const mime = String(file.type || '').toLowerCase();
+    return mime.startsWith('image/') && ext !== '.gif';
+}
+
+function isVideoFileObj(file, preferVideo = false) {
+    if (!file) return false;
+    const ext = getFileExtLower(file.name);
+    if (MULTI_VIDEO_EXTS.has(ext)) return true;
+    const mime = String(file.type || '').toLowerCase();
+    if (mime.startsWith('video/')) return true;
+    return preferVideo && mime.startsWith('image/gif');
+}
+
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => resolve(ev.target.result);
+        reader.onerror = () => reject(new Error(`Gagal membaca ${file.name}`));
+        reader.readAsDataURL(file);
+    });
+}
+
+function renderAttachmentChipList(barEl, items, kind) {
+    if (!barEl) return;
+    if (!Array.isArray(items) || items.length === 0) {
+        barEl.classList.add('hidden');
+        barEl.innerHTML = '';
+        return;
+    }
+
+    barEl.classList.remove('hidden');
+    barEl.innerHTML = '';
+
+    const strip = document.createElement('div');
+    strip.className = 'multi-attach-strip';
+
+    items.forEach((item, idx) => {
+        const chip = document.createElement('div');
+        chip.className = `attach-chip attach-chip-${kind}`;
+
+        if (kind === 'image' && item.dataUrl) {
+            const thumb = document.createElement('img');
+            thumb.className = 'attach-chip-thumb';
+            thumb.src = item.dataUrl;
+            thumb.alt = item.name || `image-${idx + 1}`;
+            chip.appendChild(thumb);
+        } else {
+            const icon = document.createElement('span');
+            icon.className = 'attach-chip-icon';
+            icon.textContent = kind === 'video' ? '🎬' : '📄';
+            chip.appendChild(icon);
+        }
+
+        const info = document.createElement('div');
+        info.className = 'attach-chip-info';
+
+        const title = document.createElement('span');
+        title.className = 'attach-chip-name';
+        title.textContent = item.filename || item.name || `${kind}-${idx + 1}`;
+        title.title = title.textContent;
+        info.appendChild(title);
+
+        const sub = document.createElement('span');
+        sub.className = 'attach-chip-sub';
+        if (kind === 'document') {
+            const chars = item.char_count || (item.text ? item.text.length : 0);
+            const ftype = item.file_type ? String(item.file_type).toUpperCase() : 'FILE';
+            sub.textContent = `${ftype} · ${chars} chars`;
+        } else if (kind === 'video') {
+            const dur = item.duration_sec ? `${Number(item.duration_sec).toFixed(1)}s` : '';
+            const res = item.resolution || '';
+            const fc = item.sampled_frame_count || (Array.isArray(item.frames) ? item.frames.length : 0);
+            sub.textContent = [dur, res, fc ? `${fc} frame` : ''].filter(Boolean).join(' · ') || 'Video siap dianalisis';
+        } else {
+            sub.textContent = 'Gambar siap';
+        }
+        info.appendChild(sub);
+        chip.appendChild(info);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'attach-chip-remove';
+        removeBtn.title = currentLang === 'en' ? 'Remove attachment' : 'Hapus lampiran';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (kind === 'image') removeAttachedImage(idx);
+            else if (kind === 'document') removeAttachedDocument(idx);
+            else if (kind === 'video') removeAttachedVideo(idx);
+        });
+        chip.appendChild(removeBtn);
+
+        strip.appendChild(chip);
+    });
+
+    if (items.length > 1) {
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'attach-clear-all-btn';
+        clearBtn.textContent = currentLang === 'en' ? `Clear all (${items.length})` : `Hapus semua (${items.length})`;
+        clearBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (kind === 'image') clearAttachedImage();
+            else if (kind === 'document') clearAttachedDocument();
+            else if (kind === 'video') clearAttachedVideo();
+        });
+        strip.appendChild(clearBtn);
+    }
+
+    barEl.appendChild(strip);
+}
+
+function renderAttachmentPreviewBars() {
+    renderAttachmentChipList(imagePreviewBar, attachedImages, 'image');
+    renderAttachmentChipList(docPreviewBar, attachedDocuments, 'document');
+    renderAttachmentChipList(document.getElementById('video-preview-bar'), attachedVideos, 'video');
+}
+
 function setAttachedImage(dataUrl, name = 'visual_input.jpg') {
-    attachedImage = { dataUrl, name };
-    if (imagePreviewThumb) imagePreviewThumb.src = dataUrl;
-    if (imagePreviewName) imagePreviewName.textContent = name;
-    if (imagePreviewBar) imagePreviewBar.classList.remove('hidden');
+    if (!dataUrl) return;
+    const exists = attachedImages.some((img) => img.dataUrl === dataUrl && img.name === name);
+    if (!exists) {
+        attachedImages.push({ dataUrl, name });
+    }
+    attachedImage = attachedImages[0] || null;
+    renderAttachmentPreviewBars();
+}
+
+function removeAttachedImage(index) {
+    if (index < 0 || index >= attachedImages.length) return;
+    attachedImages.splice(index, 1);
+    attachedImage = attachedImages[0] || null;
+    if (attachedImages.length === 0 && imageFileInput) imageFileInput.value = '';
+    renderAttachmentPreviewBars();
 }
 
 function clearAttachedImage() {
+    attachedImages = [];
     attachedImage = null;
-    if (imagePreviewBar) imagePreviewBar.classList.add('hidden');
     if (imagePreviewThumb) imagePreviewThumb.src = '';
     if (imageFileInput) imageFileInput.value = '';
+    renderAttachmentPreviewBars();
 }
 
 if (removeImageBtn) {
     removeImageBtn.addEventListener('click', clearAttachedImage);
 }
 
-// --- Document Management & Text Extraction ---
+// --- Document Management & Multi-File Extraction ---
 function setAttachedDocument(docData) {
-    attachedDocument = docData;
-    if (docPreviewName) docPreviewName.textContent = docData.filename;
-    if (docPreviewSub) {
-        const chars = docData.char_count || docData.text.length;
-        docPreviewSub.textContent = `${docData.file_type ? docData.file_type.toUpperCase() : 'Dokumen'} · ${chars} karakter · Siap dirangkum/diperbaiki`;
+    if (!docData) return;
+    const fname = docData.filename || 'document.txt';
+    const existingIdx = attachedDocuments.findIndex((d) => d.filename === fname);
+    if (existingIdx >= 0) {
+        attachedDocuments[existingIdx] = docData;
+    } else {
+        attachedDocuments.push(docData);
     }
-    if (docPreviewBar) docPreviewBar.classList.remove('hidden');
+    attachedDocument = attachedDocuments[0] || null;
+    renderAttachmentPreviewBars();
     if (userInput && !userInput.value.trim()) {
-        userInput.placeholder = "Ketik perintah (contoh: 'Rangkum isi dokumen ini' atau 'Perbaiki tata bahasanya')...";
+        userInput.placeholder = currentLang === 'en'
+            ? "Describe what to analyze or fix across all uploaded files..."
+            : "Ketik perintah (Shiro akan membaca semua berkas & merancang rencana sebelum memperbaiki)...";
     }
 }
 
+function removeAttachedDocument(index) {
+    if (index < 0 || index >= attachedDocuments.length) return;
+    attachedDocuments.splice(index, 1);
+    attachedDocument = attachedDocuments[0] || null;
+    if (attachedDocuments.length === 0) {
+        if (docFileInput) docFileInput.value = '';
+        if (userInput) userInput.placeholder = t('input_placeholder');
+    }
+    renderAttachmentPreviewBars();
+}
+
 function clearAttachedDocument() {
+    attachedDocuments = [];
     attachedDocument = null;
-    if (docPreviewBar) docPreviewBar.classList.add('hidden');
     if (docFileInput) docFileInput.value = '';
     if (userInput) userInput.placeholder = t('input_placeholder');
+    renderAttachmentPreviewBars();
+}
+
+function setAttachedVideo(videoData) {
+    if (!videoData) return;
+    const fname = videoData.filename || 'video.mp4';
+    const existingIdx = attachedVideos.findIndex((v) => v.filename === fname);
+    if (existingIdx >= 0) {
+        attachedVideos[existingIdx] = videoData;
+    } else {
+        attachedVideos.push(videoData);
+    }
+    renderAttachmentPreviewBars();
+    if (userInput && !userInput.value.trim()) {
+        userInput.placeholder = currentLang === 'en'
+            ? "Ask Shiro to analyze the video alongside your files..."
+            : "Tanyakan analisis isi video atau bandingkan dengan kode yang diunggah...";
+    }
+}
+
+function removeAttachedVideo(index) {
+    if (index < 0 || index >= attachedVideos.length) return;
+    attachedVideos.splice(index, 1);
+    if (attachedVideos.length === 0) {
+        const videoInputEl = document.getElementById('video-file-input');
+        if (videoInputEl) videoInputEl.value = '';
+    }
+    renderAttachmentPreviewBars();
+}
+
+function clearAttachedVideo() {
+    attachedVideos = [];
+    const videoInputEl = document.getElementById('video-file-input');
+    if (videoInputEl) videoInputEl.value = '';
+    renderAttachmentPreviewBars();
+}
+
+async function uploadMixedFiles(fileList, { preferVideo = false } = {}) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (files.length === 0) return;
+
+    const localImages = [];
+    const serverFiles = [];
+
+    for (const file of files) {
+        if (!preferVideo && isImageFileObj(file)) {
+            localImages.push(file);
+        } else {
+            serverFiles.push(file);
+        }
+    }
+
+    if (localImages.length > 0) {
+        status.textContent = currentLang === 'en'
+            ? `Loading ${localImages.length} image(s)...`
+            : `Memuat ${localImages.length} gambar...`;
+        for (const imgFile of localImages) {
+            try {
+                const dataUrl = await readFileAsDataUrl(imgFile);
+                setAttachedImage(dataUrl, imgFile.name);
+            } catch (err) {
+                console.error('Image read error:', err);
+                showToast(`${imgFile.name}: ${err.message || 'Gagal membaca gambar'}`);
+            }
+        }
+    }
+
+    if (serverFiles.length > 0) {
+        const formData = new FormData();
+        serverFiles.forEach((file) => formData.append('files', file));
+
+        const hasVideo = serverFiles.some((f) => isVideoFileObj(f, preferVideo));
+        status.textContent = hasVideo
+            ? (currentLang === 'en' ? `Extracting frames & files (${serverFiles.length})...` : `Mengekstrak frame video & ${serverFiles.length} berkas...`)
+            : (currentLang === 'en' ? `Reading ${serverFiles.length} file(s)...` : `Membaca ${serverFiles.length} berkas...`);
+
+        try {
+            const res = await fetch('/api/upload/documents', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.success) {
+                (data.documents || []).forEach((doc) => setAttachedDocument(doc));
+                (data.images || []).forEach((img) => {
+                    if (img && (img.dataUrl || img.data_url)) {
+                        setAttachedImage(img.dataUrl || img.data_url, img.name || img.filename || 'image.png');
+                    }
+                });
+                (data.videos || []).forEach((vid) => setAttachedVideo(vid));
+                if (Array.isArray(data.errors) && data.errors.length > 0) {
+                    const previewErr = data.errors.slice(0, 2).join('; ');
+                    showToast((currentLang === 'en' ? 'Some files could not be read: ' : 'Sebagian berkas gagal dibaca: ') + previewErr);
+                }
+            } else {
+                showToast(`${currentLang === 'en' ? 'Upload failed' : 'Gagal mengunggah berkas'}: ${data.error || 'Format tidak didukung'}`);
+            }
+        } catch (err) {
+            console.error('Multi-file upload error:', err);
+            showToast((currentLang === 'en' ? 'Failed to upload files: ' : 'Gagal mengunggah berkas: ') + (err.message || 'Koneksi bermasalah'));
+        }
+    }
+
+    const totalCount = attachedDocuments.length + attachedImages.length + attachedVideos.length;
+    status.textContent = totalCount > 0
+        ? (currentLang === 'en' ? `${totalCount} attachment(s) ready` : `${totalCount} lampiran siap`)
+        : t('status_ready');
 }
 
 async function uploadDocumentFile(file) {
     if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-
-    status.textContent = currentLang === 'en' ? 'Extracting file...' : 'Mengekstrak dokumen...';
-    try {
-        const res = await fetch('/api/upload/document', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await res.json();
-        if (data.success) {
-            setAttachedDocument({
-                text: data.text,
-                filename: data.filename,
-                file_type: data.file_type,
-                char_count: data.char_count,
-                url: data.url
-            });
-            status.textContent = currentLang === 'en' ? 'File ready' : 'Dokumen siap';
-        } else {
-            showToast(`${currentLang === 'en' ? 'Failed to read file' : 'Gagal membaca berkas'}: ${data.error || 'Format tidak didukung'}`);
-            clearAttachedDocument();
-            status.textContent = t('status_ready');
-        }
-    } catch (err) {
-        console.error("Document upload error:", err);
-        showToast((currentLang === 'en' ? "Failed to upload file: " : "Gagal mengunggah dokumen: ") + (err.message || "Koneksi bermasalah"));
-        clearAttachedDocument();
-        status.textContent = t('status_ready');
-    }
+    await uploadMixedFiles([file]);
 }
 
 if (uploadDocBtn && docFileInput) {
@@ -4253,9 +4548,11 @@ if (uploadDocBtn && docFileInput) {
     });
 
     docFileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            uploadDocumentFile(file);
+        const files = e.target.files;
+        if (files && files.length > 0) {
+            uploadMixedFiles(files).finally(() => {
+                docFileInput.value = '';
+            });
         }
     });
 }
@@ -4384,16 +4681,72 @@ if (uploadImageBtn && imageFileInput) {
     });
 
     imageFileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                setAttachedImage(event.target.result, file.name);
-            };
-            reader.readAsDataURL(file);
+        const files = e.target.files;
+        if (files && files.length > 0) {
+            uploadMixedFiles(files).finally(() => {
+                imageFileInput.value = '';
+            });
         }
     });
 }
+
+const uploadVideoBtn = document.getElementById('upload-video-btn');
+const videoFileInput = document.getElementById('video-file-input');
+if (uploadVideoBtn && videoFileInput) {
+    uploadVideoBtn.addEventListener('click', () => {
+        if (isGenerating) return;
+        videoFileInput.click();
+    });
+
+    videoFileInput.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (files && files.length > 0) {
+            uploadMixedFiles(files, { preferVideo: true }).finally(() => {
+                videoFileInput.value = '';
+            });
+        }
+    });
+}
+
+// Drag & Drop multi-file / image / video upload support
+const composerInputCard = document.getElementById('composer-input-card');
+[composerInputCard, chatViewport].filter(Boolean).forEach((dropZone) => {
+    let dragCounter = 0;
+    dropZone.addEventListener('dragenter', (e) => {
+        if (isGenerating) return;
+        if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+            e.preventDefault();
+            dragCounter += 1;
+            if (composerInputCard) composerInputCard.classList.add('is-drag-over');
+        }
+    });
+    dropZone.addEventListener('dragover', (e) => {
+        if (isGenerating) return;
+        if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            if (composerInputCard) composerInputCard.classList.add('is-drag-over');
+        }
+    });
+    dropZone.addEventListener('dragleave', (e) => {
+        if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+            dragCounter = Math.max(0, dragCounter - 1);
+            if (dragCounter === 0 && composerInputCard) {
+                composerInputCard.classList.remove('is-drag-over');
+            }
+        }
+    });
+    dropZone.addEventListener('drop', (e) => {
+        dragCounter = 0;
+        if (composerInputCard) composerInputCard.classList.remove('is-drag-over');
+        if (isGenerating) return;
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (files && files.length > 0) {
+            e.preventDefault();
+            uploadMixedFiles(files);
+        }
+    });
+});
 
 // Camera handlers
 async function startCamera() {
