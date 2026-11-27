@@ -363,7 +363,8 @@ function reattachActiveSessionRunDOM(run) {
                 thought_content: run.liveThoughtText,
                 thought_duration_sec: run.liveThoughtDuration,
                 artifacts: run.liveArtifacts,
-                is_running: hasAgentProgress
+                is_running: hasAgentProgress,
+                is_streaming_mount: true
             }
         );
         if (run.assistantMsgEl) {
@@ -2500,7 +2501,7 @@ function syncWebSourcesInMsg(msgEl, agentActionData) {
 function addMessage(role, content, imageUrl = null, docName = null, docUrl = null, docType = null, docText = null, agentActionData = null, msgId = null, isPinned = false, meta = null) {
     const hasText = content !== null && content !== undefined && String(content).trim().length > 0;
     const hasMultiAttach = Boolean(meta && ((meta.documents && meta.documents.length) || (meta.images && meta.images.length) || (meta.videos && meta.videos.length)));
-    const hasMeta = Boolean(hasMultiAttach || (meta && ((meta.agent_steps && meta.agent_steps.length) || meta.thought_content || (meta.artifacts && meta.artifacts.length) || meta.is_running)));
+    const hasMeta = Boolean(hasMultiAttach || (meta && ((meta.agent_steps && meta.agent_steps.length) || meta.thought_content || (meta.artifacts && meta.artifacts.length) || meta.is_running || meta.is_streaming_mount)));
     if (!hasText && !imageUrl && !docName && !docText && !agentActionData && !hasMeta) {
         // Jangan pernah merender pesan hantu atau bubble kosong tanpa konten
         return null;
@@ -3484,12 +3485,13 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                 }
             };
 
-            const ensureAssistantMsgEl = () => {
+            const ensureAssistantMsgEl = (initialText = '') => {
                 if (!isMounted()) return null;
-                if (!run.assistantMsgEl) {
+                if (!run.assistantMsgEl || !document.body.contains(run.assistantMsgEl)) {
+                    const seedContent = (initialText && String(initialText)) || run.streamText || '';
                     run.assistantMsgEl = addMessage(
                         'assistant',
-                        '',
+                        seedContent,
                         run.activeAssistantImgUrl,
                         null,
                         null,
@@ -3503,7 +3505,8 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                             thought_content: run.liveThoughtText,
                             thought_duration_sec: run.liveThoughtDuration,
                             artifacts: run.liveArtifacts,
-                            is_running: Boolean(run.liveAgentSteps.length || (run.liveThoughtText && run.liveThoughtText.trim()))
+                            is_running: Boolean(run.liveAgentSteps.length || (run.liveThoughtText && run.liveThoughtText.trim())),
+                            is_streaming_mount: true
                         }
                     );
                     if (run.assistantMsgEl) {
@@ -3518,11 +3521,17 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
             const updateAssistantUI = (text, isDone = false) => {
                 if (!isMounted()) return;
                 const trimmedText = (text || '').trim();
-                if (!run.assistantMsgEl) {
+                if (!run.assistantMsgEl || !document.body.contains(run.assistantMsgEl)) {
                     if (!trimmedText && !isDone) {
                         return;
                     }
-                    ensureAssistantMsgEl();
+                    ensureAssistantMsgEl(text);
+                }
+                if (run.assistantMsgEl && !run.assistantBubble) {
+                    run.assistantBubble = run.assistantMsgEl.querySelector('.bubble');
+                }
+                if (run.assistantMsgEl && !run.assistantTextEl) {
+                    run.assistantTextEl = run.assistantMsgEl.querySelector('.msg-text');
                 }
                 if (run.assistantBubble && (trimmedText || run.activeAssistantImgUrl || isDone)) {
                     run.assistantBubble.classList.remove('hidden');
@@ -3577,200 +3586,213 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                 }
             };
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed || trimmed.startsWith(':')) {
-                        continue;
-                    }
-                    if (trimmed.startsWith('data:')) {
-                        const jsonStr = trimmed.slice(5).trim();
-                        if (!jsonStr) continue;
-                        try {
-                            const evData = JSON.parse(jsonStr);
-                            if (evData.type === 'init') {
-                                run.userMsgId = evData.user_message_id || run.userMsgId;
-                                if (evData.session_title) syncRunTitle(evData.session_title);
-                                if (isMounted() && run.userMsgEl && evData.user_message_id) {
-                                    run.userMsgEl.dataset.msgId = evData.user_message_id;
-                                }
-                            } else if (evData.type === 'status') {
-                                if (evData.status) {
-                                    run.serverStatusReceived = true;
-                                    run.statusText = evData.status;
-                                    if (isMounted()) {
-                                        updateTypingStatus(evData.status);
-                                        if (status) status.textContent = evData.status;
-                                    }
-                                }
-                            } else if (evData.type === 'agent_trace_step') {
-                                if (evData.step) {
-                                    run.serverStatusReceived = true;
-                                    upsertLiveStep(evData.step);
-                                    if (evData.step.title) {
-                                        run.statusText = evData.step.title + '...';
-                                    }
-                                    if (isMounted()) {
-                                        ensureAssistantMsgEl();
-                                        syncAgThoughtInMsg(run.assistantMsgEl, {
-                                            agent_steps: run.liveAgentSteps,
-                                            thought_content: run.liveThoughtText,
-                                            thought_duration_sec: run.liveThoughtDuration,
-                                            is_running: true
-                                        });
-                                        if (evData.step.title && status) {
-                                            status.textContent = evData.step.title + '...';
-                                        }
-                                        scrollToBottom(false);
-                                    }
-                                }
-                            } else if (evData.type === 'thought') {
+            const processSseLine = (line) => {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith(':')) {
+                    return;
+                }
+                if (trimmed.startsWith('data:')) {
+                    const jsonStr = trimmed.slice(5).trim();
+                    if (!jsonStr) return;
+                    try {
+                        const evData = JSON.parse(jsonStr);
+                        if (evData.type === 'init') {
+                            run.userMsgId = evData.user_message_id || run.userMsgId;
+                            if (evData.session_title) syncRunTitle(evData.session_title);
+                            if (isMounted() && run.userMsgEl && evData.user_message_id) {
+                                run.userMsgEl.dataset.msgId = evData.user_message_id;
+                            }
+                        } else if (evData.type === 'status') {
+                            if (evData.status) {
                                 run.serverStatusReceived = true;
-                                run.liveThoughtText += (evData.token || '');
+                                run.statusText = evData.status;
+                                if (isMounted()) {
+                                    updateTypingStatus(evData.status);
+                                    if (status) status.textContent = evData.status;
+                                }
+                            }
+                        } else if (evData.type === 'agent_trace_step') {
+                            if (evData.step) {
+                                run.serverStatusReceived = true;
+                                upsertLiveStep(evData.step);
+                                if (evData.step.title) {
+                                    run.statusText = evData.step.title + '...';
+                                }
                                 if (isMounted()) {
                                     ensureAssistantMsgEl();
-                                    const nowTh = Date.now();
-                                    if (nowTh - lastThoughtRenderTime > 55) {
-                                        lastThoughtRenderTime = nowTh;
-                                        syncAgThoughtInMsg(run.assistantMsgEl, {
-                                            agent_steps: run.liveAgentSteps,
-                                            thought_content: run.liveThoughtText,
-                                            thought_duration_sec: run.liveThoughtDuration,
-                                            is_running: true
-                                        });
-                                        scrollToBottom(false);
-                                    }
-                                }
-                            } else if (evData.type === 'thought_done') {
-                                if (evData.duration_sec !== undefined) {
-                                    run.liveThoughtDuration = evData.duration_sec;
-                                }
-                                if (isMounted() && run.assistantMsgEl) {
                                     syncAgThoughtInMsg(run.assistantMsgEl, {
                                         agent_steps: run.liveAgentSteps,
                                         thought_content: run.liveThoughtText,
                                         thought_duration_sec: run.liveThoughtDuration,
                                         is_running: true
                                     });
-                                }
-                            } else if (evData.type === 'artifacts') {
-                                if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
-                                    run.liveArtifacts = evData.artifacts;
-                                    if (isMounted()) {
-                                        ensureAssistantMsgEl();
-                                        syncArtifactsInMsg(run.assistantMsgEl, run.liveArtifacts);
-                                        scrollToBottom(false);
+                                    if (evData.step.title && status) {
+                                        status.textContent = evData.step.title + '...';
                                     }
-                                }
-                            } else if (evData.type === 'agent_plan') {
-                                run.lastAgentTaskId = evData.task_id;
-                                run.statusText = 'Rencana siap · Memulai eksekusi...';
-                                if (isMounted()) {
-                                    createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, null);
-                                    updateTypingStatus(run.statusText);
-                                }
-                            } else if (evData.type === 'agent_step') {
-                                run.lastAgentTaskId = evData.task_id;
-                                run.statusText = `Langkah ${evData.step_index}: ${evData.tool} (${evData.status})...`;
-                                if (isMounted()) {
-                                    createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, evData, null);
-                                    updateTypingStatus(run.statusText);
-                                }
-                            } else if (evData.type === 'approval_required') {
-                                run.awaitingApproval = true;
-                                run.lastAgentTaskId = evData.task_id;
-                                run.statusText = 'Menunggu persetujuan Anda...';
-                                if (isMounted()) {
-                                    createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, evData.pending_action);
-                                    if (status) status.textContent = run.statusText;
-                                    updateTypingStatus('Menunggu persetujuan pengguna...');
-                                }
-                            } else if (evData.type === 'reset_stream') {
-                                run.streamText = '';
-                                if (isMounted() && run.assistantTextEl) {
-                                    run.assistantTextEl.innerHTML = '';
-                                }
-                            } else if (evData.type === 'agent_action') {
-                                run.activeAgentAction = evData.agent_action;
-                                if (run.activeAgentAction && run.activeAgentAction.image_url) {
-                                    run.activeAssistantImgUrl = run.activeAgentAction.image_url;
-                                }
-                                const toolTitle = run.activeAgentAction ? (run.activeAgentAction.tool || 'eksekusi') : 'eksekusi';
-                                run.statusText = `Selesai menjalankan ${toolTitle} · Menyusun jawaban...`;
-                                if (isMounted()) {
-                                    if (run.assistantMsgEl && run.activeAgentAction) {
-                                        syncWebSourcesInMsg(run.assistantMsgEl, run.activeAgentAction);
-                                    }
-                                    updateTypingStatus(run.statusText);
-                                }
-                            } else if (evData.type === 'token') {
-                                const chunkTok = evData.token || '';
-                                const isFirstVisible = !run.streamText && Boolean(chunkTok.trim());
-                                if (isFirstVisible) {
-                                    run.statusText = t('status_typing');
-                                    if (isMounted() && status) status.textContent = run.statusText;
-                                    if (isMounted() && run.assistantMsgEl) {
-                                        const thBlk = run.assistantMsgEl.querySelector('.ag-thought-block');
-                                        if (thBlk && thBlk.dataset.userToggled !== 'true') {
-                                            thBlk.classList.remove('is-open');
-                                        }
-                                    }
-                                }
-                                run.streamText += chunkTok;
-                                if (isMounted()) {
-                                    const now = Date.now();
-                                    if (now - lastRenderTime > 35) {
-                                        lastRenderTime = now;
-                                        updateAssistantUI(run.streamText, false);
-                                    }
-                                }
-                            } else if (evData.type === 'error') {
-                                console.warn('[Stream Error Event]:', evData.error);
-                                run.hadError = true;
-                                const errMsg = evData.error || 'Terjadi gangguan koneksi pada server.';
-                                run.errorText = errMsg;
-                                if (!run.streamText) {
-                                    run.streamText = `Maaf, ada kendala teknis: ${errMsg}`;
-                                } else {
-                                    run.streamText += `\n\n(Koneksi terganggu: ${errMsg})`;
-                                }
-                                if (isMounted()) updateAssistantUI(run.streamText, false);
-                            } else if (evData.type === 'done') {
-                                run.finalData = evData;
-                                if (evData.session_title) syncRunTitle(evData.session_title);
-                                if (evData.reply && !run.streamText) {
-                                    run.streamText = evData.reply;
-                                }
-                                if (evData.assistant_image_url) {
-                                    run.activeAssistantImgUrl = evData.assistant_image_url;
-                                }
-                                if (evData.agent_action) {
-                                    run.activeAgentAction = evData.agent_action;
-                                }
-                                if (evData.thought_content) {
-                                    run.liveThoughtText = evData.thought_content;
-                                }
-                                if (evData.thought_duration_sec !== undefined && evData.thought_duration_sec !== null) {
-                                    run.liveThoughtDuration = evData.thought_duration_sec;
-                                }
-                                if (Array.isArray(evData.agent_steps) && evData.agent_steps.length) {
-                                    run.liveAgentSteps = evData.agent_steps;
-                                }
-                                if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
-                                    run.liveArtifacts = evData.artifacts;
+                                    scrollToBottom(false);
                                 }
                             }
-                        } catch (errParse) {
-                            console.warn('[Stream JSON Parse Error]:', errParse, jsonStr);
+                        } else if (evData.type === 'thought') {
+                            run.serverStatusReceived = true;
+                            run.liveThoughtText += (evData.token || '');
+                            if (isMounted()) {
+                                ensureAssistantMsgEl();
+                                const nowTh = Date.now();
+                                if (nowTh - lastThoughtRenderTime > 55) {
+                                    lastThoughtRenderTime = nowTh;
+                                    syncAgThoughtInMsg(run.assistantMsgEl, {
+                                        agent_steps: run.liveAgentSteps,
+                                        thought_content: run.liveThoughtText,
+                                        thought_duration_sec: run.liveThoughtDuration,
+                                        is_running: true
+                                    });
+                                    scrollToBottom(false);
+                                }
+                            }
+                        } else if (evData.type === 'thought_done') {
+                            if (evData.duration_sec !== undefined) {
+                                run.liveThoughtDuration = evData.duration_sec;
+                            }
+                            if (isMounted() && run.assistantMsgEl) {
+                                syncAgThoughtInMsg(run.assistantMsgEl, {
+                                    agent_steps: run.liveAgentSteps,
+                                    thought_content: run.liveThoughtText,
+                                    thought_duration_sec: run.liveThoughtDuration,
+                                    is_running: true
+                                });
+                            }
+                        } else if (evData.type === 'artifacts') {
+                            if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
+                                run.liveArtifacts = evData.artifacts;
+                                if (isMounted()) {
+                                    ensureAssistantMsgEl();
+                                    syncArtifactsInMsg(run.assistantMsgEl, run.liveArtifacts);
+                                    scrollToBottom(false);
+                                }
+                            }
+                        } else if (evData.type === 'agent_plan') {
+                            run.lastAgentTaskId = evData.task_id;
+                            run.statusText = 'Rencana siap · Memulai eksekusi...';
+                            if (isMounted()) {
+                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, null);
+                                updateTypingStatus(run.statusText);
+                            }
+                        } else if (evData.type === 'agent_step') {
+                            run.lastAgentTaskId = evData.task_id;
+                            run.statusText = `Langkah ${evData.step_index}: ${evData.tool} (${evData.status})...`;
+                            if (isMounted()) {
+                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, evData, null);
+                                updateTypingStatus(run.statusText);
+                            }
+                        } else if (evData.type === 'approval_required') {
+                            run.awaitingApproval = true;
+                            run.lastAgentTaskId = evData.task_id;
+                            run.statusText = 'Menunggu persetujuan Anda...';
+                            if (isMounted()) {
+                                createOrUpdateAgentWorkspaceCard(evData.task_id, evData.plan, null, evData.pending_action);
+                                if (status) status.textContent = run.statusText;
+                                updateTypingStatus('Menunggu persetujuan pengguna...');
+                            }
+                        } else if (evData.type === 'reset_stream') {
+                            run.streamText = '';
+                            if (isMounted() && run.assistantTextEl) {
+                                run.assistantTextEl.innerHTML = '';
+                            }
+                        } else if (evData.type === 'agent_action') {
+                            run.activeAgentAction = evData.agent_action;
+                            if (run.activeAgentAction && run.activeAgentAction.image_url) {
+                                run.activeAssistantImgUrl = run.activeAgentAction.image_url;
+                            }
+                            const toolTitle = run.activeAgentAction ? (run.activeAgentAction.tool || 'eksekusi') : 'eksekusi';
+                            run.statusText = `Selesai menjalankan ${toolTitle} · Menyusun jawaban...`;
+                            if (isMounted()) {
+                                if (run.assistantMsgEl && run.activeAgentAction) {
+                                    syncWebSourcesInMsg(run.assistantMsgEl, run.activeAgentAction);
+                                }
+                                updateTypingStatus(run.statusText);
+                            }
+                        } else if (evData.type === 'token') {
+                            const chunkTok = evData.token || '';
+                            const isFirstVisible = !run.streamText && Boolean(chunkTok.trim());
+                            if (isFirstVisible) {
+                                run.statusText = t('status_typing');
+                                if (isMounted() && status) status.textContent = run.statusText;
+                                if (isMounted() && run.assistantMsgEl) {
+                                    const thBlk = run.assistantMsgEl.querySelector('.ag-thought-block');
+                                    if (thBlk && thBlk.dataset.userToggled !== 'true') {
+                                        thBlk.classList.remove('is-open');
+                                    }
+                                }
+                            }
+                            run.streamText += chunkTok;
+                            if (isMounted()) {
+                                const now = Date.now();
+                                if (now - lastRenderTime > 35) {
+                                    lastRenderTime = now;
+                                    updateAssistantUI(run.streamText, false);
+                                }
+                            }
+                        } else if (evData.type === 'error') {
+                            console.warn('[Stream Error Event]:', evData.error);
+                            run.hadError = true;
+                            const errMsg = evData.error || 'Terjadi gangguan koneksi pada server.';
+                            run.errorText = errMsg;
+                            if (!run.streamText) {
+                                run.streamText = `Maaf, ada kendala teknis: ${errMsg}`;
+                            } else {
+                                run.streamText += `\n\n(Koneksi terganggu: ${errMsg})`;
+                            }
+                            if (isMounted()) updateAssistantUI(run.streamText, false);
+                        } else if (evData.type === 'done') {
+                            run.finalData = evData;
+                            if (evData.session_title) syncRunTitle(evData.session_title);
+                            if (evData.reply && !run.streamText) {
+                                run.streamText = evData.reply;
+                            }
+                            if (evData.assistant_image_url) {
+                                run.activeAssistantImgUrl = evData.assistant_image_url;
+                            }
+                            if (evData.agent_action) {
+                                run.activeAgentAction = evData.agent_action;
+                            }
+                            if (evData.thought_content) {
+                                run.liveThoughtText = evData.thought_content;
+                            }
+                            if (evData.thought_duration_sec !== undefined && evData.thought_duration_sec !== null) {
+                                run.liveThoughtDuration = evData.thought_duration_sec;
+                            }
+                            if (Array.isArray(evData.agent_steps) && evData.agent_steps.length) {
+                                run.liveAgentSteps = evData.agent_steps;
+                            }
+                            if (Array.isArray(evData.artifacts) && evData.artifacts.length) {
+                                run.liveArtifacts = evData.artifacts;
+                            }
+                        }
+                    } catch (errParse) {
+                        console.warn('[Stream JSON Parse Error]:', errParse, jsonStr);
+                    }
+                }
+            };
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    buffer += decoder.decode();
+                    if (buffer && buffer.trim()) {
+                        for (const remLine of buffer.split('\n')) {
+                            processSseLine(remLine);
                         }
                     }
+                    buffer = '';
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    processSseLine(line);
                 }
             }
 
