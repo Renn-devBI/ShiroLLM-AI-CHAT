@@ -828,6 +828,37 @@ def execute_powershell_command(command: str) -> Dict[str, Any]:
             "summary": f"Gagal mengeksekusi perintah `{clean_cmd}`: {str(e)}"
         }
 
+def _is_casual_or_meta_question(text_lower: str) -> bool:
+    """
+    Mendeteksi obrolan santai, sapaan, pertanyaan identitas/pencipta Shiro,
+    dan pertanyaan meta-kapabilitas ("apakah kamu bisa ...") yang BUKAN perintah eksekusi agent/search.
+    """
+    if not text_lower:
+        return True
+
+    imperative_markers = (
+        "cari di ", "carikan ", "cariin ", "googling", "search ", "browsing",
+        "jadikan zip", "kompres ", "compress ", "screenshot", "powershell",
+        "buatkan ", "buatin ", "bikinkan ", "bikinin ", "perbaiki ", "analisa ", "analisis "
+    )
+    if any(mk in text_lower for mk in imperative_markers):
+        return False
+
+    casual_patterns = [
+        r'^(?:halo|hai|hi|hello|hey|selamat\s+(?:pagi|siang|sore|malam))(?:\s+(?:shiro|kak|semua))?[\s,!?.]*$',
+        r'^(?:oke|ok|sip|mantap|keren|hebat|bagus|terima\s+kasih|makasih|thanks|thank\s+you)(?:\s+(?:shiro|kak|ya|banget))?[\s,!?.]*$',
+        r'^(?:siapa|siapakah)\s+(?:kamu|kau|anda|shiro|namamu|nama\s+kamu|pencipta(?:mu|\s+kamu)?|pembuat(?:mu|\s+kamu)?|developer(?:mu|\s+kamu)?|pengembang(?:mu|\s+kamu)?)(?:\s+(?:kamu|shiro|sekarang|ini))?[\s?!.,]*$',
+        r'^(?:kamu|kau|anda|shiro)\s+(?:itu\s+)?siapa(?:\s+(?:sih|ya))?[\s?!.,]*$',
+        r'^(?:siapa\s+yang\s+(?:buat|bikin|membuat|menciptakan|mengembangkan)\s+(?:kamu|shiro))[\s?!.,]*$',
+        r'^(?:apa\s+kabar|gimana\s+kabar(?:mu)?|kamu\s+(?:sedang|lagi)\s+apa|lagi\s+ngapain|shiro\s+(?:kamu\s+)?(?:sedang|lagi)\s+apa)(?:\s+(?:hari\s+ini|sekarang|sih))?[\s?!.,]*$',
+        r'^(?:who\s+are\s+you|what\s+are\s+you|who\s+(?:made|created|built|developed)\s+you|how\s+are\s+you|what\s+can\s+you\s+do|what\s+are\s+you\s+doing)[\s?!.,]*$',
+        r'^(?:kamu|shiro|anda)\s+bisa\s+apa(?:\s+aja|\s+saja)?[\s?!.,]*$',
+        r'^(?:apakah\s+)?(?:kamu|shiro|kau|anda)\s+(?:bisa|dapat|mampu|support|mendukung|punya\s+fitur)\b',
+        r'^(?:can\s+you|do\s+you\s+support|are\s+you\s+able\s+to)\b',
+    ]
+    return any(re.search(pat, text_lower) for pat in casual_patterns)
+
+
 def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Menganalisis pesan pengguna dan mendeteksi apakah membutuhkan eksekusi tool AI Agent:
@@ -1003,6 +1034,10 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
                     "params": {"expression": expr}
                 }
 
+    # 3b. Pertanyaan santai, identitas/pencipta, atau meta-kapabilitas ("siapa kamu", "apa kabar", "apakah kamu bisa ...")
+    if not urls and _is_casual_or_meta_question(text_lower):
+        return {"intent": "none", "params": {}}
+
     # 4. Deteksi Waktu / Jam / Kalender (Real-Time Intel Multibahasa)
     try:
         from shiro.web.realtime_intel import classify_intent
@@ -1060,7 +1095,8 @@ def detect_agent_intent(text: str, conversation_history: Optional[List[Dict[str,
         "harga bitcoin", "fakta tentang", "sejarah tentang", "profil tentang",
         "look up", "search for", "find info", "who is", "what is the latest"
     ]
-    if not is_coding_or_chat_personal:
+    is_self_about_query = bool(re.search(r'\b(?:siapa|apa)\s+itu\s+(?:shiro|shiroharu|kamu|anda)\b', text_lower))
+    if not is_coding_or_chat_personal and not is_self_about_query:
         for st in search_triggers:
             if st in text_lower:
                 # Ekstrak query pencarian

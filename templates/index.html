@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.9.0">
+    <link rel="stylesheet" href="/static/style.css?v=3.10.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
     <script src="/static/theme.js?v=3.2.0"></script>
@@ -523,6 +523,31 @@
                                 <span id="training-mode-status-text" data-i18n="training_status_on">Status: AKTIF — Percakapan direkam untuk meningkatkan kecerdasan model.</span>
                             </div>
                         </div>
+
+                        <div class="settings-panel">
+                            <div class="settings-panel-head">
+                                <span class="settings-panel-title"><i class="ph ph-bell"></i> <span data-i18n="notifications_panel_title">Notifikasi Sesi</span></span>
+                            </div>
+                            <div class="settings-toggle-card">
+                                <div class="settings-toggle-info">
+                                    <div class="settings-toggle-title">
+                                        <i class="ph ph-bell-ringing"></i>
+                                        <span data-i18n="notifications_toggle_title">Aktifkan Notifikasi Selesai</span>
+                                    </div>
+                                    <div class="settings-toggle-desc" data-i18n="notifications_toggle_desc">
+                                        Jika dinonaktifkan (OFF), popup notifikasi pojok kanan bawah saat sesi selesai tidak akan muncul, namun indikator di sidebar tetap aktif.
+                                    </div>
+                                </div>
+                                <label class="shiro-switch" title="On/Off Notifikasi Sesi">
+                                    <input type="checkbox" id="notifications-enabled-toggle" checked onchange="toggleNotificationsEnabled(this.checked)">
+                                    <span class="shiro-slider"></span>
+                                </label>
+                            </div>
+                            <div id="notifications-mode-banner" class="training-mode-banner mode-on">
+                                <i id="notifications-mode-icon" class="ph ph-bell-ringing"></i>
+                                <span id="notifications-mode-status-text" data-i18n="notifications_status_on">Status: AKTIF — Notifikasi muncul saat sesi selesai diproses.</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -964,6 +989,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
-    <script src="/static/script.js?v=3.9.0"></script>
+    <script src="/static/script.js?v=3.10.0"></script>
 </body>
 </html>

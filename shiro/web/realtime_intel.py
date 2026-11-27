@@ -190,7 +190,11 @@ register_language(LanguageLexicon(
     personal_signals=[
         "aku capek", "aku lelah", "aku sedih", "aku bingung", "aku galau",
         "patah hati", "lagi sedih", "perasaanku", "peluk", "sayang kamu",
-        "kamu lagi apa", "lagi ngapain", "kangen", "sayang shiro", "aku lapar"
+        "kamu lagi apa", "lagi ngapain", "kangen", "sayang shiro", "aku lapar",
+        "siapa kamu", "kamu siapa", "siapa nama kamu", "siapa pencipta", "siapa pembuat",
+        "apa kabar", "kamu sedang apa", "sedang apa", "kamu bisa apa",
+        "bisa bantu apa", "fitur kamu", "halo shiro", "hai shiro",
+        "terima kasih", "makasih"
     ],
     time_only_patterns=[
         r"(?:hari|tanggal|jam|waktu|bulan|tahun)\s+(?:apa|berapa|sekarang|ini)",
@@ -223,7 +227,9 @@ register_language(LanguageLexicon(
     ],
     personal_signals=[
         "i am tired", "i'm tired", "i'm sad", "i feel sad", "heartbroken", "hug me",
-        "i love you", "what are you doing", "i miss you", "i'm so tired"
+        "i love you", "what are you doing", "i miss you", "i'm so tired",
+        "who are you", "what are you", "who created you", "who made you",
+        "how are you", "what can you do"
     ],
     time_only_patterns=[
         r"what\s+(?:day|date|time)\s+is\s+it",
@@ -440,6 +446,41 @@ def classify_intent(text: str) -> IntentResult:
     # Selalu cek bahasa terdeteksi + EN + ID (karena pengguna sering mencampur bahasa)
     langs_to_check = {detected_lang, "en", "id"}
 
+    # 1a. Filter obrolan santai / sapaan / pertanyaan identitas & kapabilitas asisten
+    explicit_cmds = [
+        "cari di web", "googling", "browsing", "search the web", "search google",
+        "tolong carikan artikel", "cari berita", "cek di internet", "search online"
+    ]
+    has_url_in_raw = bool(re.search(r'https?://[^\s<>"\')]+', lower))
+    has_explicit_search = any(cmd in lower for cmd in explicit_cmds)
+    if not has_url_in_raw and not has_explicit_search:
+        casual_identity_patterns = [
+            r'^(?:halo|hai|hi|hello|hey|selamat\s+(?:pagi|siang|sore|malam))(?:\s+(?:shiro|kak|semua))?[\s,!?.]*$',
+            r'^(?:oke|ok|sip|mantap|keren|hebat|bagus|terima\s+kasih|makasih|thanks|thank\s+you)\b[^.?!]{0,40}[.!?]*$',
+            r'^(?:siapa|siapakah)\s+(?:kamu|kau|anda|shiro|namamu|nama\s+kamu|pencipta|pembuat|developer|pengembang)(?:\s+(?:kamu|shiro|ini))?[\s?!.,]*$',
+            r'^(?:kamu|kau|anda|shiro)\s+(?:itu\s+)?siapa[\s?!.,]*$',
+            r'^(?:apa\s+kabar(?:\s+(?:sekarang|hari\s+ini))?|gimana\s+kabar(?:mu)?|(?:shiro\s+)?(?:kamu\s+)?(?:sedang|lagi)\s+apa(?:\s+(?:hari\s+ini|sekarang|sih))?|lagi\s+ngapain|how\s+are\s+you)[\s?!.,]*$',
+            r'^(?:who\s+are\s+you|what\s+are\s+you|who\s+(?:made|created|built|developed)\s+you|what\s+can\s+you\s+do)\b[\s?!.,]*$',
+            r'^(?:apakah\s+)?(?:kamu|shiro|kau|anda)\s+(?:bisa|dapat|mampu|support|mendukung|punya\s+fitur)\b',
+            r'^(?:can\s+you|do\s+you\s+support|are\s+you\s+able\s+to)\b',
+        ]
+        # Kecualikan jika kalimat secara jelas meminta pencarian berita/info/data/spesifikasi eksternal
+        external_lookup_markers = (
+            "berita", "info ", "informasi", "spesifikasi", "harga ", "kurs ",
+            "carikan", "cariin", "cari di", "search", "google", "cuaca"
+        )
+        if not any(mk in lower for mk in external_lookup_markers):
+            for cpat in casual_identity_patterns:
+                if re.search(cpat, lower):
+                    return IntentResult(
+                        kind="none",
+                        lang=detected_lang,
+                        score=0.0,
+                        confidence=0.98,
+                        raw_query=raw,
+                        reasons=[f"Obrolan santai / pertanyaan identitas atau kapabilitas: '{cpat}'"]
+                    )
+
     # 1. Pengecekan Waktu Murni (Jam / Hari / Tanggal)
     for lcode in langs_to_check:
         lex = LANGUAGE_REGISTRY.get(lcode)
@@ -463,10 +504,6 @@ def classify_intent(text: str) -> IntentResult:
     reasons = []
 
     # Sinyal eksplisit perintah cari
-    explicit_cmds = [
-        "cari di web", "googling", "browsing", "search the web", "search google",
-        "tolong carikan artikel", "cari berita", "cek di internet", "search online"
-    ]
     for cmd in explicit_cmds:
         if cmd in lower:
             score += 3.0

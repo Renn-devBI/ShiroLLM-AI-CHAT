@@ -198,13 +198,28 @@ def get_max_agent_rounds(tier_id: Optional[str] = None) -> int:
 
 
 _HEAVY_TASK_RE = re.compile(
-    r'\b(?:kode|code|script|skrip|website|web|html|css|javascript|typescript|python|flask|fastapi|'
+    r'(?:\b(?:kode|code|script|skrip|website|html|css|javascript|typescript|python|flask|fastapi|'
     r'react|vue|sql|database|db|api|endpoint|bug|error|traceback|exception|debug|fix|perbaiki|'
-    r'buatkan|buatin|bikin|create|build|develop|implement|refactor|optimasi|optimize|deploy|server|'
-    r'docker|zip|tar|rar|7z|compress|arsip|file|berkas|folder|directory|direktori|dokumen|pdf|docx|'
-    r'analisa|analisis|analyze|audit|review|bandingkan|compare|arsitektur|algoritma|hitung|rumus|'
-    r'cari|carikan|search|google|browsing|browse|berita|info|informasi|terbaru|harga|kurs|cuaca|'
-    r'video|gambar|foto|render|generate)\b',
+    r'buatkan|buatin|bikinkan|bikinin|bikin|create|build|develop|implement|refactor|optimasi|optimize|deploy|server|'
+    r'docker|zip|tar|rar|7z|compress|kompres|arsip|analisa|analisis|analyze|audit|review|bandingkan|compare|'
+    r'arsitektur|algoritma|hitung|rumus|carikan|cariin|cari\s+di|search|google|browsing|browse|render|generate)\b'
+    r'|\b[\w\-]+\.(?:py|js|ts|html|css|json|sql|sh|app|jsx|tsx|java|cpp|go|rs)\b)',
+    re.IGNORECASE,
+)
+
+_CASUAL_OR_META_Q_RE = re.compile(
+    r'^(?:'
+    r'(?:halo|hai|hi|hello|hey|selamat\s+(?:pagi|siang|sore|malam))(?:\s+(?:shiro|kak|semua))?[\s,!?.]*$'
+    r'|(?:oke|ok|sip|mantap|keren|hebat|bagus|terima\s+kasih|makasih|thanks|thank\s+you)(?:\s+(?:shiro|kak|ya|banget))?[\s,!?.]*$'
+    r'|(?:siapa|siapakah)\s+(?:kamu|kau|anda|shiro|namamu|nama\s+kamu|pencipta(?:mu|\s+kamu)?|pembuat(?:mu|\s+kamu)?|developer(?:mu|\s+kamu)?|pengembang(?:mu|\s+kamu)?)\b'
+    r'|(?:kamu|kau|anda|shiro)\s+(?:itu\s+)?siapa\b'
+    r'|siapa\s+yang\s+(?:buat|bikin|membuat|menciptakan|mengembangkan)\s+(?:kamu|shiro)\b'
+    r'|(?:apa\s+kabar|gimana\s+kabar(?:mu)?|kamu\s+(?:sedang|lagi)\s+apa|lagi\s+ngapain|shiro\s+(?:kamu\s+)?(?:sedang|lagi)\s+apa)\b'
+    r'|(?:who\s+are\s+you|what\s+are\s+you|who\s+(?:made|created|built|developed)\s+you|how\s+are\s+you|what\s+can\s+you\s+do)\b'
+    r'|(?:kamu|shiro|anda)\s+bisa\s+apa(?:\s+aja|\s+saja)?[\s?!.,]*$'
+    r'|(?:apakah\s+)?(?:kamu|shiro|kau|anda)\s+(?:bisa|dapat|mampu|support|mendukung|punya\s+fitur)\b'
+    r'|(?:can\s+you|do\s+you\s+support|are\s+you\s+able\s+to)\b'
+    r')',
     re.IGNORECASE,
 )
 
@@ -234,6 +249,8 @@ def _is_heavy_agent_task(
         return True
     txt = (raw_user_typed or "").strip()
     if not txt:
+        return False
+    if "\n" not in txt and len(txt) <= 130 and _CASUAL_OR_META_Q_RE.search(txt):
         return False
     if "\n" in txt or len(txt) > 130 or "```" in txt:
         return True

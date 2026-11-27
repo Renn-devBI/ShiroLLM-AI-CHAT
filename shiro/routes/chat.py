@@ -57,6 +57,7 @@ def get_history():
             "topics": memory.system_metadata.get("topics_discussed", []),
             "enable_training_logging": memory.system_metadata.get("enable_training_logging", True),
             "roleplay_enabled": bool(memory.system_metadata.get("roleplay_enabled", True)),
+            "notifications_enabled": bool(memory.system_metadata.get("notifications_enabled", True)),
             "ui_language": memory.system_metadata.get("ui_language", "id")
         })
 

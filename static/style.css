@@ -3685,7 +3685,8 @@ body.sidebar-resizing iframe {
     border-color: var(--accent);
 }
 
-.toast-close-btn {
+.toast-close-btn,
+.toast-mute-btn {
     background: transparent;
     border: none;
     color: var(--text-muted);
@@ -3704,6 +3705,20 @@ body.sidebar-resizing iframe {
 .toast-close-btn:hover {
     background: var(--bg-surface);
     color: var(--text-primary);
+}
+
+.toast-mute-btn:hover {
+    background: rgba(251, 191, 36, 0.14);
+    color: #fbbf24;
+}
+
+#chat-messages {
+    transition: opacity 0.12s ease;
+}
+
+#chat-messages.is-switching {
+    opacity: 0.45;
+    pointer-events: none;
 }
 
 @keyframes toastSlideInRight {

@@ -582,6 +582,7 @@ def privacy_and_ui_settings():
             return jsonify({
                 "enable_training_logging": bool(memory.system_metadata.get("enable_training_logging", True)),
                 "roleplay_enabled": bool(memory.system_metadata.get("roleplay_enabled", True)),
+                "notifications_enabled": bool(memory.system_metadata.get("notifications_enabled", True)),
                 "ui_language": memory.system_metadata.get("ui_language", "id"),
                 "learned_patterns_count": len(getattr(memory, "learned_patterns", [])),
                 "archived_training_count": len(getattr(memory, "archived_training_history", []))
@@ -593,6 +594,8 @@ def privacy_and_ui_settings():
                 memory.system_metadata["enable_training_logging"] = bool(data["enable_training_logging"])
             if "roleplay_enabled" in data:
                 memory.system_metadata["roleplay_enabled"] = bool(data["roleplay_enabled"])
+            if "notifications_enabled" in data:
+                memory.system_metadata["notifications_enabled"] = bool(data["notifications_enabled"])
             if "ui_language" in data and data["ui_language"] in ("id", "en"):
                 memory.system_metadata["ui_language"] = data["ui_language"]
                 memory.user_profile["language"] = data["ui_language"]
@@ -601,6 +604,7 @@ def privacy_and_ui_settings():
                 "success": True,
                 "enable_training_logging": bool(memory.system_metadata.get("enable_training_logging", True)),
                 "roleplay_enabled": bool(memory.system_metadata.get("roleplay_enabled", True)),
+                "notifications_enabled": bool(memory.system_metadata.get("notifications_enabled", True)),
                 "ui_language": memory.system_metadata.get("ui_language", "id")
             })
     except Exception as e:

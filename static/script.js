@@ -61,6 +61,7 @@ function dismissSessionDoneNotifications(sessionId) {
 }
 
 function showSessionDoneNotification({ sessionId, sessionTitle, isError = false, errorText = '' } = {}) {
+    if (!notificationsEnabled) return;
     const stack = document.getElementById('toast-stack');
     if (!stack || !sessionId) return;
     dismissSessionDoneNotifications(sessionId);
@@ -84,6 +85,9 @@ function showSessionDoneNotification({ sessionId, sessionTitle, isError = false,
         </div>
         <div class="toast-actions">
             ${isOtherSession ? `<button type="button" class="toast-open-btn">${escapeHtml(t('open_session_btn'))}</button>` : ''}
+            <button type="button" class="toast-mute-btn" title="${escapeHtml(t('mute_notif_tooltip'))}" aria-label="${escapeHtml(t('mute_notif_tooltip'))}">
+                <i class="ph ph-bell-slash"></i>
+            </button>
             <button type="button" class="toast-close-btn" title="${escapeHtml(t('close_notif_tooltip'))}" aria-label="${escapeHtml(t('close_notif_tooltip'))}">
                 <i class="ph ph-x"></i>
             </button>
@@ -103,6 +107,15 @@ function showSessionDoneNotification({ sessionId, sessionTitle, isError = false,
             if (timer) clearTimeout(timer);
             _dismissToastEl(el);
             switchSession(sessionId);
+        });
+    }
+    const muteBtn = el.querySelector('.toast-mute-btn');
+    if (muteBtn) {
+        muteBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (timer) clearTimeout(timer);
+            _dismissToastEl(el);
+            toggleNotificationsEnabled(false);
         });
     }
     const closeBtn = el.querySelector('.toast-close-btn');
@@ -182,6 +195,7 @@ let inFlightUploadsCount = 0;
 let activeUploadPromises = [];
 let enableTrainingLogging = true;
 let roleplayEnabled = true;
+let notificationsEnabled = localStorage.getItem('shiro_notifications_enabled') !== 'false';
 let currentLang = localStorage.getItem('shiro_lang') || 'id';
 let currentUILang = currentLang;
 
@@ -301,6 +315,18 @@ function reattachActiveSessionRunDOM(run) {
         return;
     }
     showTyping(false);
+    const hasAgentProgress = Boolean((run.liveAgentSteps && run.liveAgentSteps.length) || (run.liveThoughtText && run.liveThoughtText.trim()));
+    if (!run.assistantMsgEl && chatMessages && run.finalData && run.finalData.assistant_message_id) {
+        try {
+            const existingSaved = chatMessages.querySelector(`.message.assistant[data-msg-id="${CSS.escape(run.finalData.assistant_message_id)}"]`);
+            if (existingSaved) {
+                run.assistantMsgEl = existingSaved;
+                run.assistantBubble = existingSaved.querySelector('.bubble');
+                run.assistantTextEl = existingSaved.querySelector('.msg-text');
+                return;
+            }
+        } catch (_) {}
+    }
     if (!run.assistantMsgEl) {
         run.assistantMsgEl = addMessage(
             'assistant',
@@ -318,7 +344,7 @@ function reattachActiveSessionRunDOM(run) {
                 thought_content: run.liveThoughtText,
                 thought_duration_sec: run.liveThoughtDuration,
                 artifacts: run.liveArtifacts,
-                is_running: true
+                is_running: hasAgentProgress
             }
         );
         if (run.assistantMsgEl) {
@@ -600,7 +626,15 @@ const SHIRO_I18N = {
         session_done_desc: 'Respons selesai dan siap dibaca.',
         session_error_title: 'Sesi berhenti karena kendala',
         open_session_btn: 'Buka',
-        close_notif_tooltip: 'Tutup notifikasi'
+        close_notif_tooltip: 'Tutup notifikasi',
+        mute_notif_tooltip: 'Nonaktifkan notifikasi sesi',
+        notifications_panel_title: 'Notifikasi Sesi',
+        notifications_toggle_title: 'Aktifkan Notifikasi Selesai',
+        notifications_toggle_desc: 'Jika dinonaktifkan (OFF), popup notifikasi pojok kanan bawah saat sesi selesai tidak akan muncul, namun indikator di sidebar tetap aktif.',
+        notifications_status_on: 'Status: AKTIF — Notifikasi muncul saat sesi selesai diproses.',
+        notifications_status_off: 'Status: NONAKTIF — Popup notifikasi dimatikan agar tidak mengganggu.',
+        notifications_toast_on: 'Notifikasi penyelesaian sesi DIAKTIFKAN',
+        notifications_toast_off: 'Notifikasi penyelesaian sesi DINONAKTIFKAN'
     },
     en: {
         new_chat: 'New chat',
@@ -808,7 +842,15 @@ const SHIRO_I18N = {
         session_done_desc: 'Response finished and ready to view.',
         session_error_title: 'Session stopped with error',
         open_session_btn: 'Open',
-        close_notif_tooltip: 'Dismiss notification'
+        close_notif_tooltip: 'Dismiss notification',
+        mute_notif_tooltip: 'Disable session notifications',
+        notifications_panel_title: 'Session Notifications',
+        notifications_toggle_title: 'Enable Completion Notifications',
+        notifications_toggle_desc: 'When turned OFF, bottom-right completion popups are muted while subtle sidebar indicators remain active.',
+        notifications_status_on: 'Status: ON — Notifications appear when a session finishes.',
+        notifications_status_off: 'Status: OFF — Completion notification popups are muted.',
+        notifications_toast_on: 'Session completion notifications ENABLED',
+        notifications_toast_off: 'Session completion notifications DISABLED'
     }
 };
 
@@ -848,6 +890,7 @@ function applyI18nToDOM() {
 
     updateTrainingBannerUI(enableTrainingLogging);
     updateRoleplayModeUI(roleplayEnabled);
+    updateNotificationsModeUI(notificationsEnabled);
     updateMemoryCount();
     renderPinnedDrawer();
     renderAttachmentPreviewBars();
@@ -959,6 +1002,54 @@ async function toggleRoleplayMode(enabled) {
     }
 }
 
+function updateNotificationsModeUI(enabled) {
+    notificationsEnabled = Boolean(enabled);
+    try {
+        localStorage.setItem('shiro_notifications_enabled', notificationsEnabled ? 'true' : 'false');
+    } catch (_) {}
+    const toggle = document.getElementById('notifications-enabled-toggle');
+    if (toggle) toggle.checked = notificationsEnabled;
+
+    const banner = document.getElementById('notifications-mode-banner');
+    const icon = document.getElementById('notifications-mode-icon');
+    const text = document.getElementById('notifications-mode-status-text');
+    if (banner) {
+        banner.classList.toggle('mode-on', notificationsEnabled);
+        banner.classList.toggle('mode-off', !notificationsEnabled);
+    }
+    if (icon) {
+        icon.className = notificationsEnabled ? 'ph ph-bell-ringing' : 'ph ph-bell-slash';
+    }
+    if (text) {
+        text.setAttribute('data-i18n', notificationsEnabled ? 'notifications_status_on' : 'notifications_status_off');
+        text.textContent = t(notificationsEnabled ? 'notifications_status_on' : 'notifications_status_off');
+    }
+    if (!notificationsEnabled) {
+        const stack = document.getElementById('toast-stack');
+        if (stack) {
+            stack.querySelectorAll('.toast-session-notif').forEach(node => _dismissToastEl(node));
+        }
+    }
+}
+
+async function toggleNotificationsEnabled(enabled) {
+    updateNotificationsModeUI(enabled);
+    try {
+        const res = await fetch('/api/settings/privacy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notifications_enabled: Boolean(enabled) })
+        });
+        const data = await res.json();
+        if (data.success && typeof data.notifications_enabled === 'boolean') {
+            updateNotificationsModeUI(data.notifications_enabled);
+            showToast(data.notifications_enabled ? t('notifications_toast_on') : t('notifications_toast_off'));
+        }
+    } catch (e) {
+        console.error('Failed to update notifications setting:', e);
+    }
+}
+
 async function loadPrivacySettings() {
     try {
         const res = await fetch('/api/settings/privacy');
@@ -970,8 +1061,10 @@ async function loadPrivacySettings() {
         if (typeof data.roleplay_enabled === 'boolean') {
             updateRoleplayModeUI(data.roleplay_enabled);
         }
-        if (typeof data.roleplay_enabled === 'boolean') {
-            updateRoleplayModeUI(data.roleplay_enabled);
+        if (typeof data.notifications_enabled === 'boolean') {
+            updateNotificationsModeUI(data.notifications_enabled);
+        } else {
+            updateNotificationsModeUI(notificationsEnabled);
         }
         const savedLocalLang = localStorage.getItem('shiro_lang');
         if (!savedLocalLang && data.ui_language && (data.ui_language === 'id' || data.ui_language === 'en')) {
@@ -1778,7 +1871,7 @@ function renderAgentThoughtHTML(meta) {
     const steps = Array.isArray(meta.agent_steps) ? meta.agent_steps : [];
     const thoughtText = (meta.thought_content || '').trim();
     const isRunning = Boolean(meta.is_running);
-    if (!steps.length && !thoughtText && !isRunning) return '';
+    if (!steps.length && !thoughtText) return '';
 
     const isOpen = isRunning || Boolean(meta.force_open);
     const dur = meta.thought_duration_sec;
@@ -1839,7 +1932,10 @@ function syncAgThoughtInMsg(msgEl, meta) {
     const wrapper = document.createElement('div');
     wrapper.innerHTML = renderAgentThoughtHTML(meta);
     const nextBlock = wrapper.firstElementChild;
-    if (!nextBlock) return;
+    if (!nextBlock) {
+        if (existing) existing.remove();
+        return;
+    }
 
     if (prevUserToggled) {
         nextBlock.dataset.userToggled = 'true';
@@ -2739,6 +2835,7 @@ function startTriggerTimer() {
     
     triggerTimer = setTimeout(() => {
         if (isAnySessionRunning() || (userInput && userInput.value.trim().length > 0)) return; 
+        const triggerSessionId = activeSessionId;
 
         fetch('/api/trigger', {
             method: 'POST',
@@ -2746,7 +2843,7 @@ function startTriggerTimer() {
         })
         .then(res => res.json())
         .then(data => {
-            if (data.reply && data.status !== 'idle') {
+            if (activeSessionId === triggerSessionId && data.reply && data.status !== 'idle') {
                 addMessage('assistant', data.reply, null, null, null, null, null, null, data.assistant_message_id || null, false); 
             }
         })
@@ -2756,6 +2853,12 @@ function startTriggerTimer() {
 
 // Send message main function (isolated per session so switching chats never interrupts or blocks background runs)
 async function sendMessage(overridePayload = null, explicitSessionId = null) {
+    if (overridePayload && ((typeof Event !== 'undefined' && overridePayload instanceof Event) || typeof overridePayload !== 'object' || ('isTrusted' in overridePayload && !('message' in overridePayload)))) {
+        overridePayload = null;
+    }
+    if (typeof explicitSessionId !== 'string') {
+        explicitSessionId = null;
+    }
     const targetSessionId = explicitSessionId || activeSessionId || 'default';
     if (!overridePayload && isSessionRunning(targetSessionId)) {
         await enqueueCurrentComposer(targetSessionId);
@@ -2992,7 +3095,7 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                             thought_content: run.liveThoughtText,
                             thought_duration_sec: run.liveThoughtDuration,
                             artifacts: run.liveArtifacts,
-                            is_running: true
+                            is_running: Boolean(run.liveAgentSteps.length || (run.liveThoughtText && run.liveThoughtText.trim()))
                         }
                     );
                     if (run.assistantMsgEl) {
@@ -3282,7 +3385,7 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                 }
                 updateAssistantUI(run.streamText, true);
                 if (run.assistantMsgEl) {
-                    if (run.liveAgentSteps.length || run.liveThoughtText) {
+                    if (run.liveAgentSteps.length || (run.liveThoughtText && run.liveThoughtText.trim())) {
                         run.liveAgentSteps = run.liveAgentSteps.map(s => s.status === 'running' ? { ...s, status: 'done' } : s);
                         syncAgThoughtInMsg(run.assistantMsgEl, {
                             agent_steps: run.liveAgentSteps,
@@ -3291,6 +3394,8 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                             is_running: false,
                             force_open: false
                         });
+                    } else {
+                        run.assistantMsgEl.querySelectorAll('.ag-thought-block').forEach(el => el.remove());
                     }
                     const finalActionObj = (run.finalData && run.finalData.agent_action) || run.activeAgentAction;
                     if (finalActionObj) {
@@ -3422,19 +3527,24 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
             if (isMounted()) {
                 showTyping(false);
                 if (status) status.textContent = t('status_stopped');
-                const lastAssistantMsg = chatMessages ? chatMessages.querySelector('.message.assistant:last-child') : null;
+                const lastAssistantMsg = run.assistantMsgEl || (chatMessages ? chatMessages.querySelector('.message.assistant:last-child') : null);
                 if (lastAssistantMsg) {
                     const runningThought = lastAssistantMsg.querySelector('.ag-thought-block.is-running');
                     if (runningThought) {
-                        runningThought.classList.remove('is-running');
-                        runningThought.classList.add('is-done');
-                        runningThought.querySelectorAll('.ph-spinner, .ag-spinner-ring').forEach(ic => {
-                            const sp = document.createElement('i');
-                            sp.className = 'ph ph-sparkle';
-                            ic.replaceWith(sp);
-                        });
-                        const titleSp = runningThought.querySelector('.ag-thought-title');
-                        if (titleSp) titleSp.textContent = 'Analysis stopped';
+                        const hasStepsOrText = Boolean(runningThought.querySelector('.ag-trace-step') || runningThought.querySelector('.ag-thought-reasoning'));
+                        if (!hasStepsOrText) {
+                            runningThought.remove();
+                        } else {
+                            runningThought.classList.remove('is-running');
+                            runningThought.classList.add('is-done');
+                            runningThought.querySelectorAll('.ph-spinner, .ag-spinner-ring').forEach(ic => {
+                                const sp = document.createElement('i');
+                                sp.className = 'ph ph-sparkle';
+                                ic.replaceWith(sp);
+                            });
+                            const titleSp = runningThought.querySelector('.ag-thought-title');
+                            if (titleSp) titleSp.textContent = 'Analysis stopped';
+                        }
                     }
                     const lastBubble = lastAssistantMsg.querySelector('.bubble');
                     if (lastBubble && lastBubble.classList.contains('hidden')) {
@@ -3511,7 +3621,8 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
 }
 
 function stopGeneration(targetSessionId = activeSessionId) {
-    const run = sessionRuns.get(targetSessionId || activeSessionId);
+    const sid = (typeof targetSessionId === 'string' && targetSessionId) ? targetSessionId : (activeSessionId || 'default');
+    const run = sessionRuns.get(sid);
     if (run && run.abortController) {
         run.abortController.abort();
     }
@@ -3674,7 +3785,10 @@ function renderMessagesList(messages) {
     const validMessages = (messages || []).filter(msg => {
         const hasContent = msg.content !== null && msg.content !== undefined && String(msg.content).trim().length > 0;
         const hasArtifacts = Array.isArray(msg.artifacts) && msg.artifacts.length > 0;
-        return Boolean(hasContent || msg.image || msg.document_name || msg.document_text || hasArtifacts);
+        const hasMultiMedia = (Array.isArray(msg.images) && msg.images.length > 0)
+            || (Array.isArray(msg.videos) && msg.videos.length > 0)
+            || (Array.isArray(msg.documents) && msg.documents.length > 0);
+        return Boolean(hasContent || msg.image || msg.document_name || msg.document_text || hasArtifacts || hasMultiMedia);
     });
     if (validMessages.length > 0) {
         validMessages.forEach(msg => {
@@ -3742,6 +3856,9 @@ async function loadChatHistory() {
         if (typeof data.roleplay_enabled === 'boolean') {
             updateRoleplayModeUI(data.roleplay_enabled);
         }
+        if (typeof data.notifications_enabled === 'boolean') {
+            updateNotificationsModeUI(data.notifications_enabled);
+        }
 
         renderMessagesList(data.history || []);
         updateMemoryCount();
@@ -3752,133 +3869,156 @@ async function loadChatHistory() {
 
 let currentSessionsData = [];
 
-async function loadSessions() {
+function highlightActiveSessionInList(targetId = activeSessionId) {
+    if (sidebarSessionList) {
+        sidebarSessionList.querySelectorAll('.session-item[data-session-id]').forEach((item) => {
+            const isTarget = item.dataset.sessionId === targetId;
+            item.classList.toggle('active', isTarget);
+            if (isTarget) item.classList.remove('is-unread-done');
+        });
+    }
+    if (sessionSelect && targetId) {
+        sessionSelect.value = targetId;
+    }
+}
+
+function applySessionsListUI(sessions, runningSessions = [], activeIdOverride = null) {
+    if (!Array.isArray(sessions)) return;
+    currentSessionsData = sessions;
+    const displayActiveId = activeIdOverride || activeSessionId || 'default';
+    serverRunningSessions = new Set(Array.isArray(runningSessions) ? runningSessions : []);
+    sessions.forEach(s => {
+        if (s && s.is_running) serverRunningSessions.add(s.id);
+    });
+
+    const activeSession = sessions.find(s => s.id === displayActiveId);
+    const isCurrentSessionPinned = activeSession ? Boolean(activeSession.pinned) : false;
+    updateChatMenuPinState(isCurrentSessionPinned);
+
+    if (activeSession && activeSession.title && activeSession.title !== 'New chat' && activeSession.title !== 'Chat baru') {
+        document.title = `${activeSession.title} · Shiro`;
+    } else {
+        document.title = 'Shiro · AI Assistant';
+    }
+
+    if (sessionSelect) {
+        sessionSelect.innerHTML = '';
+        sessions.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            const baseLabel = (s.pinned ? '📌 ' : '') + (s.title || `Chat ${s.id.slice(0, 6)}`);
+            const running = isSessionRunning(s.id);
+            const hasUnread = !running && unreadDoneSessions.has(s.id) && s.id !== displayActiveId;
+            opt.textContent = running ? `⏳ ${baseLabel}` : (hasUnread ? `✓ ${baseLabel}` : baseLabel);
+            if (s.id === displayActiveId) {
+                opt.selected = true;
+            }
+            sessionSelect.appendChild(opt);
+        });
+    }
+
+    if (sidebarSessionList) {
+        sidebarSessionList.innerHTML = '';
+        if (sessions.length === 0) {
+            const emptyTip = document.createElement('div');
+            emptyTip.className = 'session-empty';
+            emptyTip.textContent = t('no_sessions');
+            sidebarSessionList.appendChild(emptyTip);
+        } else {
+            sessions.forEach(s => {
+                const running = isSessionRunning(s.id);
+                const hasUnread = !running && unreadDoneSessions.has(s.id) && s.id !== displayActiveId;
+                const item = document.createElement('div');
+                item.className = 'session-item'
+                    + (s.id === displayActiveId ? ' active' : '')
+                    + (s.pinned ? ' is-pinned' : '')
+                    + (running ? ' is-running' : '')
+                    + (hasUnread ? ' is-unread-done' : '');
+                item.dataset.sessionId = s.id;
+
+                const content = document.createElement('div');
+                content.className = 'session-item-content';
+
+                const icon = document.createElement('i');
+                icon.className = 'ph ph-chat-teardrop-text session-item-icon';
+
+                const titleSpan = document.createElement('span');
+                titleSpan.className = 'session-item-title';
+                const sessionFullTitle = s.title || `Chat ${s.id.slice(0, 6)}`;
+                titleSpan.textContent = sessionFullTitle;
+                item.title = sessionFullTitle;
+                titleSpan.title = sessionFullTitle;
+
+                content.appendChild(icon);
+                content.appendChild(titleSpan);
+
+                if (running) {
+                    const runBadge = document.createElement('span');
+                    runBadge.className = 'session-running-badge';
+                    runBadge.title = t('session_running_label');
+                    runBadge.innerHTML = '<span class="ag-spinner-ring" aria-hidden="true"></span>';
+                    content.appendChild(runBadge);
+                } else if (hasUnread) {
+                    const doneDot = document.createElement('span');
+                    doneDot.className = 'session-done-dot';
+                    doneDot.title = t('session_done_title');
+                    content.appendChild(doneDot);
+                }
+
+                if (s.pinned) {
+                    const pinBadge = document.createElement('span');
+                    pinBadge.className = 'session-pin-badge';
+                    pinBadge.title = t('pinned_badge');
+                    pinBadge.innerHTML = '<i class="ph-fill ph-push-pin"></i>';
+                    content.appendChild(pinBadge);
+                }
+
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'session-item-delete';
+                delBtn.title = t('delete_chat_tooltip');
+                delBtn.innerHTML = '<i class="ph ph-trash"></i>';
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteSessionById(s.id, s.title);
+                });
+
+                item.appendChild(content);
+                item.appendChild(delBtn);
+
+                item.addEventListener('click', () => {
+                    switchSession(s.id);
+                    if (window.innerWidth <= 768) {
+                        closeSidebar();
+                    }
+                });
+
+                sidebarSessionList.appendChild(item);
+            });
+        }
+    }
+}
+
+async function loadSessions(options = {}) {
+    const { syncActive = false, renderMessages = false } = options || {};
+    const seqAtStart = sessionSwitchSeq;
     try {
         const res = await fetch('/api/sessions');
         const data = await res.json();
+        if (seqAtStart !== sessionSwitchSeq) return;
         if (data.sessions) {
-            currentSessionsData = data.sessions;
-            activeSessionId = data.active_session_id;
-            serverRunningSessions = new Set(Array.isArray(data.running_sessions) ? data.running_sessions : []);
-            data.sessions.forEach(s => {
-                if (s && s.is_running) serverRunningSessions.add(s.id);
-            });
-
-            const activeSession = data.sessions.find(s => s.id === data.active_session_id);
-            const isCurrentSessionPinned = activeSession ? Boolean(activeSession.pinned) : false;
-            updateChatMenuPinState(isCurrentSessionPinned);
-
-            if (activeSession && activeSession.title && activeSession.title !== 'New chat' && activeSession.title !== 'Chat baru') {
-                document.title = `${activeSession.title} · Shiro`;
-            } else {
-                document.title = 'Shiro · AI Assistant';
+            if (syncActive && data.active_session_id) {
+                activeSessionId = data.active_session_id;
             }
-
-            // Segera render data.messages hanya jika layar belum memiliki pesan obrolan aktif dan sesi tidak sedang streaming
-            if (Array.isArray(data.messages) && !isActiveSessionGenerating()) {
+            const displayId = activeSessionId || data.active_session_id || 'default';
+            if (renderMessages && data.active_session_id === displayId && Array.isArray(data.messages) && !isActiveSessionGenerating()) {
                 const existingMsgs = chatMessages ? chatMessages.querySelectorAll('.message:not(#typing-indicator)') : [];
                 const isOnlyGreeting = existingMsgs.length === 1 && existingMsgs[0].querySelector('[data-i18n="welcome_greeting"]');
                 if (existingMsgs.length === 0 || isOnlyGreeting) {
                     renderMessagesList(data.messages);
                 }
             }
-
-            if (sessionSelect) {
-                sessionSelect.innerHTML = '';
-                data.sessions.forEach(s => {
-                    const opt = document.createElement('option');
-                    opt.value = s.id;
-                    const baseLabel = (s.pinned ? '📌 ' : '') + (s.title || `Chat ${s.id.slice(0, 6)}`);
-                    const running = isSessionRunning(s.id);
-                    const hasUnread = !running && unreadDoneSessions.has(s.id) && s.id !== data.active_session_id;
-                    opt.textContent = running ? `⏳ ${baseLabel}` : (hasUnread ? `✓ ${baseLabel}` : baseLabel);
-                    if (s.id === data.active_session_id) {
-                        opt.selected = true;
-                    }
-                    sessionSelect.appendChild(opt);
-                });
-            }
-
-            if (sidebarSessionList) {
-                sidebarSessionList.innerHTML = '';
-                if (data.sessions.length === 0) {
-                    const emptyTip = document.createElement('div');
-                    emptyTip.className = 'session-empty';
-                    emptyTip.textContent = t('no_sessions');
-                    sidebarSessionList.appendChild(emptyTip);
-                } else {
-                    data.sessions.forEach(s => {
-                        const running = isSessionRunning(s.id);
-                        const hasUnread = !running && unreadDoneSessions.has(s.id) && s.id !== data.active_session_id;
-                        const item = document.createElement('div');
-                        item.className = 'session-item'
-                            + (s.id === data.active_session_id ? ' active' : '')
-                            + (s.pinned ? ' is-pinned' : '')
-                            + (running ? ' is-running' : '')
-                            + (hasUnread ? ' is-unread-done' : '');
-                        item.dataset.sessionId = s.id;
-
-                        const content = document.createElement('div');
-                        content.className = 'session-item-content';
-
-                        const icon = document.createElement('i');
-                        icon.className = 'ph ph-chat-teardrop-text session-item-icon';
-
-                        const titleSpan = document.createElement('span');
-                        titleSpan.className = 'session-item-title';
-                        const sessionFullTitle = s.title || `Chat ${s.id.slice(0, 6)}`;
-                        titleSpan.textContent = sessionFullTitle;
-                        item.title = sessionFullTitle;
-                        titleSpan.title = sessionFullTitle;
-
-                        content.appendChild(icon);
-                        content.appendChild(titleSpan);
-
-                        if (running) {
-                            const runBadge = document.createElement('span');
-                            runBadge.className = 'session-running-badge';
-                            runBadge.title = t('session_running_label');
-                            runBadge.innerHTML = '<span class="ag-spinner-ring" aria-hidden="true"></span>';
-                            content.appendChild(runBadge);
-                        } else if (hasUnread) {
-                            const doneDot = document.createElement('span');
-                            doneDot.className = 'session-done-dot';
-                            doneDot.title = t('session_done_title');
-                            content.appendChild(doneDot);
-                        }
-
-                        if (s.pinned) {
-                            const pinBadge = document.createElement('span');
-                            pinBadge.className = 'session-pin-badge';
-                            pinBadge.title = t('pinned_badge');
-                            pinBadge.innerHTML = '<i class="ph-fill ph-push-pin"></i>';
-                            content.appendChild(pinBadge);
-                        }
-
-                        const delBtn = document.createElement('button');
-                        delBtn.type = 'button';
-                        delBtn.className = 'session-item-delete';
-                        delBtn.title = t('delete_chat_tooltip');
-                        delBtn.innerHTML = '<i class="ph ph-trash"></i>';
-                        delBtn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            deleteSessionById(s.id, s.title);
-                        });
-
-                        item.appendChild(content);
-                        item.appendChild(delBtn);
-
-                        item.addEventListener('click', () => {
-                            switchSession(s.id);
-                            if (window.innerWidth <= 768) {
-                                closeSidebar();
-                            }
-                        });
-
-                        sidebarSessionList.appendChild(item);
-                    });
-                }
-            }
+            applySessionsListUI(data.sessions, data.running_sessions || [], displayId);
         }
     } catch (e) {
         console.error("Error loading sessions:", e);
@@ -3888,6 +4028,8 @@ async function loadSessions() {
 async function createNewSession() {
     const seq = ++sessionSwitchSeq;
     detachAllRunDOMRefs();
+    showTyping(false);
+    if (chatMessages) chatMessages.classList.add('is-switching');
     try {
         if (status) status.textContent = '...';
         const res = await fetch('/api/sessions/new', {
@@ -3925,7 +4067,11 @@ async function createNewSession() {
             if (drawer && !drawer.classList.contains('hidden')) {
                 renderChatFilesList();
             }
-            await loadSessions();
+            if (Array.isArray(data.sessions)) {
+                applySessionsListUI(data.sessions, data.running_sessions || [], activeSessionId);
+            } else {
+                await loadSessions({ syncActive: false, renderMessages: false });
+            }
             syncActiveSessionUI();
             updateMemoryCount();
             if (userInput) userInput.focus();
@@ -3933,13 +4079,22 @@ async function createNewSession() {
     } catch (e) {
         console.error("Error creating new session:", e);
         if (status) status.textContent = 'Error';
+    } finally {
+        if (chatMessages && seq === sessionSwitchSeq) chatMessages.classList.remove('is-switching');
     }
 }
 
 async function switchSession(sessionId, force = false) {
     if (!sessionId || (sessionId === activeSessionId && !force)) return;
+    const prevSessionId = activeSessionId;
     const seq = ++sessionSwitchSeq;
+    activeSessionId = sessionId;
     detachAllRunDOMRefs();
+    showTyping(false);
+    unreadDoneSessions.delete(sessionId);
+    dismissSessionDoneNotifications(sessionId);
+    highlightActiveSessionInList(sessionId);
+    if (chatMessages) chatMessages.classList.add('is-switching');
     try {
         if (status) status.textContent = '...';
         const res = await fetch('/api/sessions/switch', {
@@ -3950,9 +4105,6 @@ async function switchSession(sessionId, force = false) {
         const data = await res.json();
         if (seq !== sessionSwitchSeq) return;
         if (data.success) {
-            activeSessionId = sessionId;
-            unreadDoneSessions.delete(sessionId);
-            dismissSessionDoneNotifications(sessionId);
             try {
                 if (window.location.pathname !== '/chat/' + sessionId) {
                     window.history.pushState(null, '', '/chat/' + sessionId);
@@ -3964,14 +4116,28 @@ async function switchSession(sessionId, force = false) {
             clearAttachedVideo();
 
             renderMessagesList(data.messages || []);
-            await loadSessions();
+            if (Array.isArray(data.sessions)) {
+                applySessionsListUI(data.sessions, data.running_sessions || [], sessionId);
+            } else {
+                await loadSessions({ syncActive: false, renderMessages: false });
+            }
             syncActiveSessionUI();
             updateMemoryCount();
             if (userInput) userInput.focus();
+        } else {
+            activeSessionId = prevSessionId;
+            highlightActiveSessionInList(prevSessionId);
+            syncActiveSessionUI();
         }
     } catch (e) {
         console.error("Error switching session:", e);
-        if (status) status.textContent = 'Error';
+        if (seq === sessionSwitchSeq) {
+            activeSessionId = prevSessionId;
+            highlightActiveSessionInList(prevSessionId);
+            if (status) status.textContent = 'Error';
+        }
+    } finally {
+        if (chatMessages && seq === sessionSwitchSeq) chatMessages.classList.remove('is-switching');
     }
 }
 
@@ -4014,6 +4180,7 @@ async function deleteSessionById(sessionId, title) {
 
     if (!confirmed) return;
 
+    const seq = ++sessionSwitchSeq;
     const runningTarget = sessionRuns.get(sessionId);
     if (runningTarget && runningTarget.isRunning && runningTarget.abortController) {
         runningTarget.aborted = true;
@@ -4029,14 +4196,20 @@ async function deleteSessionById(sessionId, title) {
             method: 'DELETE'
         });
         const data = await res.json();
+        if (seq !== sessionSwitchSeq) return;
         if (data.success) {
             activeSessionId = data.active_session_id;
+            detachAllRunDOMRefs();
             clearAttachedDocument();
             clearAttachedImage();
             clearAttachedVideo();
 
             renderMessagesList(data.messages || []);
-            await loadSessions();
+            if (Array.isArray(data.sessions)) {
+                applySessionsListUI(data.sessions, data.running_sessions || [], activeSessionId);
+            } else {
+                await loadSessions({ syncActive: false, renderMessages: false });
+            }
             syncActiveSessionUI();
             updateMemoryCount();
         } else if (status) {
@@ -4821,8 +4994,8 @@ function initModalTabsScroll() {
 }
 
 // Event Listeners
-sendBtn.addEventListener('click', sendMessage);
-stopBtn.addEventListener('click', stopGeneration);
+sendBtn.addEventListener('click', () => sendMessage());
+stopBtn.addEventListener('click', () => stopGeneration());
 if (newChatBtn) newChatBtn.addEventListener('click', createNewSession);
 if (sidebarNewChatBtn) {
     sidebarNewChatBtn.addEventListener('click', () => {
@@ -6679,7 +6852,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 3. Muat sesi percakapan & pesan
     try {
-        await loadSessions();
+        await loadSessions({ syncActive: !targetSessionId, renderMessages: !targetSessionId });
         if (targetSessionId) {
             try {
                 await switchSession(targetSessionId, true);
@@ -6705,7 +6878,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(async () => {
             if (!currentSessionsData || currentSessionsData.length === 0) {
                 console.log('[Init] Retrying loadSessions after slight delay...');
-                await loadSessions();
+                await loadSessions({ syncActive: false, renderMessages: false });
             }
         }, 1200);
     }
