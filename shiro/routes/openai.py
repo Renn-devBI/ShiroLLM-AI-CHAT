@@ -6,11 +6,12 @@ Cursor, LibreChat, Open WebUI, and external VTuber software.
 """
 
 import os
+import json
 import time
 import base64
 import secrets
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 
 from shiro.auth import verify_api_key
 from shiro.server_state import state
@@ -22,7 +23,7 @@ from shiro.models import (
     LYRA_DISPLAY_NAME,
 )
 from shiro.memory.optimization import compress_old_messages
-from shiro.pipeline.inference import get_shiro_reply
+from shiro.pipeline.inference import get_shiro_reply, stream_shiro_reply
 
 openai_bp = Blueprint("openai_bp", __name__)
 
@@ -104,9 +105,14 @@ def handle_openai_chat_completions(api_version="v1"):
 
         primary_image = incoming_images[0] if incoming_images else None
 
-        # Agentic tools & tool choice
-        tools = data.get("tools")
-        tool_choice = data.get("tool_choice")
+        # Agentic tools & tool choice (VtuberAI v2 murni roleplay langsung tanpa tool calling / deep search)
+        if effective_version == "v2":
+            tools = None
+            tool_choice = None
+        else:
+            tools = data.get("tools")
+            tool_choice = data.get("tool_choice")
+        stream_mode = bool(data.get("stream", False))
 
         # Controlled reasoning parameters (untuk VTuber v2 wajib langsung menjawab tanpa <think>/CoT)
         if effective_version == "v2":
@@ -144,6 +150,70 @@ def handle_openai_chat_completions(api_version="v1"):
             with memory.lock:
                 memory.add_message("user", log_msg, image_path=saved_img_rel)
                 memory.save_memory()
+
+        if stream_mode:
+            response_id = f"chatcmpl-shiro-{effective_version}-{secrets.token_hex(8)}"
+            created_time = int(time.time())
+
+            def _generate_openai_sse():
+                final_reply = ""
+                emitted_any = False
+                yield f"data: {json.dumps({'id': response_id, 'object': 'chat.completion.chunk', 'created': created_time, 'model': model_name, 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
+                try:
+                    for ev in stream_shiro_reply(
+                        user_message,
+                        image_base64=primary_image,
+                        images_base64=incoming_images if len(incoming_images) > 1 else None,
+                        api_version=effective_version,
+                        custom_system_prompt=client_system_prompt,
+                        incoming_messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        reasoning_effort=reasoning_effort,
+                        include_reasoning=include_reasoning,
+                        max_tokens=client_max_tokens,
+                    ):
+                        ev_type = ev.get("type")
+                        if ev_type == "token":
+                            tok = ev.get("token", "")
+                            if tok:
+                                emitted_any = True
+                                final_reply += tok
+                                yield f"data: {json.dumps({'id': response_id, 'object': 'chat.completion.chunk', 'created': created_time, 'model': model_name, 'choices': [{'index': 0, 'delta': {'content': tok}, 'finish_reason': None}]})}\n\n"
+                        elif ev_type == "done":
+                            done_rep = ev.get("reply") or ""
+                            if done_rep:
+                                final_reply = done_rep
+                            if not emitted_any and final_reply:
+                                emitted_any = True
+                                yield f"data: {json.dumps({'id': response_id, 'object': 'chat.completion.chunk', 'created': created_time, 'model': model_name, 'choices': [{'index': 0, 'delta': {'content': final_reply}, 'finish_reason': None}]})}\n\n"
+                        elif ev_type == "error":
+                            err_rep = ev.get("reply") or ev.get("error") or ""
+                            if err_rep and not emitted_any:
+                                final_reply = err_rep
+                                emitted_any = True
+                                yield f"data: {json.dumps({'id': response_id, 'object': 'chat.completion.chunk', 'created': created_time, 'model': model_name, 'choices': [{'index': 0, 'delta': {'content': err_rep}, 'finish_reason': None}]})}\n\n"
+                finally:
+                    if final_reply:
+                        try:
+                            with memory.lock:
+                                memory.add_message("assistant", final_reply)
+                                if effective_version == "v1" and (not primary_image or "poster tersebut" not in final_reply.lower()):
+                                    memory.record_learned_pattern(log_msg, final_reply, image_path=saved_img_rel)
+                                memory.update_emotional_state_from_response(final_reply)
+                                memory.update_mood_from_emotions()
+                                compress_old_messages(memory, keep_count=15)
+                                memory.save_memory()
+                        except Exception as e_mem:
+                            print(f"[Completions Stream Save Warning]: {e_mem}")
+                yield f"data: {json.dumps({'id': response_id, 'object': 'chat.completion.chunk', 'created': created_time, 'model': model_name, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return Response(
+                _generate_openai_sse(),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
         reply_result = get_shiro_reply(
             user_message,
@@ -219,24 +289,34 @@ def handle_openai_chat_completions(api_version="v1"):
         }), 500
 
 @openai_bp.route('/v1/chat/completions', methods=['POST'])
+@openai_bp.route('/api/v1/chat/completions', methods=['POST'])
 def openai_chat_completions_v1():
     return handle_openai_chat_completions(api_version="v1")
 
 @openai_bp.route('/v2/chat/completions', methods=['POST'])
 @openai_bp.route('/v2/v1/chat/completions', methods=['POST'])
+@openai_bp.route('/api/v2/chat/completions', methods=['POST'])
+@openai_bp.route('/api/v2/v1/chat/completions', methods=['POST'])
 def openai_chat_completions_v2():
     return handle_openai_chat_completions(api_version="v2")
 
 @openai_bp.route('/v3/chat/completions', methods=['POST'])
 @openai_bp.route('/v3/v1/chat/completions', methods=['POST'])
+@openai_bp.route('/api/v3/chat/completions', methods=['POST'])
+@openai_bp.route('/api/v3/v1/chat/completions', methods=['POST'])
 def openai_chat_completions_v3():
     return handle_openai_chat_completions(api_version="v3")
 
 @openai_bp.route('/v1/models', methods=['GET'])
+@openai_bp.route('/api/v1/models', methods=['GET'])
 @openai_bp.route('/v2/models', methods=['GET'])
 @openai_bp.route('/v2/v1/models', methods=['GET'])
+@openai_bp.route('/api/v2/models', methods=['GET'])
+@openai_bp.route('/api/v2/v1/models', methods=['GET'])
 @openai_bp.route('/v3/models', methods=['GET'])
 @openai_bp.route('/v3/v1/models', methods=['GET'])
+@openai_bp.route('/api/v3/models', methods=['GET'])
+@openai_bp.route('/api/v3/v1/models', methods=['GET'])
 def openai_models():
     """List available models for OpenAI SDK compatibility"""
     config = load_model_config()

@@ -395,9 +395,13 @@ def _prepare_inference_payload(
     memory = state.init_memory()
     web_reader = state.init_web_reader()
     roleplay_enabled = (
-        bool(memory.system_metadata.get("roleplay_enabled", True))
-        if (memory and hasattr(memory, "system_metadata") and isinstance(memory.system_metadata, dict))
-        else True
+        True
+        if api_version == "v2"
+        else (
+            bool(memory.system_metadata.get("roleplay_enabled", True))
+            if (memory and hasattr(memory, "system_metadata") and isinstance(memory.system_metadata, dict))
+            else True
+        )
     )
 
     raw_user_typed = (user_input or "").strip()
@@ -565,7 +569,7 @@ def _prepare_inference_payload(
     elif memory:
         sess_hist_src = list(getattr(memory, "short_term_history", []) or [])
 
-    if raw_user_typed:
+    if raw_user_typed and api_version != "v2":
         try:
             from shiro.agent.tools import (
                 detect_agent_intent,
@@ -1308,11 +1312,12 @@ def _prepare_inference_payload(
             pass
 
     if api_version == "v2":
+        vtuber_custom = custom_system_prompt or custom_persona or ""
         system_prompt = build_vtuber_system_prompt(
             owner_name=user_name,
-            custom_instruction=custom_persona,
+            custom_instruction=vtuber_custom,
             active_model_name=active_model_display,
-        ) + tools_addon + reasoning_addon + time_ctx_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
+        ) + time_ctx_addon + doc_prompt_addon + visual_guidance_addon
     elif api_version == "v3":
         base_p = custom_system_prompt or custom_persona or ""
         system_prompt = build_custom_system_prompt(base_p) + tools_addon + reasoning_addon + time_ctx_addon + web_prompt_addon + doc_prompt_addon + visual_guidance_addon
@@ -1338,7 +1343,7 @@ def _prepare_inference_payload(
         system_prompt += build_identity_security_lock(
             active_model_name=active_model_display,
             user_lang=identity_probe.get("language", "id"),
-            roleplay_enabled=roleplay_enabled,
+            roleplay_enabled=True if api_version == "v2" else roleplay_enabled,
             assistant_name=ai_name,
         )
 
@@ -1481,15 +1486,15 @@ def _prepare_inference_payload(
             parts_user.append(" ")
 
         # Anti-drift anchor: kunci bahasa sesuai bahasa pengguna dan larang code-switching di tengah kalimat/narasi
-        if not is_user_english_query and raw_user_typed:
-            if roleplay_enabled and api_version != "v3":
+        if not is_user_english_query and raw_user_typed and api_version not in ("v2", "v3"):
+            if roleplay_enabled:
                 parts_user.append(
                     f"\n[Pedoman Bahasa]: {user_name} berbicara dalam Bahasa Indonesia. "
                     f"Jawab 100% dalam Bahasa Indonesia santai khas {ai_name} dari awal sampai akhir. "
                     f"DILARANG KERAS mencampur atau beralih ke Bahasa Inggris pada narasi tindakan *...* maupun dialog "
                     f"(jangan menulis frasa seperti 'my head against his shoulder', 'Shiro here', 'you don\'t gotta', 'swallows hard', 'whispers', dll; gunakan Bahasa Indonesia alami sepenuhnya)."
                 )
-            elif api_version != "v3":
+            else:
                 parts_user.append(
                     f"\n[Pedoman Bahasa]: Pengguna berbicara dalam Bahasa Indonesia. "
                     f"Jawab 100% dalam Bahasa Indonesia profesional yang bersih, langsung, dan bebas narasi roleplay (*...*) maupun sapaan 'Kakak'."
@@ -2066,7 +2071,7 @@ def _finalize_inference_output(
                     "status": "done",
                     "feedback": f"Packaged {arch_art['file_count']} file(s) into {arch_art['filename']} ({arch_art['format'].upper()}, {arch_art['size_label']})",
                 })
-        elif not artifacts and extracted_post:
+        elif api_version != "v2" and not artifacts and extracted_post:
             # Jangan memicu artifact file unduhan untuk perintah 1 baris tanpa nama file eksplisit (mis. ```bat\nshutdown /a\n```)
             def _is_meaningful_download_block(f_item: Dict[str, str]) -> bool:
                 fname = str(f_item.get("filename") or "")
@@ -2106,7 +2111,7 @@ def _finalize_inference_output(
         print(f"[Inference Packager Warning]: {e_pkg}")
 
     # Post-LLM Deferred MP4 Video Rendering
-    if (pending_video or ai_video_call) and not any(a.get("kind") == "video" for a in artifacts):
+    if api_version != "v2" and (pending_video or ai_video_call) and not any(a.get("kind") == "video" for a in artifacts):
         try:
             from shiro.vision.video import render_video_artifact
             v_args = (ai_video_call or {}).get("args") or {}
@@ -2431,11 +2436,12 @@ def get_shiro_reply(
 
             round_calls, _ = _parse_agent_tool_calls(raw_reply)
             research_calls = []
-            for tc in round_calls:
-                if tc.get("name") in ("web_search", "open_url", "screenshot", "search_image"):
-                    sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
-                    if sig not in executed_tool_sigs:
-                        research_calls.append((tc, sig))
+            if api_version != "v2":
+                for tc in round_calls:
+                    if tc.get("name") in ("web_search", "open_url", "screenshot", "search_image"):
+                        sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
+                        if sig not in executed_tool_sigs:
+                            research_calls.append((tc, sig))
             if research_calls and react_round + 1 < max_agent_rounds:
                 is_heavy_task_stream = True
                 obs_chunks: List[str] = []
@@ -2624,7 +2630,7 @@ def stream_shiro_reply(
         pre_has_doc = bool(document_info or documents)
         pre_has_image = bool(image_base64 or images_base64)
         pre_has_video = bool(videos)
-        if raw_user_typed:
+        if raw_user_typed and api_version != "v2":
             try:
                 from shiro.agent.tools import detect_agent_intent
                 mem_inst = state.init_memory()
@@ -3263,11 +3269,12 @@ def stream_shiro_reply(
 
             round_calls, non_tool_raw = _parse_agent_tool_calls(round_raw_reply)
             research_calls = []
-            for tc in round_calls:
-                if tc.get("name") in ("web_search", "open_url", "screenshot", "search_image"):
-                    sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
-                    if sig not in executed_tool_sigs:
-                        research_calls.append((tc, sig))
+            if api_version != "v2":
+                for tc in round_calls:
+                    if tc.get("name") in ("web_search", "open_url", "screenshot", "search_image"):
+                        sig = f"{tc.get('name')}|{json.dumps(tc.get('args') or {}, sort_keys=True)}"
+                        if sig not in executed_tool_sigs:
+                            research_calls.append((tc, sig))
             if research_calls and react_round + 1 < max_agent_rounds:
                 is_heavy_task_stream = True
                 obs_chunks: List[str] = []

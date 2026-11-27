@@ -151,5 +151,89 @@ class TestVTuberAndMultiVersionRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("error", resp.get_json())
 
+    def test_api_v2_routes_compatibility_and_pure_roleplay_no_deep_search(self):
+        """Memastikan /api/v2/* berjalan mulus dengan roleplay murni tanpa deep search atau tool calling AI agent."""
+        from unittest.mock import patch
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # 1. Endpoint /api/v2/models & /api/v2/models/switch aktif (bukan 404)
+        m_resp = self.client.get("/api/v2/models", headers=headers)
+        self.assertEqual(m_resp.status_code, 200)
+        sw_resp = self.client.post("/api/v2/models/switch", headers=headers, json={"model": "NonExistentModel-99B"})
+        self.assertNotEqual(sw_resp.status_code, 405)
+        self.assertIn("Model", sw_resp.get_json().get("error", ""))
+
+        # 2. Meskipun web UI mematikan roleplay_enabled dan prompt memicu kata 'cari tahu' / 'cuaca',
+        #    /api/v2/chat/completions wajib menjawab langsung via roleplay tanpa memanggil deep search!
+        web.memory.system_metadata["roleplay_enabled"] = False
+        captured_prompts = []
+
+        def _fake_create_chat(messages=None, **kwargs):
+            captured_prompts.append(messages[0]["content"] if messages else "")
+            return {
+                "choices": [{
+                    "message": {"content": '[Mouth Smile] "Ehh? Cuacanya lagi cerah kok Kakak! Ayo ngobrol sama Shiro aja~"'},
+                    "finish_reason": "stop",
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 18, "total_tokens": 30},
+            }
+
+        self.mock_llm.create_chat_completion.side_effect = _fake_create_chat
+
+        payload = {
+            "model": "ShiroHaru-Lyra-Agent",
+            "messages": [
+                {"role": "system", "content": "Custom VTuber Greeting Note"},
+                {"role": "user", "content": "Shiro, cari tahu tentang anime terbaru dan cek cuaca Jakarta dong!"},
+            ],
+        }
+        with patch("shiro.agent.tools.detect_agent_intent", side_effect=AssertionError("detect_agent_intent must NOT run on v2")), \
+             patch("shiro.agent.tools.search_google_web", side_effect=AssertionError("search_google_web must NOT run on v2")), \
+             patch("shiro.agent.tools.check_weather", side_effect=AssertionError("check_weather must NOT run on v2")):
+            resp = self.client.post("/api/v2/chat/completions", headers=headers, json=payload)
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data.get("api_version"), "v2")
+        msg = data["choices"][0]["message"]
+        self.assertTrue(msg["content"].startswith("["))
+        self.assertNotIn("reasoning_content", msg)
+        self.assertTrue(captured_prompts)
+        self.assertIn("Custom VTuber Greeting Note", captured_prompts[0])
+        self.assertNotIn("bebas narasi roleplay", captured_prompts[0])
+
+    def test_api_v2_streaming_sse_format(self):
+        """Memastikan /api/v2/chat/completions dengan stream=True mengirim OpenAI SSE chunks dan [DONE] tanpa deep search."""
+        from unittest.mock import patch
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        self.mock_llm.create_chat_completion.side_effect = None
+        self.mock_llm.create_chat_completion.return_value = iter([
+            {"choices": [{"delta": {"content": '[Eye Smile] '}}]},
+            {"choices": [{"delta": {"content": '"Halo Kakak, aku kangen!"'}}]},
+        ])
+
+        payload = {
+            "model": "ShiroHaru-Lyra-Agent",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Shiro cari info anime dong"}],
+        }
+        with patch("shiro.agent.tools.detect_agent_intent", side_effect=AssertionError("detect_agent_intent must NOT run on v2 stream")):
+            resp = self.client.post("/api/v2/chat/completions", headers=headers, json=payload)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/event-stream", resp.content_type)
+        body = resp.get_data(as_text=True)
+        self.assertIn("chat.completion.chunk", body)
+        self.assertIn("Halo Kakak, aku kangen!", body)
+        self.assertIn("data: [DONE]", body)
+
 if __name__ == '__main__':
     unittest.main()

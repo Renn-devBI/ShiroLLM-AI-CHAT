@@ -409,6 +409,9 @@ def set_lyra_context_tier():
 @admin_bp.route('/v1/models/switch', methods=['POST'])
 @admin_bp.route('/v2/models/switch', methods=['POST'])
 @admin_bp.route('/v3/models/switch', methods=['POST'])
+@admin_bp.route('/api/v1/models/switch', methods=['POST'])
+@admin_bp.route('/api/v2/models/switch', methods=['POST'])
+@admin_bp.route('/api/v3/models/switch', methods=['POST'])
 def switch_model():
     try:
         data = request.json or {}
