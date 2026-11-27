@@ -230,7 +230,7 @@ def detect_archive_request(text: str) -> Optional[Dict[str, Any]]:
     if not has_action and not explicit_arch_file_m:
         return None
 
-    # Deteksi format (urutkan compound extension terlebih dahulu!)
+    # Deteksi format (urutkan compound extension terlebih dahulu, lalu zip sebelum bare tar!)
     detected_fmt = "zip"
     for pat, fmt_val in [
         (r"(?:\.|\b)(?:tar\.gz)\b", "tar.gz"),
@@ -240,10 +240,10 @@ def detect_archive_request(text: str) -> Optional[Dict[str, Any]]:
         (r"(?:\.|\b)(?:tar\.xz)\b", "tar.xz"),
         (r"(?:\.|\b)(?:txz)\b", "txz"),
         (r"(?:\.|\b)(?:7z|7zip|7-zip)\b", "7z"),
-        (r"(?:\.|\b)(?:tar)\b", "tar"),
+        (r"(?:\.|\b)(?:zip|zipkan)\b", "zip"),
+        (r"\.tar\b|\b(?:format|ekstensi|file|berkas|arsip|kompres|jadikan|bentuk|ke)\s+tar\b", "tar"),
         (r"(?:\.|\b)(?:gz|gzip)\b", "gz"),
         (r"(?:\.|\b)(?:rar)\b", "rar"),
-        (r"(?:\.|\b)(?:zip|zipkan)\b", "zip"),
     ]:
         if re.search(pat, low):
             detected_fmt = fmt_val
@@ -412,33 +412,148 @@ def extract_named_files_from_markdown(text: str) -> List[Dict[str, str]]:
     return list(files_by_name.values())
 
 
+_GENERIC_ROOT_DIRS = {
+    "src", "app", "lib", "components", "pages", "public", "api", "utils",
+    "types", "hooks", "styles", "assets", "static", "templates", "config",
+    "scripts", "tests", "test", "docs", "dist", "build", "bin",
+}
+
+_ARCHIVE_EXT_RE = re.compile(
+    r"\.(?:tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2|txz|zip|tar|gz|7z|rar)$",
+    re.IGNORECASE,
+)
+
+
+def _slugify_project_name(raw: str) -> str:
+    """Mengubah nama proyek/judul menjadi slug nama file yang bersih dan deskriptif."""
+    if not raw:
+        return ""
+    s = str(raw).strip().strip("`\"'()[]{}<>.,;:/\\")
+    # Hapus scope npm seperti @org/
+    s = re.sub(r"^@[A-Za-z0-9_.\-]+/", "", s)
+    s = _ARCHIVE_EXT_RE.sub("", s)
+    s = re.sub(r"[^A-Za-z0-9_\-]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-_.")
+    if len(s) < 2 or len(s) > 64:
+        return ""
+    if s.lower() in {"e", "a", "x", "f", "file", "files", "archive", "project", "app", "web", "code", "output"}:
+        return ""
+    return s.lower()
+
+
+def _extract_project_name_from_files(files: Optional[List[Dict[str, str]]]) -> str:
+    """Mengekstrak nama proyek asli yang dibuat AI dari package.json, pyproject.toml, Cargo.toml, atau layout/HTML title."""
+    if not files:
+        return ""
+
+    # 1. Cek package.json -> "name": "..."
+    for f in files:
+        base = (f.get("basename") or f.get("filename") or "").split("/")[-1].lower()
+        content = str(f.get("content") or "")
+        if base == "package.json" and content:
+            m = re.search(r'"name"\s*:\s*"([^"]{2,64})"', content)
+            if m:
+                slug = _slugify_project_name(m.group(1))
+                if slug:
+                    return slug
+
+    # 2. Cek pyproject.toml / Cargo.toml / pubspec.yaml / composer.json
+    for f in files:
+        base = (f.get("basename") or f.get("filename") or "").split("/")[-1].lower()
+        content = str(f.get("content") or "")
+        if not content:
+            continue
+        if base in ("pyproject.toml", "cargo.toml"):
+            m = re.search(r'^\s*name\s*=\s*["\']([^"\']{2,64})["\']', content, re.MULTILINE)
+            if m:
+                slug = _slugify_project_name(m.group(1))
+                if slug:
+                    return slug
+        elif base == "pubspec.yaml":
+            m = re.search(r'^\s*name\s*:\s*([A-Za-z0-9_\-]{2,64})', content, re.MULTILINE)
+            if m:
+                slug = _slugify_project_name(m.group(1))
+                if slug:
+                    return slug
+        elif base == "composer.json":
+            m = re.search(r'"name"\s*:\s*"([^"]{2,64})"', content)
+            if m:
+                slug = _slugify_project_name(m.group(1).split("/")[-1])
+                if slug:
+                    return slug
+
+    # 3. Cek single non-generic root directory pada path file
+    roots = {
+        f["filename"].split("/")[0]
+        for f in files
+        if "/" in f.get("filename", "")
+    }
+    if len(roots) == 1:
+        root = sanitize_filename(next(iter(roots)))
+        if root and "." not in root and root.lower() not in _GENERIC_ROOT_DIRS:
+            slug = _slugify_project_name(root)
+            if slug:
+                return slug
+
+    # 4. Cek metadata title di layout.tsx / index.html
+    for f in files:
+        base = (f.get("basename") or f.get("filename") or "").split("/")[-1].lower()
+        content = str(f.get("content") or "")
+        if not content:
+            continue
+        if base in ("layout.tsx", "layout.ts", "layout.jsx", "layout.js"):
+            m = re.search(r'\btitle\s*:\s*["\']([^"\']{3,60})["\']', content)
+            if m:
+                slug = _slugify_project_name(m.group(1))
+                if slug:
+                    return slug
+        elif base in ("index.html", "index.htm"):
+            m = re.search(r'<title>\s*([^<]{3,60})\s*</title>', content, re.IGNORECASE)
+            if m:
+                slug = _slugify_project_name(m.group(1))
+                if slug:
+                    return slug
+
+    return ""
+
+
 def infer_project_name_from_text(text: str, files: Optional[List[Dict[str, str]]] = None) -> str:
-    """Menebak nama folder/proyek yang rapi dari teks asisten atau struktur berkas."""
-    if files:
-        roots = {f["filename"].split("/")[0] for f in files if "/" in f.get("filename", "")}
-        if len(roots) == 1:
-            root = sanitize_filename(next(iter(roots)))
-            if root and "." not in root:
-                return root
+    """Menebak nama folder/proyek yang rapi dari manifest berkas buatan AI, struktur folder, atau teks asisten."""
+    from_files = _extract_project_name_from_files(files)
+    if from_files:
+        return from_files
 
     if text:
+        # Cek tree struktur folder di blok kode (mis. ```\notakudesu-scraper/\n├── package.json```)
+        tree_m = re.search(
+            r'```(?:text|plaintext|bash|sh|tree)?\s*\n\s*([A-Za-z0-9][A-Za-z0-9_\-]{2,48})/\s*\n\s*[├└│|+]',
+            text,
+        )
+        if tree_m:
+            slug = _slugify_project_name(tree_m.group(1))
+            if slug and slug not in _GENERIC_ROOT_DIRS:
+                return slug
+
+        prose_only = re.sub(r'```[\s\S]*?```', ' ', text)
         patterns = [
-            r'folder\s+baru\s*\(\s*misal(?:nya)?\s*`?([A-Za-z0-9_\-]{2,40})`?\s*\)',
-            r'folder\s+`([A-Za-z0-9_\-]{2,40})`',
-            r'proyek\s+`([A-Za-z0-9_\-]{2,40})`',
+            r'folder\s+baru\s*\(\s*misal(?:nya)?\s*`?([A-Za-z0-9_\-]{2,48})`?\s*\)',
+            r'folder\s+`([A-Za-z0-9_\-]{2,48})`',
+            r'proyek\s+`([A-Za-z0-9_\-]{2,48})`',
+            r'project\s+`([A-Za-z0-9_\-]{2,48})`',
         ]
         for pat in patterns:
-            m = re.search(pat, text, re.IGNORECASE)
+            m = re.search(pat, prose_only, re.IGNORECASE)
             if m:
-                cand = sanitize_filename(m.group(1))
-                if cand:
-                    return cand
+                slug = _slugify_project_name(m.group(1))
+                if slug and slug not in _GENERIC_ROOT_DIRS:
+                    return slug
 
     if files and len(files) == 1:
         b = files[0]["basename"]
         stem = b.rsplit(".", 1)[0] if "." in b else b
-        if stem:
-            return stem
+        slug = _slugify_project_name(stem)
+        if slug:
+            return slug
 
     return "shiro-project"
 
@@ -538,25 +653,37 @@ def merge_file_collections(
 
 def detect_archive_claim_in_reply(reply_text: str) -> Optional[Dict[str, Any]]:
     """
-    Mendeteksi bila AI dalam teks balasannya menyebut pembuatan arsip (.zip/.tar.gz/.7z/.tar)
-    namun belum memanggil tag [[AGENT_TOOL:create_archive|...]] secara eksplisit.
+    Mendeteksi bila AI dalam teks balasannya (DI LUAR blok kode) menyebut pembuatan arsip
+    (.zip/.tar.gz/.7z/.tar) namun belum memanggil tag [[AGENT_TOOL:create_archive|...]] secara eksplisit.
+    Mengabaikan seluruh fenced code block agar ekspresi kode seperti `e.target` tidak pernah salah terdeteksi.
     """
     if not reply_text:
         return None
-    m = re.search(
-        r'`?([A-Za-z0-9_\-.]+\.(?:tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2|txz|zip|tar|gz|7z))`?',
-        reply_text,
+    # Hapus seluruh blok kode markdown terlebih dahulu agar `e.target`, `event.target`, dll. tidak pernah cocok
+    prose_only = re.sub(r'```[\s\S]*?```', ' ', reply_text)
+    low = prose_only.lower()
+    if not any(
+        kw in low
+        for kw in ("arsip", "archive", "berhasil dibuat", "dikemas", "dikompres", "compressed", "ekstrak zip", "pack", "packaged", "unduh", "download")
+    ):
+        return None
+
+    arch_re = re.compile(
+        r'(?<![A-Za-z0-9_\-.])`?([A-Za-z0-9][A-Za-z0-9_\-]{1,63}\.(?:tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2|txz|zip|tar|gz|7z))`?(?![A-Za-z0-9_\-])',
         flags=re.IGNORECASE,
     )
-    if not m:
-        return None
-    arch_name = sanitize_filename(m.group(1), allow_subdirs=False)
-    low = reply_text.lower()
-    if any(kw in low for kw in ("arsip", "archive", "berhasil dibuat", "dikemas", "dikompres", "compressed", "ekstrak zip", "pack", "packaged")):
+    for m in arch_re.finditer(prose_only):
+        arch_name = sanitize_filename(m.group(1), allow_subdirs=False)
+        if not arch_name:
+            continue
+        stem = _ARCHIVE_EXT_RE.sub("", arch_name)
+        if len(stem) < 2:
+            continue
         req_fmt = "zip"
         for ext_pat, f_name in [
             (".tar.gz", "tar.gz"), (".tgz", "tgz"), (".tar.bz2", "tar.bz2"),
-            (".tar.xz", "tar.xz"), (".7z", "7z"), (".tar", "tar"), (".gz", "gz"), (".zip", "zip")
+            (".tbz2", "tbz2"), (".tar.xz", "tar.xz"), (".txz", "txz"),
+            (".7z", "7z"), (".zip", "zip"), (".tar", "tar"), (".gz", "gz"),
         ]:
             if arch_name.lower().endswith(ext_pat):
                 req_fmt = f_name
@@ -735,12 +862,18 @@ def create_archive_artifact(
     if not written_files:
         raise ValueError("Semua berkas gagal divalidasi untuk pengemasan.")
 
-    base_stem = sanitize_filename(project_name or "") or infer_project_name_from_text("", files)
+    base_stem = _slugify_project_name(project_name or "") or infer_project_name_from_text("", files)
     actual_fmt = norm_fmt
     extra_notes: List[str] = [format_note] if format_note else []
 
     if archive_name:
-        exact_archive_name = sanitize_filename(archive_name, allow_subdirs=False)
+        cleaned_arch = sanitize_filename(archive_name, allow_subdirs=False)
+        raw_stem = _ARCHIVE_EXT_RE.sub("", cleaned_arch).strip(" -_.") if cleaned_arch else ""
+        if len(raw_stem) >= 2:
+            # Pastikan ekstensi arsip selalu konsisten dengan format aktual (mis. zip -> .zip, bukan .tar)
+            exact_archive_name = f"{raw_stem}.{actual_fmt}"
+        else:
+            exact_archive_name = f"{base_stem}.{actual_fmt}"
     else:
         exact_archive_name = f"{base_stem}.{actual_fmt}"
 

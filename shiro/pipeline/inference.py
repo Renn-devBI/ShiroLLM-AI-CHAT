@@ -627,7 +627,8 @@ def _prepare_inference_payload(
                         f"\n\n[INVENTARIS BERKAS WORKSPACE UNTUK PENGARSIPAN (.{req_fmt})]:\n"
                         f"- Berkas tersedia dari riwayat percakapan & unggahan: {found_line}{missing_line}\n"
                         f"- Pengemasan arsip `.{req_fmt}` akan dijalankan OTOMATIS SETELAH responsmu selesai (jangan mengklaim file sudah jadi sebelum kamu menjawab, dan jangan menolak membuat arsip).\n"
-                        f"- Bertindaklah sebagai AI Agent sejati: jelaskan berkas yang akan dikemas secara alami, lengkapi/perbarui berkas bila ada yang kurang atau diminta diperbaiki menggunakan blok kode dengan nama file eksplisit (`### File: nama.ext`), atau panggil `[[AGENT_TOOL:create_archive|format={req_fmt}|files={','.join(req_files or found_names)}]]`.\n"
+                        f"- Bertindaklah sebagai AI Agent sejati: pikirkan dan tentukan sendiri nama proyek/arsip yang deskriptif sesuai aplikasi yang kamu bangun (misal `otakudesu-anime-scraper.{req_fmt}` atau sesuai `name` di `package.json`, JANGAN nama generik atau 1 huruf).\n"
+                        f"- Lengkapi/tuliskan semua berkas menggunakan blok kode dengan nama file eksplisit (`### File: nama.ext`), dan sertakan tag `[[AGENT_TOOL:create_archive|format={req_fmt}|name=<nama-proyek-deskriptif>.{req_fmt}]]` di akhir respons agar arsip dikemas dengan nama pilihanmu sendiri.\n"
                     )
                 elif agent_intent == "generate_video":
                     tool_name = "video_renderer"
@@ -1761,9 +1762,10 @@ def _finalize_inference_output(
                 requested_filenames=eff_req_files,
             )
             if merged_arch_files:
+                # Prioritas format: permintaan eksplisit user (zip/tar.gz/7z) > tool call AI > klaim reply > default zip
                 fmt_val = (
-                    arch_args.get("format")
-                    or (inferred_user_arch or {}).get("format")
+                    (inferred_user_arch or {}).get("format")
+                    or arch_args.get("format")
                     or (reply_arch_claim or {}).get("format")
                     or "zip"
                 )
@@ -1773,9 +1775,9 @@ def _finalize_inference_output(
                     or (reply_arch_claim or {}).get("archive_name")
                 )
                 proj_name = (
-                    prep.get("inferred_project_name")
-                    or hist_proj
-                    or infer_project_name_from_text(cleaned_reply, merged_arch_files)
+                    infer_project_name_from_text(cleaned_reply, merged_arch_files)
+                    if infer_project_name_from_text(cleaned_reply, merged_arch_files) != "shiro-project"
+                    else (prep.get("inferred_project_name") or hist_proj or "shiro-project")
                 )
                 arch_art = create_archive_artifact(
                     merged_arch_files,
