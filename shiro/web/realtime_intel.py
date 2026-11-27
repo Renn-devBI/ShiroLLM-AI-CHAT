@@ -655,9 +655,9 @@ def build_queries(
         flags=re.IGNORECASE
     ).strip()
 
-    # Hapus awalan perintah cari eksplisit jika ada
+    # Hapus awalan perintah cari eksplisit untuk mendapatkan query inti bersih
     clean = re.sub(
-        r'^(?:tolong\s+)?(?:cari\s+(?:tahu|di\s+web|informasi|info|berita)?|googling|browsing|search\s+(?:the\s+web|for)?)\s*(?:tentang|mengenai|about)?\s*[:,-]?\s*',
+        r'^(?:tolong\s+|coba\s+)?(?:cari\s+(?:tahu|di\s+web|informasi|info|berita)?|googling|browsing|search\s+(?:the\s+web|for)?|carikan|cariin)\s*(?:tentang|mengenai|about)?\s*[:,-]?\s*',
         '',
         clean,
         flags=re.IGNORECASE
@@ -690,9 +690,16 @@ def build_queries(
     clean = re.sub(r'[\?؟!]+$', '', clean).strip()
     clean = re.sub(r'\s+', ' ', clean)
 
+    entity_clean = re.sub(
+        r'^(?:latar\s+belakang|biografi|profil|sejarah|riwayat\s+hidup|siapa\s+itu|ceritakan\s+(?:tentang|mengenai)?|background\s+of|biography\s+of|who\s+is)\s*(?:dari|tentang|mengenai)?\s*',
+        '',
+        clean,
+        flags=re.IGNORECASE
+    ).strip() or clean
+
     queries: List[SearchQuery] = [SearchQuery(query=clean, lang=lang, is_primary=True)]
 
-    # Buat varian bahasa Inggris jika bahasa utama bukan Inggris
+    # Buat varian bahasa Inggris lebih dulu jika bahasa utama bukan Inggris
     if lang != "en":
         en_query = ""
         if llm_rewrite:
@@ -723,18 +730,44 @@ def build_queries(
         if en_query and en_query.strip().lower() != clean.lower():
             queries.append(SearchQuery(query=en_query.strip(), lang="en", is_primary=False))
 
+    # Tambahkan varian entitas bersih (mis. "latar belakang prabowo" -> "prabowo") untuk hasil ensiklopedis Wikipedia
+    if entity_clean and entity_clean.lower() != clean.lower():
+        if not any(q.query.strip().lower() == entity_clean.lower() for q in queries):
+            queries.append(SearchQuery(query=entity_clean, lang=lang, is_primary=True))
+
     # Kueri tambahan multi-sudut pandang jika tingkat tier (High / Extra High / Ultra High) mengizinkan deep search
     target_cap = max(1, int(max_queries or 2))
     if target_cap > 2 and clean:
-        base_en = next((q.query for q in queries if q.lang == "en"), clean)
-        deep_angles: List[Tuple[str, str]] = [
-            (f"{clean} {yr}", lang),
-            (f"{base_en} official specs documentation overview {yr}", "en"),
-            (f"{clean} ulasan fakta lengkap sumber resmi", lang),
-            (f"{base_en} latest news updates comparison", "en"),
-            (f"{clean} analisis mendalam detail terbaru", lang),
-            (f"{base_en} technical details benchmark review", "en"),
-        ]
+        base_topic = entity_clean or clean
+        base_en = next((q.query for q in queries if q.lang == "en"), base_topic)
+        is_bio_or_general = bool(
+            re.search(r'\b(?:latar\s+belakang|biografi|profil|sejarah|riwayat|background|biography|who\s+is|siapa)\b', user_input.lower())
+        )
+        is_tech_or_temporal = bool(
+            re.search(r'\b(?:spesifikasi|spek|specs|benchmark|rtx|gpu|cpu|harga|kurs|rilis|terbaru|latest|berita|news|202\d|tahun\s+ini)\b', user_input.lower())
+        )
+        if is_bio_or_general and not is_tech_or_temporal:
+            deep_angles: List[Tuple[str, str]] = [
+                (f"{base_topic} biografi wikipedia", lang),
+                (f"{base_en} biography wikipedia", "en"),
+                (f"{base_topic} profil lengkap fakta resmi", lang),
+                (f"{base_topic} {yr} posisi terkini", lang),
+            ]
+        elif is_tech_or_temporal:
+            deep_angles = [
+                (f"{clean} {yr}", lang),
+                (f"{base_en} official specs documentation overview {yr}", "en"),
+                (f"{clean} ulasan fakta lengkap sumber resmi", lang),
+                (f"{base_en} latest news updates comparison", "en"),
+                (f"{clean} analisis mendalam detail terbaru", lang),
+                (f"{base_en} technical details benchmark review", "en"),
+            ]
+        else:
+            deep_angles = [
+                (f"{base_topic} wikipedia fakta resmi", lang),
+                (f"{base_en} overview wikipedia", "en"),
+                (f"{base_topic} ulasan lengkap sumber kredibel", lang),
+            ]
         seen_q_low = {q.query.strip().lower() for q in queries}
         for dq, dl in deep_angles:
             if len(queries) >= target_cap:
@@ -752,7 +785,9 @@ def build_queries(
 
 DEFAULT_DOMAIN_CREDIBILITY: Dict[str, float] = {
     # Ensiklopedia & Basis Data Resmi
-    "wikipedia.org": 1.4,
+    "wikipedia.org": 1.6,
+    "id.wikipedia.org": 1.6,
+    "en.wikipedia.org": 1.55,
     "myanimelist.net": 1.4,
     "animenewsnetwork.com": 1.4,
     "imdb.com": 1.3,
@@ -775,7 +810,8 @@ DEFAULT_DOMAIN_CREDIBILITY: Dict[str, float] = {
     "techcrunch.com": 1.3,
     "ign.com": 1.3,
 
-    # Forum & Media Sosial (Bobot Rendah)
+    # Forum, Aggregator & Media Sosial (Bobot Rendah)
+    "news.google.com": 0.65,
     "reddit.com": 0.6,
     "quora.com": 0.5,
     "twitter.com": 0.5,
@@ -1153,14 +1189,34 @@ def build_research_prompt_block(
     independent_sources_count: int,
     sources: Optional[List[Dict[str, str]]] = None,
     images: Optional[List[Dict[str, str]]] = None,
+    documents: Optional[List[FetchedDocument]] = None,
 ) -> str:
     """
-    Menyusun blok fakta, tautan sumber, dan gambar terkait yang akan disuntikkan ke prompt neural LLM.
+    Menyusun blok fakta, kutipan artikel primer terverifikasi, tautan sumber, dan aturan anti-halusinasi
+    yang disuntikkan ke prompt neural LLM.
     """
     lines = [f"[Hasil Riset Nyata Web & Verifikasi Silang Real-Time]:"]
     lines.append(f"- Topik: {topic}")
     lines.append(f"- Sumber Independen Dikonfirmasi: {independent_sources_count} domain")
     lines.append(f"- Tingkat Keyakinan Verifikasi: {int(confidence * 100)}%")
+
+    if documents:
+        full_docs = sorted(
+            [d for d in documents if d.is_full_article and len((d.full_text or "").strip()) >= 60],
+            key=lambda d: float(getattr(d, "credibility", 1.0)),
+            reverse=True,
+        )
+        if full_docs:
+            lines.append("\n[KUTIPAN SUMBER PRIMER TERVERIFIKASI (Rujukan Utama Fakta)]:")
+            used_chars = 0
+            for idx_d, d_obj in enumerate(full_docs[:3], 1):
+                excerpt = re.sub(r'\s+', ' ', d_obj.full_text).strip()[:1200]
+                if used_chars + len(excerpt) > 3800:
+                    excerpt = excerpt[: max(200, 3800 - used_chars)]
+                lines.append(f"({idx_d}) {d_obj.title or d_obj.domain} [{d_obj.url}]:\n{excerpt}")
+                used_chars += len(excerpt)
+                if used_chars >= 3800:
+                    break
 
     verified = [f for f in verified_facts if f.status == "verified"]
     conflicts = [f for f in verified_facts if f.status == "conflict"]
@@ -1168,7 +1224,7 @@ def build_research_prompt_block(
 
     if verified:
         lines.append("\n[FAKTA TERVERIFIKASI (Didukung Multi-Sumber Independen)]:")
-        for idx, vf in enumerate(verified[:5], 1):
+        for idx, vf in enumerate(verified[:6], 1):
             src_str = ", ".join(vf.supporting_domains[:3])
             lines.append(f"{idx}. {vf.claim} (Sumber: {src_str})")
 
@@ -1176,18 +1232,18 @@ def build_research_prompt_block(
         lines.append("\n[PERINGATAN KONFLIK / PERBEDAAN DATA ANTAR SUMBER]:")
         for cf in conflicts[:2]:
             lines.append(f"- {cf.conflicting_info} (Konteks: {cf.claim[:120]}...)")
-        lines.append("-> Instruksi: Sampaikan kepada Kakak bahwa ada perbedaan data di internet mengenai hal ini.")
+        lines.append("-> Instruksi: Sampaikan kepada pengguna bahwa ada perbedaan data di internet mengenai hal ini.")
 
     if singles and not verified:
         lines.append("\n[INFORMASI TUNGGAL (Belum diverifikasi silang)]:")
-        for sf in singles[:3]:
+        for sf in singles[:4]:
             src_str = sf.supporting_domains[0] if sf.supporting_domains else "sumber web"
             lines.append(f"- Menurut {src_str}: {sf.claim}")
-        lines.append("-> Instruksi: Karena baru dari 1 sumber, sebutkan secara jujur 'menurut kabar dari <sumber>...'.")
+        lines.append("-> Instruksi: Karena baru dari 1 sumber, sebutkan secara jujur 'menurut <sumber>...'.")
 
     if sources:
         lines.append("\n[SUMBER & TAUTAN WEB VALID (Boleh dikutip dengan link Markdown)]:")
-        for idx_s, s_item in enumerate(sources[:6], 1):
+        for idx_s, s_item in enumerate(sources[:8], 1):
             s_title = (s_item.get("title") or s_item.get("domain") or "Sumber").strip()
             s_url = (s_item.get("url") or "").strip()
             if s_url:
@@ -1203,13 +1259,14 @@ def build_research_prompt_block(
 
     if not verified and not singles and not sources:
         lines.append("\n[STATUS: Tidak ditemukan informasi yang cukup terkonfirmasi di internet saat ini.]")
-        lines.append("-> Instruksi: Sampaikan dengan jujur bahwa informasinya belum bisa dipastikan.")
+        lines.append("-> Instruksi: Sampaikan dengan jujur bahwa informasinya belum bisa dipastikan — DILARANG mengarang.")
 
-    lines.append("\n[Instruksi Agen Riset]:")
-    lines.append("1. Jawab langsung secara komprehensif berdasarkan fakta & sumber di atas tanpa basa-basi bot.")
-    lines.append("2. Sertakan tautan sumber valid dalam format Markdown `[Judul](URL)` sebagai rujukan saat memberi informasi.")
-    lines.append("3. Jika gambar relevan atau user meminta gambar/foto, sematkan memakai sintaks `![Deskripsi](URL_gambar_dari_atas)` (hanya gunakan URL yang persis tercantum).")
-    lines.append("4. Tetap gunakan nada bicara alami, cerdas, dan hangat khas Shiro tanpa menyebut nama mesin internal (Cloudflare/Mozilla/tool).")
+    lines.append("\n[ATURAN ANTI-HALUSINASI MUTLAK — ZERO FABRICATION]:")
+    lines.append("1. HANYA tuliskan detail spesifik (tanggal lahir, orang tua, pasangan, anak, pangkat militer, satuan, jabatan, tahun peristiwa, nama perusahaan, angka, atau URL) yang BENAR-BENAR tercantum pada sumber di atas atau merupakan fakta sejarah mapan yang 100% pasti benar.")
+    lines.append("2. DILARANG KERAS mengarang, menebak, mencampuradukkan biografi tokoh lain (misal menukar nama anak/pasangan/jabatan tokoh berbeda), atau mengarang klaim sensasional yang tidak ada di sumber.")
+    lines.append("3. Jika suatu detail tidak tersedia atau belum terverifikasi pada sumber di atas dan tidak 100% pasti, nyatakan secara jujur bahwa bagian tersebut belum terverifikasi di sumber saat ini atau panggil `[[AGENT_TOOL:web_search|query=...]]` / `[[AGENT_TOOL:open_url|url=...]]` untuk memeriksa lebih lanjut sebelum menulis jawaban.")
+    lines.append("4. Cantumkan HANYA URL sumber yang persis ada pada daftar `[SUMBER & TAUTAN WEB VALID]` di atas dalam format Markdown `[Judul](URL)`.")
+    lines.append("5. Jika gambar relevan atau user meminta foto, sematkan memakai `![Deskripsi](URL_gambar_dari_atas)` tanpa menyebut nama mesin internal (Cloudflare/Mozilla/tool).")
 
     return "\n".join(lines)
 
@@ -1408,6 +1465,7 @@ def research(
         len(independent_domains),
         sources=collected_sources,
         images=collected_images,
+        documents=fetched_docs,
     )
 
     summary = (

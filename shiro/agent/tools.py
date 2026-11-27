@@ -281,19 +281,110 @@ def search_web_images(query: str, max_images: int = 4) -> List[Dict[str, str]]:
     return images
 
 
+def fetch_wikipedia_extract(url_or_title: str, lang: str = "id", max_chars: int = 5000) -> Dict[str, Any]:
+    """
+    Mengambil ringkasan artikel Wikipedia yang bersih dan terverifikasi lewat API resmi Wikipedia
+    (action=query&prop=extracts&explaintext=1) tanpa terhalang scraping HTML.
+    """
+    raw = (url_or_title or "").strip()
+    if not raw:
+        return {"success": False, "url": raw, "title": "", "content": "", "images": []}
+
+    detected_lang = lang
+    title = raw
+    m_wiki = re.match(r'^https?://([a-z]{2,3})\.wikipedia\.org/wiki/([^?#]+)', raw, flags=re.IGNORECASE)
+    if m_wiki:
+        detected_lang = m_wiki.group(1).lower()
+        title = urllib.parse.unquote(m_wiki.group(2)).replace("_", " ").strip()
+
+    session = get_agent_session()
+    api_url = f"https://{detected_lang}.wikipedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "prop": "extracts|info",
+        "inprop": "url",
+        "explaintext": "1",
+        "redirects": "1",
+        "exchars": str(max(800, min(12000, int(max_chars)))),
+        "format": "json",
+        "titles": title,
+    }
+    try:
+        resp = session.get(api_url, params=params, timeout=7)
+        if resp.status_code == 200:
+            data = resp.json()
+            pages = (data.get("query") or {}).get("pages") or {}
+            for page_id, page in pages.items():
+                if str(page_id) == "-1":
+                    continue
+                extract_txt = re.sub(r'\s+', ' ', str(page.get("extract") or "")).strip()
+                if len(extract_txt) >= 60:
+                    canonical_url = str(
+                        page.get("fullurl")
+                        or f"https://{detected_lang}.wikipedia.org/wiki/{urllib.parse.quote(str(page.get('title') or title).replace(' ', '_'))}"
+                    )
+                    return {
+                        "success": True,
+                        "url": canonical_url,
+                        "title": f"{page.get('title') or title} - Wikipedia",
+                        "content": extract_txt[:max_chars],
+                        "images": [],
+                    }
+    except Exception:
+        pass
+    return {"success": False, "url": raw, "title": title, "content": "", "images": []}
+
+
 def search_google_web(query: str, max_results: int = 6, include_images: bool = True) -> Dict[str, Any]:
     """
-    Melakukan pencarian web & browser komprehensif menggunakan Bing HTML, DuckDuckGo HTML,
-    Google News RSS, Wikipedia, serta pencarian gambar web melalui header Mozilla dan Cloudflare 1.1.1.1.
+    Melakukan pencarian web & browser komprehensif menggunakan Wikipedia API (fakta ensiklopedis),
+    Bing HTML, DuckDuckGo HTML, Google News RSS (terbatas), serta pencarian gambar web.
     """
     clean_q = query.strip()
     if not clean_q:
         return {"success": False, "summary": "Query pencarian kosong", "results": [], "images": []}
 
-    results = []
+    results: List[Dict[str, str]] = []
+    wiki_results: List[Dict[str, str]] = []
+    news_results: List[Dict[str, str]] = []
     session = get_agent_session()
 
-    # 1. Bing HTML Search
+    # 1. Wikipedia API Search (SELALU dijalankan lebih dulu untuk fakta ensiklopedis & biografi terverifikasi)
+    wiki_entity_q = re.sub(
+        r'^(?:tolong\s+|coba\s+)?(?:cari\s+(?:tahu|info|informasi)?|carikan|cariin|latar\s+belakang|biografi|profil|sejarah|ceritakan)\s+(?:tentang|mengenai|dari)?\s*',
+        '',
+        clean_q,
+        flags=re.IGNORECASE,
+    ).strip() or clean_q
+    for wlang in ("id", "en"):
+        if len(wiki_results) >= 3:
+            break
+        try:
+            wiki_url = (
+                f"https://{wlang}.wikipedia.org/w/api.php?action=query&list=search"
+                f"&srsearch={urllib.parse.quote(wiki_entity_q)}&utf8=1&format=json&srlimit=3"
+            )
+            r_wiki = session.get(wiki_url, timeout=6)
+            if r_wiki.status_code == 200:
+                wiki_data = r_wiki.json()
+                for item in wiki_data.get("query", {}).get("search", []):
+                    title = item.get("title", "")
+                    if not title:
+                        continue
+                    raw_snip = item.get("snippet", "")
+                    clean_snip = re.sub(r'<[^>]+>', '', raw_snip).strip()
+                    page_url = f"https://{wlang}.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+                    if not any(w["url"] == page_url for w in wiki_results):
+                        wiki_results.append({
+                            "title": f"{title} - Wikipedia ({wlang.upper()})",
+                            "url": page_url,
+                            "snippet": clean_snip,
+                            "source": f"Wikipedia ({wlang.upper()})",
+                        })
+        except Exception:
+            pass
+
+    # 2. Bing HTML Search
     try:
         bing_url = f"https://www.bing.com/search?q={urllib.parse.quote(clean_q)}&setlang=id-id&cc=ID"
         resp = session.get(bing_url, timeout=7)
@@ -308,16 +399,17 @@ def search_google_web(query: str, max_results: int = 6, include_images: bool = T
                     link = title_elem.get("href", "")
                     snippet = snippet_elem.text.strip() if snippet_elem else ""
                     if title and link and not any(bad in link.lower() for bad in ["scholar.google", "pinkbike"]):
-                        results.append({
-                            "title": title,
-                            "url": link,
-                            "snippet": snippet,
-                            "source": "Bing Search"
-                        })
+                        if not any(r["url"] == link for r in results):
+                            results.append({
+                                "title": title,
+                                "url": link,
+                                "snippet": snippet,
+                                "source": "Bing Search"
+                            })
     except Exception:
         pass
 
-    # 1b. DuckDuckGo HTML fallback jika Bing memberi sedikit hasil
+    # 2b. DuckDuckGo HTML fallback jika hasil web masih sedikit
     if len(results) < 2:
         try:
             ddg_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(clean_q)}"
@@ -347,7 +439,8 @@ def search_google_web(query: str, max_results: int = 6, include_images: bool = T
         except Exception:
             pass
 
-    # 2. Google News RSS Search untuk informasi real-time dan jadwal rilis
+    # 3. Google News RSS Search (dibatasi agar tidak menenggelamkan sumber referensi/ensiklopedia)
+    news_cap = max(2, min(4, max_results // 2))
     try:
         news_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(clean_q)}&hl=id&gl=ID&ceid=ID:id"
         resp_news = session.get(news_url, timeout=6)
@@ -355,13 +448,13 @@ def search_google_web(query: str, max_results: int = 6, include_images: bool = T
             soup_news = BeautifulSoup(resp_news.text, "xml")
             items = soup_news.find_all("item")
             for it in items:
-                if len(results) >= (max_results * 2):
+                if len(news_results) >= news_cap:
                     break
                 t = it.title.text.strip() if it.title else ""
                 l = it.link.text.strip() if it.link else ""
                 pub = it.pubDate.text.strip() if it.pubDate else ""
-                if t and l and not any(r["url"] == l for r in results):
-                    results.append({
+                if t and l and not any(r["url"] == l for r in results + news_results):
+                    news_results.append({
                         "title": t,
                         "url": l,
                         "snippet": f"Publikasi: {pub}",
@@ -370,26 +463,16 @@ def search_google_web(query: str, max_results: int = 6, include_images: bool = T
     except Exception:
         pass
 
-    # 3. Wikipedia API Search sebagai fallback fakta ensiklopedis
-    if not results:
-        try:
-            wiki_url = f"https://id.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(clean_q)}&utf8=1&format=json&srlimit={max_results}"
-            r_wiki = session.get(wiki_url, timeout=6)
-            if r_wiki.status_code == 200:
-                wiki_data = r_wiki.json()
-                for item in wiki_data.get("query", {}).get("search", []):
-                    title = item.get("title", "")
-                    raw_snip = item.get("snippet", "")
-                    clean_snip = re.sub(r'<[^>]+>', '', raw_snip).strip()
-                    page_url = f"https://id.wikipedia.org/wiki/{urllib.parse.quote(title)}"
-                    results.append({
-                        "title": title,
-                        "url": page_url,
-                        "snippet": clean_snip,
-                        "source": "Wikipedia"
-                    })
-        except Exception:
-            pass
+    # Gabungkan: Wikipedia lebih dulu -> Web Search -> Google News
+    combined: List[Dict[str, str]] = []
+    seen_combined = set()
+    for grp in (wiki_results, results, news_results):
+        for item in grp:
+            u = item.get("url", "")
+            if u and u not in seen_combined:
+                seen_combined.add(u)
+                combined.append(item)
+    results = combined[: max(max_results, 8)]
 
     images: List[Dict[str, str]] = []
     if include_images:
@@ -427,8 +510,14 @@ def search_google_web(query: str, max_results: int = 6, include_images: bool = T
 def open_and_read_webpage(url: str, max_chars: int = 3500) -> Dict[str, Any]:
     """
     Membuka halaman web dan mengekstrak teks bersih beserta gambar relevan
-    menggunakan header Mozilla, BeautifulSoup, serta fallback browser headless bila halaman JS-rendered.
+    menggunakan API resmi Wikipedia (untuk tautan Wikipedia), header Mozilla + BeautifulSoup,
+    serta fallback browser headless bila halaman JS-rendered.
     """
+    if re.match(r'^https?://[a-z]{2,3}\.wikipedia\.org/wiki/', str(url or "").strip(), flags=re.IGNORECASE):
+        wiki_res = fetch_wikipedia_extract(url, max_chars=max(max_chars, 4500))
+        if wiki_res.get("success") and wiki_res.get("content"):
+            return wiki_res
+
     ok, html, err = fetch_html_content(url, timeout=12)
     if (not ok or not html or len(html) < 250):
         # Fallback opsional menggunakan browser headless jika terpasang untuk halaman JS-rendered
@@ -504,6 +593,18 @@ def open_and_read_webpage(url: str, max_chars: int = 3500) -> Dict[str, Any]:
         content = " ".join(re.sub(r'<[^>]+>', ' ', cleaned).split())
 
     content = re.sub(r'\s+', ' ', content).strip()
+    is_google_news_shell = (
+        "news.google.com/rss/articles/" in str(url or "").lower()
+        or "news.google.com/articles/" in str(url or "").lower()
+    )
+    if is_google_news_shell and (len(content) < 180 or content.lower().startswith(("google news", "opening "))):
+        return {
+            "success": False,
+            "url": url,
+            "title": title,
+            "content": "",
+            "images": page_images,
+        }
     if len(content) > max_chars:
         content = content[:max_chars] + " ... (konten dipotong untuk batas memori context)"
 

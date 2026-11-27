@@ -301,12 +301,25 @@ def translate_to_indonesian_fast(text: str, roleplay_enabled: bool = True) -> st
         masked = re.sub(r'```[\s\S]*?```|`[^`\n]+`', _mask, text)
         masked = replace_inline_english_idioms(masked)
 
+        # Skip garis pemisah tabel GFM, heading, callout, dan blockquote agar struktur Markdown tetap utuh
+        table_or_md_lines = [ln for ln in masked.splitlines() if ln.strip()]
         paragraphs = masked.split('\n\n')
         translated = []
         for p in paragraphs:
             p_strip = p.strip()
             if not p_strip or p_strip.startswith('__CODE_SNIP_'):
                 translated.append(p)
+                continue
+            # Jangan pernah menerjemahkan blok tabel GFM, callout > [!NOTE], heading, atau baris ber-backtick
+            p_lines = [ln for ln in p.splitlines() if ln.strip()]
+            is_md_struct = any(
+                ln.lstrip().startswith(('|', '>', '#', '- ', '* ', '+ '))
+                or re.match(r'^\s*\d+\.\s+', ln)
+                for ln in p_lines
+            )
+            if is_md_struct:
+                # Untuk baris list/heading/tabel, biarkan struktur baris utuh dan ganti idiom aman saja
+                translated.append(replace_inline_english_idioms(p))
                 continue
             if is_predominantly_english(p_strip):
                 translated.append(_translate_chunk_en_to_id(p_strip, roleplay_enabled=roleplay_enabled))
@@ -336,6 +349,12 @@ FOREIGN_PATTERNS = [
     r'\b(?:hello|please|thank you|thanks)\b',
     r'\b(?:konnichiwa|ohayou|arigatou|sayonara)\b'
 ]
+
+def is_non_indonesian_script(text: str) -> bool:
+    """Mendeteksi skrip Tionghoa (CJK), Jepang, atau Korea pada input pengguna."""
+    if not text:
+        return False
+    return bool(re.search(r'[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]', text))
 
 def is_user_input_foreign_or_english(user_input: str) -> bool:
     """Mendeteksi apakah input pengguna berbahasa Inggris, Jepang, atau meminta bahasa asing"""
@@ -367,8 +386,8 @@ def should_translate_english_fallback(response_text: str, user_input: Optional[s
     if not user_input or not user_input.strip():
         return False
 
-    # 1. Jika pengguna bertanya dalam bahasa Inggris / Jepang / asing, biarkan apa adanya
-    if is_user_input_foreign_or_english(user_input):
+    # 1. Jika pengguna bertanya dalam bahasa Inggris / Jepang / Mandarin / Korea / asing, biarkan apa adanya
+    if is_non_indonesian_script(user_input) or is_user_input_foreign_or_english(user_input):
         return False
 
     # 2. Terjemahkan ke Bahasa Indonesia HANYA JIKA input user berbahasa Indonesia (atau umum)
@@ -454,10 +473,9 @@ def clean_response(
     response = re.sub(rf'(?mi)^\s*(?:{name_pat}Shiro|Assistant|Kakak|User)\s*:\s*', '', response)
     response = re.sub(rf'^\s*(?:{name_pat}Shiro|User|Kakak|Assistant)[\s:]+', '', response, flags=re.IGNORECASE)
     
-    # 7. Hapus meta-commentary sections
+    # 7. Hapus meta-commentary sections (TANPA menghapus baris pemisah tabel Markdown `| --- |` atau horizontal rule `---`)
     response = re.sub(r'\*\*Note\*\*:.*?(?=\n|$)', '', response, flags=re.IGNORECASE | re.DOTALL)
     response = re.sub(r'Note:.*?(?=\n|$)', '', response, flags=re.IGNORECASE)
-    response = re.sub(r'---+.*?(?=\n|$)', '', response)
     
     # 8. Hapus parenthetical explanations di akhir
     response = re.sub(r'\s*\(.*?(explanation|context|note|remember).*?\)\s*$', '', response, flags=re.IGNORECASE)
@@ -486,12 +504,22 @@ def clean_response(
     response = re.sub(r'!{2,}', '!', response)
     response = re.sub(r'\?{2,}', '?', response)
     
-    # 13. Hapus whitespace horizontal berlebih pada teks percakapan
+    # 13. Hapus whitespace horizontal berlebih di luar list bersarang tanpa merusak indentasi Markdown
     response = response.replace('\r\n', '\n').replace('\r', '\n')
-    response = re.sub(r'[ \t]+', ' ', response)
-    response = re.sub(r' +([.,!?])', r'\1', response)
+    norm_lines = []
+    for raw_ln in response.split('\n'):
+        # Pertahankan indentasi awal untuk nested list Markdown (mis. "  - item", "    1. sub")
+        if re.match(r'^\s+(?:[-*+]|\d+[\.\)])\s+', raw_ln):
+            m_ind = re.match(r'^(\s+)(.*)$', raw_ln)
+            body_clean = re.sub(r'[ \t]+', ' ', m_ind.group(2)).rstrip()
+            body_clean = re.sub(r' +([.,!?])', r'\1', body_clean)
+            norm_lines.append(m_ind.group(1) + body_clean)
+        else:
+            ln_clean = re.sub(r'[ \t]+', ' ', raw_ln).strip()
+            ln_clean = re.sub(r' +([.,!?])', r'\1', ln_clean)
+            norm_lines.append(ln_clean)
+    response = '\n'.join(norm_lines)
     response = re.sub(r'\n{3,}', '\n\n', response)
-    response = '\n'.join([line.strip() for line in response.split('\n')])
     
     # 14. Hapus HTML/XML remnants di luar blok kode
     response = re.sub(r'</?[^>]+>', '', response)

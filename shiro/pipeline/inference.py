@@ -514,6 +514,18 @@ def _prepare_inference_payload(
         for i, d in enumerate(all_docs, 1)
     ]
 
+    from shiro.security.identity_guard import (
+        detect_identity_or_injection_probe,
+        build_identity_security_lock,
+    )
+    identity_probe = detect_identity_or_injection_probe(raw_user_typed)
+    is_identity_guard_turn = bool(identity_probe.get("is_injection") or identity_probe.get("is_identity_probe"))
+    sess_hist_src: List[Dict[str, Any]] = []
+    if memory and hasattr(memory, "get_session_history"):
+        sess_hist_src = memory.get_session_history(session_id)
+    elif memory:
+        sess_hist_src = list(getattr(memory, "short_term_history", []) or [])
+
     if raw_user_typed:
         try:
             from shiro.agent.tools import (
@@ -526,11 +538,6 @@ def _prepare_inference_payload(
                 get_current_time_info,
                 take_web_screenshot,
                 execute_powershell_command
-            )
-            sess_hist_src = (
-                memory.get_session_history(session_id)
-                if (memory and hasattr(memory, "get_session_history"))
-                else list(getattr(memory, "short_term_history", []) or [])
             )
             agent_intent_res = detect_agent_intent(raw_user_typed, conversation_history=sess_hist_src)
             agent_intent = agent_intent_res.get("intent", "none")
@@ -936,9 +943,14 @@ def _prepare_inference_payload(
         clean_context.pop(0)
 
     # Sanitisasi riwayat pesan (Context Anti-Poisoning):
-    # Jika pengguna saat ini tidak menggunakan bahasa Inggris/asing, pastikan riwayat asisten yang meleset atau tercampur bahasa Inggris dinetralkan
-    from shiro.llm.cleaner import is_user_input_foreign_or_english, contains_english_segments, translate_to_indonesian_fast
-    is_user_english_query = bool(raw_user_typed and is_user_input_foreign_or_english(raw_user_typed))
+    # Jika pengguna saat ini tidak menggunakan bahasa Inggris/Mandarin/Jepang/Korea/asing, netralkan sisa Inggris di riwayat asisten
+    from shiro.llm.cleaner import (
+        is_user_input_foreign_or_english,
+        is_non_indonesian_script,
+        contains_english_segments,
+        translate_to_indonesian_fast,
+    )
+    is_user_english_query = bool(raw_user_typed and (is_non_indonesian_script(raw_user_typed) or is_user_input_foreign_or_english(raw_user_typed)))
     if not is_user_english_query:
         for idx_c, ctx_msg in enumerate(clean_context):
             if ctx_msg.get("role") == "assistant":
@@ -1069,6 +1081,11 @@ def _prepare_inference_payload(
         if (lyra_tier_info and active_model_name and lyra_tier_info.get("label") != active_model_name)
         else ((lyra_tier_info or {}).get("label") or active_model_name or "ShiroHaru-Lyra-Agent")
     )
+    if memory and hasattr(memory, "ensure_core_identity_facts"):
+        try:
+            memory.ensure_core_identity_facts(active_model_name=active_model_display)
+        except Exception:
+            pass
 
     if api_version == "v2":
         system_prompt = build_vtuber_system_prompt(
@@ -1097,16 +1114,28 @@ def _prepare_inference_payload(
             roleplay_enabled=roleplay_enabled,
         ) + tools_addon + reasoning_addon + time_ctx_addon + visual_guidance_addon
 
-    is_heavy_task = _is_heavy_agent_task(
-        raw_user_typed=raw_user_typed,
-        agent_intent=agent_intent_detected,
-        has_doc=has_doc,
-        has_image=has_image,
-        has_video=has_video,
-        api_version=api_version,
-        tools=tools,
-        include_reasoning=include_reasoning,
-        reasoning_effort=reasoning_effort,
+    if is_identity_guard_turn and api_version != "v3":
+        system_prompt += build_identity_security_lock(
+            active_model_name=active_model_display,
+            user_lang=identity_probe.get("language", "id"),
+            roleplay_enabled=roleplay_enabled,
+            assistant_name=ai_name,
+        )
+
+    is_heavy_task = (
+        False
+        if (is_identity_guard_turn and not has_doc and not has_image and not has_video and not tools and agent_intent_detected == "none")
+        else _is_heavy_agent_task(
+            raw_user_typed=raw_user_typed,
+            agent_intent=agent_intent_detected,
+            has_doc=has_doc,
+            has_image=has_image,
+            has_video=has_video,
+            api_version=api_version,
+            tools=tools,
+            include_reasoning=include_reasoning,
+            reasoning_effort=reasoning_effort,
+        )
     )
 
     # Mode Kecepatan & Penalaran khusus per-tier ShiroHaru-Lyra-Agent
@@ -1249,7 +1278,7 @@ def _prepare_inference_payload(
         user_text = "\n".join(parts_user)
         user_turn_msg = {"role": "user", "content": user_text}
 
-    if api_version == "v2":
+    if api_version == "v2" or is_identity_guard_turn:
         disable_thinking = True
     elif is_lyra_model and not is_reasoning_enabled and api_version != "v3":
         disable_thinking = bool((not is_heavy_task) or (lyra_thinking_mode in ("off", "light")))
@@ -1330,12 +1359,23 @@ def _prepare_inference_payload(
         stop_tokens.extend(["\nOkay, let me", "\nThe user is"])
 
     tier_top_k = int(lyra_tier_info.get("top_k", 40)) if lyra_tier_info else 40
+    is_grounded_factual_turn = agent_intent_detected in ("search", "browse", "weather", "math", "time")
+    if is_identity_guard_turn:
+        eff_temp = 0.2
+        eff_top_p = 0.75
+    elif is_grounded_factual_turn and not has_image:
+        eff_temp = 0.22
+        eff_top_p = 0.75
+    else:
+        eff_temp = 0.45 if has_image else (0.65 if api_version == "v2" else 0.55)
+        eff_top_p = 0.85
+
     gen_params = {
-        "temperature": 0.45 if has_image else (0.65 if api_version == "v2" else 0.55),
+        "temperature": eff_temp,
         "repeat_penalty": 1.08,
         "frequency_penalty": 0.0,
         "presence_penalty": 0.0,
-        "top_p": 0.85,
+        "top_p": eff_top_p,
         "top_k": tier_top_k,
         "max_tokens": max_output_tokens,
         "stop": stop_tokens
@@ -1435,7 +1475,10 @@ def _prepare_inference_payload(
         "nodes": nodes,
         "llm": llm,
         "active_model_name": active_model_name,
+        "active_model_display": active_model_display,
         "active_model_path": active_model_path,
+        "identity_probe": identity_probe,
+        "session_history_snapshot": sess_hist_src,
         "is_lyra_model": is_lyra_model,
         "lyra_tier_info": lyra_tier_info,
         "disable_thinking": disable_thinking,
@@ -1474,6 +1517,75 @@ def _prepare_inference_payload(
         "custom_persona": custom_persona
     }
 
+def _verify_and_guard_identity_reply(
+    llm: Any,
+    msgs: List[Dict[str, Any]],
+    raw_reply: str,
+    prep: Dict[str, Any],
+    call_kwargs: Dict[str, Any],
+) -> str:
+    """
+    Memeriksa kebocoran vendor/base model eksternal saat giliran probe identitas atau prompt injection.
+    Jika terdeteksi kebocoran, menjalankan maksimal 1x regenerasi terkunci di GPU/CPU (suhu rendah),
+    lalu beralih ke jaring pengaman multibahasa bila masih bocor.
+    """
+    identity_probe = prep.get("identity_probe") or {}
+    if not (identity_probe.get("is_injection") or identity_probe.get("is_identity_probe")):
+        return raw_reply
+    if prep.get("api_version") == "v3":
+        return raw_reply
+
+    from shiro.security.identity_guard import (
+        find_identity_leaks,
+        build_grounded_identity_fallback,
+    )
+    leaks = find_identity_leaks(raw_reply)
+    if not leaks and (raw_reply or "").strip():
+        return raw_reply
+
+    model_lbl = prep.get("active_model_display") or prep.get("active_model_name") or "ShiroHaru-Lyra-Agent"
+    user_lang = identity_probe.get("language", "id")
+    roleplay_on = bool(prep.get("roleplay_enabled", True))
+    ai_nm = prep.get("ai_name", "Shiro")
+    active_model_path = prep.get("active_model_path", "")
+
+    if llm is not None:
+        retry_kwargs = dict(call_kwargs)
+        retry_kwargs["temperature"] = 0.15
+        retry_kwargs["top_p"] = 0.7
+        correction_msg = {
+            "role": "user",
+            "content": (
+                f"[KOREKSI KEBIJAKAN SISTEM]: Jawaban sebelumnya terdeteksi membocorkan istilah terlarang ({', '.join(leaks) if leaks else 'identitas eksternal'}). "
+                f"Ulangi jawaban dengan bahasa pengguna ({user_lang}) yang menyatakan secara tegas dan konsisten bahwa Anda dikembangkan oleh "
+                f"Tim Renn ShiroHaru (saat ini oleh Renn) menggunakan model {model_lbl}. Jangan menyebut pihak ketiga atau jumlah parameter eksternal apa pun."
+            ),
+        }
+        retry_msgs = list(msgs) + [{"role": "assistant", "content": raw_reply or "..."}, correction_msg]
+        retry_reply = ""
+        try:
+            use_fast = _should_use_fast_text_completion(llm, False, None, active_model_path)
+            if use_fast:
+                prompt_str = _format_chatml_prompt(retry_msgs, disable_thinking=True)
+                comp_res = llm.create_completion(prompt=prompt_str, **_build_completion_kwargs(retry_kwargs, stream=False))
+                retry_reply = (((comp_res.get("choices") or [{}])[0]).get("text", "") or "").strip()
+            else:
+                res_r = llm.create_chat_completion(messages=retry_msgs, **retry_kwargs)
+                retry_reply = (res_r["choices"][0]["message"].get("content", "") or "").strip()
+        except Exception as e_id_retry:
+            print(f"[Identity Guard Retry Warning]: {e_id_retry}")
+
+        if retry_reply and not find_identity_leaks(retry_reply):
+            return retry_reply
+
+    return build_grounded_identity_fallback(
+        active_model_name=model_lbl,
+        user_lang=user_lang,
+        roleplay_enabled=roleplay_on,
+        assistant_name=ai_nm,
+    )
+
+
 def _finalize_inference_output(
     prep: Dict[str, Any],
     raw_reply: str,
@@ -1481,7 +1593,8 @@ def _finalize_inference_output(
     res: Optional[Dict[str, Any]] = None,
     grounding_info: Optional[Dict[str, Any]] = None,
     thought_content_override: Optional[str] = None,
-    thought_duration_sec: Optional[float] = None
+    thought_duration_sec: Optional[float] = None,
+    pre_parsed_tool_calls: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     """
     Menjalankan Node 5 s/d Node 8: Filter, State Persistence Sync, dan Response Delivery Stream.
@@ -1568,6 +1681,7 @@ def _finalize_inference_output(
             except Exception:
                 pass
 
+    raw_inline_calls, _ = _parse_agent_tool_calls(raw_reply)
     if api_version == "v2":
         reasoning_content = None
         cleaned_reply = clean_vtuber_response(raw_reply, raw_user_typed)
@@ -1586,6 +1700,11 @@ def _finalize_inference_output(
     if not cleaned_reply and raw_reply:
         _, cleaned_reply = _parse_agent_tool_calls(raw_reply)
 
+    combined_tool_calls: List[Dict[str, Any]] = []
+    for tc_src in (list(pre_parsed_tool_calls or []) + list(raw_inline_calls or []) + list(inline_tool_calls or [])):
+        if tc_src not in combined_tool_calls:
+            combined_tool_calls.append(tc_src)
+
     # Post-LLM Packaging, Deferred Video Rendering & Exact Filename Artifacts
     artifacts: List[Dict[str, Any]] = list(prep.get("generated_artifacts") or [])
     agent_steps: List[Dict[str, Any]] = (
@@ -1595,11 +1714,15 @@ def _finalize_inference_output(
     )
     pending_arch = prep.get("pending_archive_request")
     pending_video = prep.get("pending_video_request")
-    ai_archive_call = next((tc for tc in reversed(inline_tool_calls) if tc.get("name") == "create_archive"), None)
-    ai_video_call = next((tc for tc in reversed(inline_tool_calls) if tc.get("name") == "render_video"), None)
+    ai_archive_call = next((tc for tc in reversed(combined_tool_calls) if tc.get("name") == "create_archive"), None)
+    ai_video_call = next((tc for tc in reversed(combined_tool_calls) if tc.get("name") == "render_video"), None)
 
     try:
         from shiro.agent.packager import (
+            detect_archive_request,
+            detect_archive_claim_in_reply,
+            extract_requested_filenames,
+            extract_files_from_conversation,
             extract_named_files_from_markdown,
             infer_project_name_from_text,
             merge_file_collections,
@@ -1608,25 +1731,50 @@ def _finalize_inference_output(
         )
         extracted_post = extract_named_files_from_markdown(cleaned_reply)
         has_archive_already = any(a.get("kind") == "archive" for a in artifacts)
+        inferred_user_arch = pending_arch or detect_archive_request(raw_user_typed or "")
+        reply_arch_claim = detect_archive_claim_in_reply(cleaned_reply)
+        wants_archive = bool((inferred_user_arch or ai_archive_call or reply_arch_claim) and api_version != "v2")
 
-        if (pending_arch or ai_archive_call) and not has_archive_already:
+        if wants_archive and not has_archive_already:
             arch_args = (ai_archive_call or {}).get("args") or {}
             req_files_ai = [
                 s.strip() for s in str(arch_args.get("files") or "").split(",") if s.strip()
             ] if arch_args.get("files") else None
-            eff_req_files = req_files_ai or (pending_arch or {}).get("requested_filenames") or None
+            wants_all_files = bool(re.search(r'\b(?:semua|seluruh|all|everything)\b', raw_user_typed or "", re.IGNORECASE))
+            eff_req_files = (
+                None
+                if wants_all_files
+                else (req_files_ai or (inferred_user_arch or {}).get("requested_filenames") or extract_requested_filenames(raw_user_typed or "") or None)
+            )
+            hist_snap = prep.get("session_history_snapshot")
+            hist_fallback_files, hist_proj = extract_files_from_conversation(
+                hist_snap,
+                max_lookback=60,
+                requested_filenames=eff_req_files,
+            )
 
             merged_arch_files = merge_file_collections(
                 extracted_post,
                 list(prep.get("all_docs_files") or []),
                 list(prep.get("available_archive_files") or []),
+                hist_fallback_files,
                 requested_filenames=eff_req_files,
             )
             if merged_arch_files:
-                fmt_val = arch_args.get("format") or (pending_arch or {}).get("format", "zip")
-                arch_name_val = arch_args.get("name") or (pending_arch or {}).get("archive_name")
+                fmt_val = (
+                    arch_args.get("format")
+                    or (inferred_user_arch or {}).get("format")
+                    or (reply_arch_claim or {}).get("format")
+                    or "zip"
+                )
+                arch_name_val = (
+                    arch_args.get("name")
+                    or (inferred_user_arch or {}).get("archive_name")
+                    or (reply_arch_claim or {}).get("archive_name")
+                )
                 proj_name = (
                     prep.get("inferred_project_name")
+                    or hist_proj
                     or infer_project_name_from_text(cleaned_reply, merged_arch_files)
                 )
                 arch_art = create_archive_artifact(
@@ -1643,15 +1791,33 @@ def _finalize_inference_output(
                     "feedback": f"Packaged {arch_art['file_count']} file(s) into {arch_art['filename']} ({arch_art['format'].upper()}, {arch_art['size_label']})",
                 })
         elif not artifacts and extracted_post:
+            # Jangan memicu artifact file unduhan untuk perintah 1 baris tanpa nama file eksplisit (mis. ```bat\nshutdown /a\n```)
+            def _is_meaningful_download_block(f_item: Dict[str, str]) -> bool:
+                fname = str(f_item.get("filename") or "")
+                content_str = str(f_item.get("content") or "").strip()
+                lang_str = str(f_item.get("language") or "").lower()
+                is_default_generic = (
+                    fname.startswith("file_")
+                    or fname in ("run.bat", "run.cmd", "run.sh", "run.ps1")
+                )
+                line_cnt = len([ln for ln in content_str.splitlines() if ln.strip()])
+                if is_default_generic and line_cnt <= 1 and lang_str in ("", "bash", "sh", "shell", "bat", "cmd", "ps1", "powershell", "text", "plaintext"):
+                    return False
+                return True
+
+            downloadable_post = [f for f in extracted_post if _is_meaningful_download_block(f)]
             wants_file_download = bool(
-                re.search(r'\b[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,12}\b', raw_user_typed or "")
-                or any(
-                    kw in (raw_user_typed or "").lower()
-                    for kw in ("buatkan file", "buat file", "kirim file", "download", "unduh", "create file", "save as")
+                downloadable_post
+                and (
+                    re.search(r'\b[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,12}\b', raw_user_typed or "")
+                    or any(
+                        kw in (raw_user_typed or "").lower()
+                        for kw in ("buatkan file", "buat file", "kirim file", "download", "unduh", "create file", "save as")
+                    )
                 )
             )
             if wants_file_download:
-                file_arts = create_file_artifacts(extracted_post)
+                file_arts = create_file_artifacts(downloadable_post)
                 if file_arts:
                     artifacts.extend(file_arts)
                     agent_steps.append({
@@ -2069,6 +2235,8 @@ def get_shiro_reply(
                     except Exception as e_retry:
                         print(f"[Grounding Verifier] Regenerasi gagal: {e_retry}")
 
+            raw_reply = _verify_and_guard_identity_reply(llm, msgs, raw_reply, prep, call_kwargs)
+
         t_end = time.perf_counter()
         t_llm_dur = (t_end - t0) * 1000
         tier_lbl_sync = (prep.get("lyra_tier_info") or {}).get("id", "default")
@@ -2335,12 +2503,23 @@ def stream_shiro_reply(
 
         from shiro.llm.cleaner import (
             is_user_input_foreign_or_english,
+            is_non_indonesian_script,
             contains_english_segments,
             translate_to_indonesian_fast,
             replace_inline_english_idioms,
             is_predominantly_english,
         )
-        should_guard_id = bool(raw_user_typed and not is_user_input_foreign_or_english(raw_user_typed) and api_version != "v3")
+        should_guard_id = bool(
+            raw_user_typed
+            and not is_non_indonesian_script(raw_user_typed)
+            and not is_user_input_foreign_or_english(raw_user_typed)
+            and api_version != "v3"
+        )
+        identity_probe_stream = prep.get("identity_probe") or {}
+        buffer_for_identity_guard = bool(
+            (identity_probe_stream.get("is_injection") or identity_probe_stream.get("is_identity_probe"))
+            and api_version != "v3"
+        )
         lyra_tier_info = prep.get("lyra_tier_info")
         lyra_tier_id = lyra_tier_info["id"] if lyra_tier_info else "high"
         has_image_turn = bool(prep.get("has_image"))
@@ -2365,7 +2544,16 @@ def stream_shiro_reply(
         def _flush_stream_seg(seg: str) -> str:
             if not seg or not seg.strip():
                 return seg
-            if should_guard_id and "```" not in seg and contains_english_segments(seg):
+            # Zero Markdown structural mutation saat streaming (tabel GFM, callout, heading, list, inline code)
+            has_md_struct = any(
+                ln.lstrip().startswith(('|', '>', '#', '- ', '* ', '+ '))
+                or re.match(r'^\s*\d+[\.\)]\s+', ln)
+                for ln in seg.splitlines()
+                if ln.strip()
+            )
+            if has_md_struct or '`' in seg or '```' in seg:
+                return seg
+            if should_guard_id and contains_english_segments(seg):
                 replaced = replace_inline_english_idioms(seg)
                 if lyra_tier_id != "low" and is_predominantly_english(replaced.strip()):
                     lead_ws = re.match(r'^\s*', replaced).group(0)
@@ -2766,9 +2954,13 @@ def stream_shiro_reply(
                             ready_piece, tag_carry = _split_partial_think_suffix(tag_carry + token)
                             if ready_piece:
                                 for ev_item in _process_stream_piece(ready_piece):
+                                    if buffer_for_identity_guard and ev_item.get("type") in ("token", "thought", "thought_done"):
+                                        continue
                                     yield ev_item
                         else:
                             for ev_item in _emit_visible_token(token):
+                                if buffer_for_identity_guard and ev_item.get("type") in ("token", "thought", "thought_done"):
+                                    continue
                                 yield ev_item
 
                     now = time.perf_counter()
@@ -2782,7 +2974,8 @@ def stream_shiro_reply(
                         flushed = _flush_stream_seg(clean_tail)
                         streamed_reply_acc += flushed
                         any_visible_streamed = True
-                        yield {"type": "token", "token": flushed}
+                        if not buffer_for_identity_guard:
+                            yield {"type": "token", "token": flushed}
                     clause_buf = ""
             finally:
                 cancel_event.set()
@@ -2792,7 +2985,7 @@ def stream_shiro_reply(
                     except RuntimeError:
                         pass
 
-            round_calls, _ = _parse_agent_tool_calls(round_raw_reply)
+            round_calls, non_tool_raw = _parse_agent_tool_calls(round_raw_reply)
             research_calls = []
             for tc in round_calls:
                 if tc.get("name") in ("web_search", "open_url", "screenshot"):
@@ -2880,10 +3073,18 @@ def stream_shiro_reply(
                     }
                 continue
 
+            preserved_inline_calls = list(round_calls)
             raw_reply = round_raw_reply
-            if should_guard_id and streamed_reply_acc.strip():
-                _, non_tool_raw = _parse_agent_tool_calls(round_raw_reply)
-                # Pertahankan konten think di thought_acc dan jaga hasil stream yang sudah diterjemahkan bersih
+            if buffer_for_identity_guard:
+                with state.llm_lock:
+                    raw_reply = _verify_and_guard_identity_reply(llm, round_msgs, round_raw_reply, prep, call_kwargs)
+                from shiro.security.identity_guard import sanitize_identity_leak_in_thought
+                thought_acc = sanitize_identity_leak_in_thought(thought_acc) or ""
+                _, safe_vis_reply = _parse_agent_tool_calls(re.sub(r'<think>.*?</think>', '', raw_reply, flags=re.DOTALL | re.IGNORECASE).strip())
+                if safe_vis_reply:
+                    any_visible_streamed = True
+                    yield {"type": "token", "token": safe_vis_reply}
+            elif should_guard_id and streamed_reply_acc.strip():
                 if non_tool_raw:
                     raw_reply = streamed_reply_acc
             break
@@ -2905,6 +3106,7 @@ def stream_shiro_reply(
             t_llm_dur=t_llm_dur,
             thought_content_override=None if api_version == "v2" else (thought_acc or None),
             thought_duration_sec=None if api_version == "v2" else thought_duration_sec,
+            pre_parsed_tool_calls=locals().get("preserved_inline_calls") or [],
         )
 
         final_steps = list(details.get("agent_steps") or []) if is_heavy_task_stream else []

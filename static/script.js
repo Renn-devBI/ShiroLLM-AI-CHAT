@@ -1320,37 +1320,333 @@ function extractFilenameForCodeBlock(fenceInfo, precedingText, rawCode) {
     };
 }
 
-// Parse message formatting: Markdown, Syntax Highlighting, Mermaid, Sanitization
+function isDownloadableCodeBlock(cleanLang, detectedFilename, rawCode) {
+    if (detectedFilename) return true;
+    const trimmed = String(rawCode || '').trim();
+    if (!trimmed) return false;
+    const nonEmptyLines = trimmed.split(/\r?\n/).filter(ln => ln.trim().length > 0);
+    const langLow = String(cleanLang || '').toLowerCase();
+    // Jangan tampilkan tombol Unduh untuk perintah terminal 1 baris tanpa nama berkas eksplisit (mis. "shutdown /a")
+    if (nonEmptyLines.length <= 1 && (!langLow || ['bash', 'sh', 'shell', 'zsh', 'bat', 'cmd', 'ps1', 'powershell', 'text', 'plaintext'].includes(langLow))) {
+        return false;
+    }
+    if (nonEmptyLines.length <= 1 && trimmed.length < 72) {
+        return false;
+    }
+    return true;
+}
+
+function renderDiffCodeHTML(rawCode) {
+    const lines = String(rawCode || '').split(/\r?\n/);
+    let oldLine = 1;
+    let newLine = 1;
+    const rows = lines.map((line) => {
+        const esc = escapeHtml(line);
+        if (line.startsWith('@@')) {
+            const m = line.match(/@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?\s*@@/);
+            if (m) {
+                oldLine = parseInt(m[1], 10);
+                newLine = parseInt(m[2], 10);
+            }
+            return `<div class="diff-line diff-line-hunk"><span class="diff-gutter"></span><span class="diff-gutter"></span><span>${esc}</span></div>`;
+        }
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+            const gNew = newLine++;
+            return `<div class="diff-line diff-line-add"><span class="diff-gutter"></span><span class="diff-gutter">${gNew}</span><span>${esc}</span></div>`;
+        }
+        if (line.startsWith('-') && !line.startsWith('---')) {
+            const gOld = oldLine++;
+            return `<div class="diff-line diff-line-del"><span class="diff-gutter">${gOld}</span><span class="diff-gutter"></span><span>${esc}</span></div>`;
+        }
+        const gOld = oldLine++;
+        const gNew = newLine++;
+        return `<div class="diff-line"><span class="diff-gutter">${gOld}</span><span class="diff-gutter">${gNew}</span><span>${esc}</span></div>`;
+    }).join('');
+    return `<pre class="md-diff-pre"><code class="language-diff nohighlight">${rows}</code></pre>`;
+}
+
+function isSafeMarkdownUrl(rawUrl) {
+    const u = String(rawUrl || '').trim();
+    if (!u) return false;
+    if (/^(?:javascript|data|vbscript):/i.test(u)) return false;
+    return /^(?:https?:\/\/|\/|#)/i.test(u);
+}
+
+function copyInlineSymbol(el) {
+    if (!el) return;
+    const txt = el.getAttribute('data-copy') || el.textContent || '';
+    if (!txt) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(() => {
+            if (typeof showToast === 'function') {
+                showToast((currentLang === 'en' ? 'Copied: ' : 'Disalin: ') + txt);
+            }
+        }).catch(() => {});
+    }
+}
+
+function renderKatexMath(tex, displayMode) {
+    const raw = String(tex || '').trim();
+    if (!raw) return '';
+    if (typeof katex !== 'undefined' && typeof katex.renderToString === 'function') {
+        try {
+            return katex.renderToString(raw, {
+                displayMode: Boolean(displayMode),
+                throwOnError: false,
+                strict: false,
+            });
+        } catch (_) {}
+    }
+    return displayMode
+        ? `<div class="md-math-block md-math-block-raw">${escapeHtml(raw)}</div>`
+        : `<code class="md-math-inline-raw">${escapeHtml(raw)}</code>`;
+}
+
+function renderInlineMarkdown(rawText) {
+    if (!rawText) return '';
+    let txt = escapeHtml(rawText);
+
+    // 1. Lindungi inline code & inline math lebih dulu agar formatter * / ~ / _ tidak menyentuh isinya
+    const inlineSlots = [];
+    const stashSlot = (html) => {
+        const key = `\u0001SHIROINL${inlineSlots.length}\u0002`;
+        inlineSlots.push(html);
+        return key;
+    };
+
+    txt = txt.replace(/`([^`\n]+)`/g, (_, innerEscaped) => {
+        const looksLikePathOrFile = /^(?:[A-Za-z0-9_.\-\/\\]+\.[A-Za-z0-9]{1,10}(?::\d+)?|(?:src|app|shiro|static|templates)\/[^\s]+)$/.test(innerEscaped);
+        if (looksLikePathOrFile) {
+            return stashSlot(`<button type="button" class="md-file-pill" data-copy="${innerEscaped}" onclick="copyInlineSymbol(this)" title="Salin ${innerEscaped}"><i class="ph ph-file-code"></i><span>${innerEscaped}</span></button>`);
+        }
+        return stashSlot(`<code>${innerEscaped}</code>`);
+    });
+
+    // Inline math $...$ (hindari angka harga seperti $100 atau teks dengan spasi di tepi)
+    txt = txt.replace(/\$([^\s$][^$\n]*?[^\s$]|[^\s$\d])\$/g, (_, mathExprEsc) => {
+        const rawTex = mathExprEsc.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+        return stashSlot(renderKatexMath(rawTex, false));
+    });
+
+    // 2. Gambar ![alt](url) (hanya skema aman)
+    txt = txt.replace(/!\[([^\]]*)\]\(([^\s)]+)\)/g, (m, alt, rawUrl) => {
+        const cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
+        if (!isSafeMarkdownUrl(cleanUrl)) return escapeHtml(alt || '');
+        const safeAlt = (alt || 'Gambar').replace(/"/g, '&quot;');
+        const jsUrl = cleanUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return stashSlot(`<div class="chat-inline-img-wrap" onclick="openImageLightbox('${jsUrl}', '${safeAlt}')" title="Klik untuk melihat pratinjau penuh"><img src="${cleanUrl}" alt="${safeAlt}" class="chat-img-attachment" loading="lazy" onerror="this.outerHTML='<span class=\\'md-img-fallback\\'><i class=\\'ph ph-image-broken\\'></i> ${safeAlt}</span>'"></div>`);
+    });
+
+    // 3. Tautan [label](url) — blokir skema berbahaya (javascript:, data:, vbscript:)
+    txt = txt.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, rawUrl) => {
+        const cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
+        if (!isSafeMarkdownUrl(cleanUrl)) {
+            return label;
+        }
+        if (/^\d{1,3}$/.test(label.trim())) {
+            return stashSlot(`<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="md-citation-pill" title="Sumber: ${cleanUrl}">${label}</a>`);
+        }
+        return stashSlot(`<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${label}</a>`);
+    });
+
+    // 4. Autolink URL polos
+    txt = txt.replace(/(https?:\/\/[^\s<>"']+)/g, (match) => {
+        const cleanUrl = match.replace(/[.,;!?)]+$/, '');
+        const trailing = match.slice(cleanUrl.length);
+        return stashSlot(`<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${cleanUrl}</a>`) + trailing;
+    });
+
+    // 5. Formatting tebal, coret, miring
+    txt = txt.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    txt = txt.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    txt = txt.replace(/~~(.+?)~~/g, '<del>$1</del>');
+    txt = txt.replace(/(^|[^\w])\*([^*\n]+?)\*(?!\w)/g, '$1<em>$2</em>');
+
+    for (let i = 0; i < inlineSlots.length; i++) {
+        txt = txt.replace(`\u0001SHIROINL${i}\u0002`, inlineSlots[i]);
+    }
+    return txt;
+}
+
+function splitMarkdownTableCells(rowStr) {
+    let s = String(rowStr || '').trim();
+    if (s.startsWith('|')) s = s.slice(1);
+    if (s.endsWith('|')) s = s.slice(0, -1);
+    const cells = [];
+    let cur = '';
+    let inBacktick = false;
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === '`' && s[i - 1] !== '\\') {
+            inBacktick = !inBacktick;
+            cur += ch;
+        } else if (ch === '\\' && s[i + 1] === '|') {
+            cur += '|';
+            i++;
+        } else if (ch === '|' && !inBacktick) {
+            cells.push(cur.trim());
+            cur = '';
+        } else {
+            cur += ch;
+        }
+    }
+    cells.push(cur.trim());
+    return cells;
+}
+
+function isGfmTableSeparatorLine(line) {
+    const t = String(line || '').trim();
+    if (!t.includes('-')) return false;
+    const cells = splitMarkdownTableCells(t);
+    return cells.length >= 1 && cells.every(c => /^:?-{2,}:?$/.test(c.replace(/\s+/g, '')));
+}
+
+function renderGfmTableHTML(headerLine, sepLine, bodyLines) {
+    const headers = splitMarkdownTableCells(headerLine);
+    const sepCells = splitMarkdownTableCells(sepLine);
+    const aligns = headers.map((_, idx) => {
+        const sc = (sepCells[idx] || '').trim();
+        if (sc.startsWith(':') && sc.endsWith(':')) return 'center';
+        if (sc.endsWith(':')) return 'right';
+        return 'left';
+    });
+
+    const thHTML = headers.map((h, i) => `<th style="text-align:${aligns[i]}">${renderInlineMarkdown(h)}</th>`).join('');
+    const bodyHTML = bodyLines.map((rowLn) => {
+        const cols = splitMarkdownTableCells(rowLn);
+        const tds = headers.map((_, i) => `<td style="text-align:${aligns[i]}">${renderInlineMarkdown(cols[i] || '')}</td>`).join('');
+        return `<tr>${tds}</tr>`;
+    }).join('');
+
+    return `<div class="md-table-wrap"><table class="md-table"><thead><tr>${thHTML}</tr></thead><tbody>${bodyHTML}</tbody></table></div>`;
+}
+
+function renderCalloutOrQuoteHTML(quoteLines) {
+    if (!quoteLines.length) return '';
+    const first = quoteLines[0].trim();
+    const mCall = first.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i);
+    if (mCall) {
+        const kind = mCall[1].toUpperCase();
+        const kindCls = kind.toLowerCase();
+        const iconMap = {
+            NOTE: 'ph-info',
+            TIP: 'ph-lightbulb',
+            IMPORTANT: 'ph-sparkle',
+            WARNING: 'ph-warning',
+            CAUTION: 'ph-warning-octagon'
+        };
+        const restLines = [];
+        if (mCall[2]) restLines.push(mCall[2]);
+        for (let i = 1; i < quoteLines.length; i++) restLines.push(quoteLines[i]);
+        const bodyHtml = restLines.map(ln => ln.trim() ? renderInlineMarkdown(ln) : '').filter(Boolean).join('<br>');
+        return `<div class="md-callout callout-${kindCls}"><div class="md-callout-head"><i class="ph-fill ${iconMap[kind] || 'ph-info'}"></i><span>${kind}</span></div><div class="md-callout-body">${bodyHtml}</div></div>`;
+    }
+    const innerHtml = quoteLines.map(ln => renderInlineMarkdown(ln)).join('<br>');
+    return `<blockquote class="md-quote">${innerHtml}</blockquote>`;
+}
+
+function renderListBlockHTML(listLines) {
+    if (!listLines.length) return '';
+    let doneTasks = 0;
+    let totalTasks = 0;
+    const parsedItems = listLines.map((raw) => {
+        const m = raw.match(/^(\s*)([-*+]|\d+[\.\)])\s+(.*)$/);
+        if (!m) return null;
+        const indent = m[1].replace(/\t/g, '  ').length;
+        const ordered = /^\d/.test(m[2]);
+        let content = m[3];
+        let isTask = false;
+        let checked = false;
+        const mTask = content.match(/^\[([ xX])\]\s*(.*)$/);
+        if (mTask) {
+            isTask = true;
+            checked = mTask[1].toLowerCase() === 'x';
+            totalTasks++;
+            if (checked) doneTasks++;
+            content = mTask[2];
+        }
+        return { indent, ordered, content, isTask, checked };
+    }).filter(Boolean);
+
+    if (!parsedItems.length) return '';
+
+    const buildTree = (startIdx, minIndent) => {
+        const first = parsedItems[startIdx];
+        const tag = first.ordered ? 'ol' : 'ul';
+        const isTaskList = parsedItems.some(it => it.isTask && it.indent === first.indent);
+        const cls = isTaskList ? 'md-list md-task-list' : 'md-list';
+        let html = `<${tag} class="${cls}">`;
+        let i = startIdx;
+        while (i < parsedItems.length) {
+            const it = parsedItems[i];
+            if (it.indent < minIndent) break;
+            if (it.indent > minIndent) {
+                i++;
+                continue;
+            }
+            if (it.ordered !== first.ordered && it.indent === minIndent) {
+                break;
+            }
+            let liInner = it.isTask
+                ? `<input type="checkbox" class="md-task-checkbox" disabled${it.checked ? ' checked' : ''}><span>${renderInlineMarkdown(it.content)}</span>`
+                : renderInlineMarkdown(it.content);
+            const liCls = it.isTask ? ' class="md-task-item"' : '';
+            let nextIdx = i + 1;
+            if (nextIdx < parsedItems.length && parsedItems[nextIdx].indent > it.indent) {
+                const sub = buildTree(nextIdx, parsedItems[nextIdx].indent);
+                liInner += sub.html;
+                nextIdx = sub.nextIdx;
+            }
+            html += `<li${liCls}>${liInner}</li>`;
+            i = nextIdx;
+        }
+        html += `</${tag}>`;
+        return { html, nextIdx: i };
+    };
+
+    let out = '';
+    if (totalTasks > 0) {
+        const pct = Math.round((doneTasks / totalTasks) * 100);
+        out += `<div class="md-task-progress"><span>${doneTasks}/${totalTasks}</span><span class="md-task-bar"><span class="md-task-bar-fill" style="width:${pct}%"></span></span></div>`;
+    }
+    let idx = 0;
+    while (idx < parsedItems.length) {
+        const res = buildTree(idx, parsedItems[idx].indent);
+        out += res.html;
+        idx = res.nextIdx > idx ? res.nextIdx : idx + 1;
+    }
+    return out;
+}
+
+// Parse message formatting: GFM + KaTeX + Callouts + Diff + Mermaid + XSS Sanitization (Antigravity-Style)
 function parseMessageContent(text) {
     if (!text) return '';
 
-    // Auto-heal unclosed code fence agar potongan kode yang sedang di-generate atau terpotong tetap di-render utuh
-    let normalizedText = text;
+    // Auto-heal unclosed code fence / display math agar streaming tidak merusak layout
+    let normalizedText = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const fenceMatches = normalizedText.match(/```/g);
     if (fenceMatches && fenceMatches.length % 2 === 1) {
         normalizedText += '\n```';
     }
+    const mathFenceMatches = normalizedText.match(/\$\$/g);
+    if (mathFenceMatches && mathFenceMatches.length % 2 === 1) {
+        normalizedText += '\n$$';
+    }
 
     const codeBlocks = [];
 
-    // 1. Ekstrak Fenced Code Blocks beserta deteksi nama berkas persis (mis. login.app)
-    let content = normalizedText.replace(/```([^\r\n`]*)\r?\n([\s\S]*?)```|```([a-zA-Z0-9_\-\.:\/]*)\s*([\s\S]*?)```/g, function(match, info1, code1, info2, code2, offset) {
+    // 1. Ekstrak Fenced Code Blocks (Mermaid, Diff, dan Code Block dengan Download Kondisional)
+    let content = normalizedText.replace(/```([^\n`]*)\n([\s\S]*?)```|```([a-zA-Z0-9_\-\.:\/]*)\s*([\s\S]*?)```/g, function(match, info1, code1, info2, code2, offset) {
         const fenceInfo = (info1 !== undefined ? info1 : (info2 || '')).trim();
         const rawCode = (info1 !== undefined ? (code1 || '') : (code2 || '')).trim();
         const precedingSlice = normalizedText.slice(Math.max(0, (offset || 0) - 420), offset || 0);
         const extractedMeta = extractFilenameForCodeBlock(fenceInfo, precedingSlice, rawCode);
         const cleanLang = extractedMeta.lang || '';
         const detectedFilename = extractedMeta.filename || '';
-        const placeholder = `___SHIRO_BLOCK_${codeBlocks.length}___`;
-
-        const escapedCode = rawCode
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        const placeholder = `\u0001SHIROBLK${codeBlocks.length}\u0002`;
 
         if (cleanLang === 'mermaid') {
+            const escapedCode = escapeHtml(rawCode);
             const mId = `mermaid_${Date.now()}_${++mermaidCounter}`;
             codeBlocks.push(`
                 <div class="mermaid-container" id="${mId}">
@@ -1367,94 +1663,152 @@ function parseMessageContent(text) {
                 </div>
             `);
         } else {
+            const canDownload = isDownloadableCodeBlock(cleanLang, detectedFilename, rawCode);
             const displayLang = cleanLang || (detectedFilename.includes('.') ? detectedFilename.split('.').pop().toLowerCase() : 'kode');
             const langClass = cleanLang ? `language-${cleanLang}` : 'nohighlight';
             const headerLabelHTML = detectedFilename
                 ? `<span class="code-filename-badge" title="${escapeHtml(detectedFilename)}">${escapeHtml(detectedFilename)}</span>${cleanLang && cleanLang !== detectedFilename.toLowerCase() ? `<span class="code-lang-sub">${escapeHtml(cleanLang)}</span>` : ''}`
                 : `${escapeHtml(displayLang)}`;
+            const dlBtnHTML = canDownload
+                ? `<button type="button" class="btn-code-action btn-download-code" onclick="downloadCodeSnippet(this)" title="${t('download_code_tooltip')}" aria-label="Unduh Berkas Kode"><i class="ph ph-download-simple"></i> <span>${t('download_code')}</span></button>`
+                : '';
+            const codeInnerHTML = (cleanLang === 'diff')
+                ? renderDiffCodeHTML(rawCode)
+                : `<pre><code class="${langClass}">${escapeHtml(rawCode)}</code></pre>`;
             codeBlocks.push(`
-                <div class="code-block-wrapper" data-lang="${escapeHtml(cleanLang || 'txt')}" data-filename="${escapeHtml(detectedFilename)}">
+                <div class="code-block-wrapper" data-lang="${escapeHtml(cleanLang || 'txt')}" data-filename="${escapeHtml(detectedFilename)}" data-downloadable="${canDownload ? 'true' : 'false'}">
                     <div class="code-block-header">
                         <span class="code-lang-label">${headerLabelHTML}</span>
                         <div class="code-block-actions">
-                            <button type="button" class="btn-code-action btn-download-code" onclick="downloadCodeSnippet(this)" title="${t('download_code_tooltip')}" aria-label="Unduh Berkas Kode">
-                                <i class="ph ph-download-simple"></i> <span>${t('download_code')}</span>
-                            </button>
+                            ${dlBtnHTML}
                             <button type="button" class="btn-code-action btn-copy-code" onclick="copyCodeSnippet(this)" title="${t('copy_code_tooltip')}" aria-label="Salin Kode">
                                 <i class="ph ph-copy"></i> <span>${t('copy_code')}</span>
                             </button>
                         </div>
                     </div>
-                    <pre><code class="${langClass}">${escapedCode}</code></pre>
+                    ${codeInnerHTML}
                 </div>
             `);
         }
-        return placeholder;
+        return `\n${placeholder}\n`;
     });
 
-    // 2. Escape teks non-kode untuk sanitasi awal
-    let div = document.createElement('div');
-    div.textContent = content;
-    content = div.innerHTML;
-
-    // 3. Parse Markdown Images
-    content = content.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s<>"'\)]+|\/[^\s<>"'\)]+)\)/g, function(match, alt, rawUrl) {
-        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
-        let safeAlt = (alt || 'Gambar').replace(/"/g, '&quot;');
-        let jsUrl = cleanUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        return `<div class="chat-inline-img-wrap" onclick="openImageLightbox('${jsUrl}', '${safeAlt}')" title="Klik untuk melihat pratinjau penuh"><img src="${cleanUrl}" alt="${safeAlt}" class="chat-img-attachment" loading="lazy"></div>`;
+    // 1b. Ekstrak Display Math Blocks $$...$$
+    content = content.replace(/\$\$([\s\S]+?)\$\$/g, (_, mathBody) => {
+        const placeholder = `\u0001SHIROBLK${codeBlocks.length}\u0002`;
+        codeBlocks.push(`<div class="md-math-block">${renderKatexMath(mathBody, true)}</div>`);
+        return `\n${placeholder}\n`;
     });
 
-    // 4. Parse Markdown links [text](url)
-    const mdLinks = [];
-    content = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\s<>"']+)\)/g, function(match, label, rawUrl) {
-        let cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '');
-        let placeholder = `___SHIRO_MD_LINK_${mdLinks.length}___`;
-        mdLinks.push(`<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${label}</a>`);
-        return placeholder;
-    });
+    // 2. Block-Level Markdown Parser (Heading, HR, GFM Table, Callout/Blockquote, Nested List & Task List, Paragraph)
+    const lines = content.split('\n');
+    const htmlBlocks = [];
+    let i = 0;
+    const isListLine = (ln) => /^\s*(?:[-*+]|\d+[\.\)])\s+/.test(ln || '');
 
-    // 5. Parse plain URL
-    const urlRegex = /(https?:\/\/[^\s<>"']+)/g;
-    content = content.replace(urlRegex, function(match) {
-        let cleanUrl = match.replace(/[.,;!?)]+$/, '');
-        let trailing = match.slice(cleanUrl.length);
-        return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="chat-link" title="Buka: ${cleanUrl}">${cleanUrl}</a>${trailing}`;
-    });
+    while (i < lines.length) {
+        const ln = lines[i];
+        const trimmed = ln.trim();
+        if (!trimmed) {
+            i++;
+            continue;
+        }
+        const mSlot = trimmed.match(/^\u0001SHIROBLK(\d+)\u0002$/);
+        if (mSlot) {
+            htmlBlocks.push(trimmed);
+            i++;
+            continue;
+        }
+        // Horizontal rule
+        if (/^(?:---+|\*\*\*+|___+)$/.test(trimmed)) {
+            htmlBlocks.push('<hr class="md-hr">');
+            i++;
+            continue;
+        }
+        // Heading (# .. ######)
+        const mHead = trimmed.match(/^(#{1,6})\s+(.+)$/);
+        if (mHead) {
+            const lvl = mHead[1].length;
+            htmlBlocks.push(`<h${lvl} class="md-h${lvl}">${renderInlineMarkdown(mHead[2])}</h${lvl}>`);
+            i++;
+            continue;
+        }
+        // GFM Table
+        if (trimmed.includes('|') && i + 1 < lines.length && isGfmTableSeparatorLine(lines[i + 1])) {
+            const headerLine = trimmed;
+            const sepLine = lines[i + 1].trim();
+            i += 2;
+            const bodyRows = [];
+            while (i < lines.length) {
+                const rowT = lines[i].trim();
+                if (!rowT || !rowT.includes('|') || /^\u0001SHIROBLK\d+\u0002$/.test(rowT)) break;
+                bodyRows.push(rowT);
+                i++;
+            }
+            htmlBlocks.push(renderGfmTableHTML(headerLine, sepLine, bodyRows));
+            continue;
+        }
+        // Blockquote / GitHub Callout (> [!NOTE|TIP|IMPORTANT|WARNING|CAUTION])
+        if (trimmed.startsWith('>')) {
+            const qLines = [];
+            while (i < lines.length && lines[i].trim().startsWith('>')) {
+                qLines.push(lines[i].trim().replace(/^>\s?/, ''));
+                i++;
+            }
+            htmlBlocks.push(renderCalloutOrQuoteHTML(qLines));
+            continue;
+        }
+        // Lists & Task Lists
+        if (isListLine(ln)) {
+            const lLines = [];
+            while (i < lines.length && isListLine(lines[i])) {
+                lLines.push(lines[i]);
+                i++;
+            }
+            htmlBlocks.push(renderListBlockHTML(lLines));
+            continue;
+        }
+        // Paragraph (stops cleanly at block starters)
+        const pLines = [];
+        while (i < lines.length) {
+            const cur = lines[i];
+            const curT = cur.trim();
+            if (!curT) break;
+            if (/^\u0001SHIROBLK\d+\u0002$/.test(curT)) break;
+            if (/^(?:---+|\*\*\*+|___+)$/.test(curT)) break;
+            if (/^#{1,6}\s+/.test(curT)) break;
+            if (curT.startsWith('>')) break;
+            if (isListLine(cur)) break;
+            if (curT.includes('|') && i + 1 < lines.length && isGfmTableSeparatorLine(lines[i + 1])) break;
+            pLines.push(renderInlineMarkdown(cur));
+            i++;
+        }
+        if (pLines.length) {
+            htmlBlocks.push(`<p class="md-p">${pLines.join('<br>')}</p>`);
+        }
+    }
 
-    mdLinks.forEach((linkHtml, idx) => {
-        content = content.replace(`___SHIRO_MD_LINK_${idx}___`, linkHtml);
-    });
+    let rendered = htmlBlocks.join('\n');
 
-    // 6. Parse inline code
-    content = content.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-    // 7. Parse formatting teks
-    content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    content = content.replace(/~~(.+?)~~/g, '<del>$1</del>');
-    content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    // 8. Parse baris baru
-    content = content.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
-
-    // 9. Pulihkan blok kode & diagram mermaid
+    // 3. Pulihkan blok kode, math, & diagram mermaid
     codeBlocks.forEach((blockHtml, idx) => {
-        content = content.replace(`___SHIRO_BLOCK_${idx}___`, blockHtml);
+        rendered = rendered.replace(`\u0001SHIROBLK${idx}\u0002`, blockHtml);
     });
 
-    // 10. Markdown Sanitization via DOMPurify
+    // 4. Sanitasi Anti-XSS Ketat via DOMPurify
     if (typeof DOMPurify !== 'undefined') {
         try {
-            content = DOMPurify.sanitize(content, {
-                ADD_TAGS: ['svg', 'path', 'marker', 'g', 'rect', 'circle', 'line', 'polygon', 'text', 'tspan', 'style', 'defs', 'details', 'summary', 'hr'],
-                ADD_ATTR: ['target', 'rel', 'onclick', 'data-*', 'data-filename', 'data-lang', 'download', 'class', 'id', 'd', 'fill', 'stroke', 'viewBox', 'width', 'height', 'style', 'title']
+            rendered = DOMPurify.sanitize(rendered, {
+                ADD_TAGS: ['svg', 'path', 'marker', 'g', 'rect', 'circle', 'line', 'polygon', 'text', 'tspan', 'style', 'defs', 'details', 'summary', 'hr', 'input', 'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'mfrac', 'mtable', 'mtr', 'mtd', 'annotation'],
+                ADD_ATTR: ['target', 'rel', 'onclick', 'data-*', 'data-filename', 'data-lang', 'data-downloadable', 'data-copy', 'download', 'class', 'id', 'd', 'fill', 'stroke', 'viewBox', 'width', 'height', 'style', 'title', 'type', 'disabled', 'checked', 'aria-hidden'],
+                ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|\/|#)/i,
             });
         } catch (pErr) {
             console.warn('[DOMPurify Warning]:', pErr);
         }
     }
 
-    return content;
+    return rendered;
 }
 
 function renderAvatarContent(profile, fallbackChar) {
@@ -1666,7 +2020,9 @@ function syncQuickCodeDownloadsInMsg(msgEl) {
     if (!msgEl || !msgEl.classList.contains('assistant')) return;
     const container = msgEl.querySelector('.bubble-container');
     if (!container) return;
-    const wrappers = Array.from(container.querySelectorAll('.code-block-wrapper'));
+    const wrappers = Array.from(container.querySelectorAll('.code-block-wrapper')).filter(
+        wr => wr.dataset.downloadable !== 'false'
+    );
     const existingBar = container.querySelector('.msg-quick-downloads');
     if (!wrappers.length) {
         if (existingBar) existingBar.remove();
@@ -3304,9 +3660,16 @@ async function sendMessage(overridePayload = null, explicitSessionId = null) {
                                 }
                             } else if (evData.type === 'token') {
                                 const chunkTok = evData.token || '';
-                                if (!run.streamText && chunkTok.trim()) {
+                                const isFirstVisible = !run.streamText && Boolean(chunkTok.trim());
+                                if (isFirstVisible) {
                                     run.statusText = t('status_typing');
                                     if (isMounted() && status) status.textContent = run.statusText;
+                                    if (isMounted() && run.assistantMsgEl) {
+                                        const thBlk = run.assistantMsgEl.querySelector('.ag-thought-block');
+                                        if (thBlk && thBlk.dataset.userToggled !== 'true') {
+                                            thBlk.classList.remove('is-open');
+                                        }
+                                    }
                                 }
                                 run.streamText += chunkTok;
                                 if (isMounted()) {
@@ -4526,7 +4889,9 @@ function collectSessionDownloadableFiles() {
             }
         });
 
-        const wrappers = Array.from(el.querySelectorAll('.code-block-wrapper')).reverse();
+        const wrappers = Array.from(el.querySelectorAll('.code-block-wrapper'))
+            .filter(wr => wr.dataset.downloadable !== 'false')
+            .reverse();
         wrappers.forEach((wr, idx) => {
             const meta = resolveCodeBlockMeta(wr);
             if (!meta) return;
@@ -4609,7 +4974,7 @@ function updateQuickFilesBadge() {
     const btn = document.getElementById('quick-files-btn');
     const cntEl = document.getElementById('quick-files-count');
     if (!btn || !cntEl) return;
-    const aiCount = document.querySelectorAll('#chat-messages .message.assistant .code-block-wrapper, #chat-messages .message.assistant .ag-artifact-card').length;
+    const aiCount = document.querySelectorAll('#chat-messages .message.assistant .code-block-wrapper[data-downloadable="true"], #chat-messages .message.assistant .ag-artifact-card').length;
     const totalCount = aiCount || collectSessionDownloadableFiles().length;
     if (totalCount > 0) {
         cntEl.textContent = String(totalCount);

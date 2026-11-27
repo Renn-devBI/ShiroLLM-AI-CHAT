@@ -73,17 +73,23 @@ LANG_DEFAULT_FILENAMES = {
 
 _ARCHIVE_ACTION_WORDS = (
     "jadikan",
+    "dijadikan",
+    "jadiin",
+    "zipin",
     "buatkan",
     "buat",
     "bikin",
     "kompres",
+    "dikompres",
     "kompresi",
     "compress",
     "zipkan",
     "archive",
     "arsip",
     "arsipkan",
+    "diarsipkan",
     "bungkus",
+    "dibungkus",
     "bundel",
     "bundle",
     "pack",
@@ -101,7 +107,14 @@ _ARCHIVE_ACTION_WORDS = (
     "convert",
     "konversi",
     "ubah",
+    "bentuk",
+    "format",
+    "file",
+    "berkas",
     "semua",
+    "seluruh",
+    "all",
+    "into",
 )
 
 _ARCHIVE_FORMAT_WORDS = (
@@ -523,16 +536,72 @@ def merge_file_collections(
     return merged
 
 
+def detect_archive_claim_in_reply(reply_text: str) -> Optional[Dict[str, Any]]:
+    """
+    Mendeteksi bila AI dalam teks balasannya menyebut pembuatan arsip (.zip/.tar.gz/.7z/.tar)
+    namun belum memanggil tag [[AGENT_TOOL:create_archive|...]] secara eksplisit.
+    """
+    if not reply_text:
+        return None
+    m = re.search(
+        r'`?([A-Za-z0-9_\-.]+\.(?:tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2|txz|zip|tar|gz|7z))`?',
+        reply_text,
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        return None
+    arch_name = sanitize_filename(m.group(1), allow_subdirs=False)
+    low = reply_text.lower()
+    if any(kw in low for kw in ("arsip", "archive", "berhasil dibuat", "dikemas", "dikompres", "compressed", "ekstrak zip", "pack", "packaged")):
+        req_fmt = "zip"
+        for ext_pat, f_name in [
+            (".tar.gz", "tar.gz"), (".tgz", "tgz"), (".tar.bz2", "tar.bz2"),
+            (".tar.xz", "tar.xz"), (".7z", "7z"), (".tar", "tar"), (".gz", "gz"), (".zip", "zip")
+        ]:
+            if arch_name.lower().endswith(ext_pat):
+                req_fmt = f_name
+                break
+        return {"format": req_fmt, "archive_name": arch_name}
+    return None
+
+
+def _read_artifact_disk_content(download_url: str, fallback_name: str, is_archive_member: bool = False) -> Optional[str]:
+    """Membaca isi berkas artifact tersimpan di GENERATED_ARTIFACTS_DIR secara aman."""
+    if not download_url:
+        return None
+    root_abs = os.path.abspath(GENERATED_ARTIFACTS_DIR)
+    cand_paths = []
+    m_sub = re.match(r'^/api/artifacts/([A-Za-z0-9_\-]+)/files/(.+)$', download_url)
+    m_top = re.match(r'^/api/artifacts/([A-Za-z0-9_\-]+)/([^/]+)$', download_url)
+    if m_sub:
+        bundle_id = sanitize_filename(m_sub.group(1))
+        rel = urllib.parse.unquote(m_sub.group(2)).lstrip("/").replace("/", os.sep)
+        cand_paths.append(os.path.abspath(os.path.join(root_abs, bundle_id, "files", rel)))
+    elif m_top:
+        bundle_id = sanitize_filename(m_top.group(1))
+        fname = sanitize_filename(urllib.parse.unquote(m_top.group(2)))
+        if is_archive_member:
+            cand_paths.append(os.path.abspath(os.path.join(root_abs, bundle_id, "files", fname)))
+        cand_paths.append(os.path.abspath(os.path.join(root_abs, bundle_id, fname)))
+
+    for p in cand_paths:
+        try:
+            if os.path.commonpath([root_abs, p]) == root_abs and os.path.isfile(p):
+                with open(p, "r", encoding="utf-8", errors="ignore") as f_in:
+                    return f_in.read()
+        except Exception:
+            continue
+    return None
+
+
 def extract_files_from_conversation(
     history: Optional[List[Dict[str, Any]]],
-    max_lookback: int = 40,
+    max_lookback: int = 60,
     requested_filenames: Optional[List[str]] = None,
 ) -> Tuple[List[Dict[str, str]], Optional[str]]:
     """
-    Mengumpulkan seluruh berkas program terbaru dari riwayat percakapan (baik kode asisten
-    maupun berkas unggahan user) lintas beberapa giliran chat tanpa berhenti di giliran terakhir saja.
-    Jika beberapa giliran mengubah berkas yang sama (mis. turn 1 app.py+index.html, turn 2 index.html),
-    versi TERBARU tiap berkas tetap dipertahankan bersama berkas dari turn sebelumnya.
+    Mengumpulkan seluruh berkas program terbaru dari riwayat percakapan (kode markdown asisten,
+    artifact file/archive sebelumnya di disk, serta berkas unggahan user) lintas giliran chat.
     """
     if not history:
         return [], None
@@ -541,27 +610,60 @@ def extract_files_from_conversation(
     collected_by_norm: Dict[str, Dict[str, str]] = {}
     seen_basenames = set()
     project_name: Optional[str] = None
+    uploads_root = os.path.abspath(os.path.join("data", "uploads"))
+
+    def _register_file(rel_name: str, content: str, language: str = "text"):
+        clean_rel = sanitize_filename(rel_name, allow_subdirs=True)
+        if not clean_rel or not str(content or "").strip():
+            return
+        norm_path = clean_rel.lower()
+        base = clean_rel.split("/")[-1]
+        norm_base = base.lower()
+        if norm_path in collected_by_norm or norm_base in seen_basenames:
+            return
+        collected_by_norm[norm_path] = {
+            "filename": clean_rel,
+            "basename": base,
+            "content": str(content),
+            "language": str(language or "text"),
+        }
+        seen_basenames.add(norm_base)
 
     for msg in reversed(recent):
         role = msg.get("role")
         if role == "assistant":
             content = str(msg.get("content") or "")
             extracted = extract_named_files_from_markdown(content)
-            if not extracted:
-                continue
-            if not project_name:
-                cand_proj = infer_project_name_from_text(content, extracted)
-                if cand_proj and cand_proj != "shiro-project":
-                    project_name = cand_proj
-            for item in extracted:
-                norm_path = item["filename"].lower()
-                norm_base = item["basename"].lower()
-                if norm_path in collected_by_norm or norm_base in seen_basenames:
-                    continue
-                collected_by_norm[norm_path] = item
-                seen_basenames.add(norm_base)
+            if extracted:
+                if not project_name:
+                    cand_proj = infer_project_name_from_text(content, extracted)
+                    if cand_proj and cand_proj != "shiro-project":
+                        project_name = cand_proj
+                for item in extracted:
+                    _register_file(item["filename"], item["content"], item.get("language", "text"))
+
+            # Hidrasi dari artifacts pesan asisten sebelumnya (jika kode tidak diulang atau berada di archive/file artifact)
+            arts = msg.get("artifacts")
+            if isinstance(arts, list):
+                for art in arts:
+                    if not isinstance(art, dict):
+                        continue
+                    kind = art.get("kind")
+                    if kind == "file":
+                        a_name = art.get("filename") or ""
+                        txt = _read_artifact_disk_content(art.get("download_url") or "", a_name, is_archive_member=False)
+                        if txt:
+                            _register_file(a_name, txt, art.get("format") or "text")
+                    elif kind == "archive" and isinstance(art.get("individual_files"), list):
+                        for sf in art["individual_files"]:
+                            if not isinstance(sf, dict):
+                                continue
+                            sf_name = sf.get("rel_path") or sf.get("filename") or ""
+                            txt = _read_artifact_disk_content(sf.get("download_url") or "", sf_name, is_archive_member=True)
+                            if txt:
+                                _register_file(sf_name, txt, "text")
         elif role == "user":
-            # Sertakan berkas yang pernah diunggah user jika teksnya tersedia di metadata
+            # Sertakan berkas yang pernah diunggah user (metadata text maupun fallback disk/document_text)
             docs_meta = msg.get("documents")
             if isinstance(docs_meta, list):
                 for d in docs_meta:
@@ -569,17 +671,20 @@ def extract_files_from_conversation(
                         continue
                     d_name = sanitize_filename(d.get("filename") or "", allow_subdirs=True)
                     d_text = d.get("text")
+                    if (not d_text or not str(d_text).strip()) and d_name:
+                        disk_up = os.path.abspath(os.path.join(uploads_root, d_name.split("/")[-1]))
+                        try:
+                            if os.path.commonpath([uploads_root, disk_up]) == uploads_root and os.path.isfile(disk_up):
+                                with open(disk_up, "r", encoding="utf-8", errors="ignore") as f_up:
+                                    d_text = f_up.read()
+                        except Exception:
+                            d_text = None
                     if d_name and d_text and str(d_text).strip():
-                        norm_path = d_name.lower()
-                        norm_base = d_name.split("/")[-1].lower()
-                        if norm_path not in collected_by_norm and norm_base not in seen_basenames:
-                            collected_by_norm[norm_path] = {
-                                "filename": d_name,
-                                "basename": d_name.split("/")[-1],
-                                "content": str(d_text),
-                                "language": str(d.get("file_type") or "text"),
-                            }
-                            seen_basenames.add(norm_base)
+                        _register_file(d_name, str(d_text), str(d.get("file_type") or "text"))
+            single_dname = msg.get("document_name")
+            single_dtext = msg.get("document_text")
+            if single_dname and single_dtext and str(single_dtext).strip():
+                _register_file(str(single_dname), str(single_dtext), str(msg.get("document_type") or "text"))
 
     all_files = list(collected_by_norm.values())
     if requested_filenames:

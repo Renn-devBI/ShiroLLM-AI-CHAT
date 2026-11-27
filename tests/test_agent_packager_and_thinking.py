@@ -254,8 +254,8 @@ class TestAgentPackagerAndThinking(unittest.TestCase):
             css = f.read()
         with open(os.path.join(root, "static", "script.js"), "r", encoding="utf-8") as f:
             js = f.read()
-        self.assertIn("script.js?v=3.10.0", html)
-        self.assertIn("style.css?v=3.10.0", html)
+        self.assertIn("script.js?v=3.11.0", html)
+        self.assertIn("style.css?v=3.11.0", html)
         self.assertIn('id="quick-files-btn"', html)
         self.assertIn("position: sticky;", css)
         self.assertIn("overflow: visible;", css)

@@ -63,12 +63,21 @@ def gate_facts(
     4. Saat ada gambar, hanya fakta yang benar-benar relevan (skor > 0) yang masuk,
        supaya memori lama tidak mengaburkan observasi visual.
     """
+    is_id_probe = False
+    try:
+        from shiro.security.identity_guard import detect_identity_or_injection_probe
+        probe_res = detect_identity_or_injection_probe(query)
+        is_id_probe = bool(probe_res.get("is_injection") or probe_res.get("is_identity_probe"))
+    except Exception:
+        pass
+
     query_tokens = tokenize(query)
     scored = []
     for fact in facts or []:
         if fact.get("confidence", 0) < min_confidence:
             continue
-        if has_image and is_web_fact(fact):
+        is_immutable = bool(fact.get("immutable") or fact.get("protected"))
+        if has_image and is_web_fact(fact) and not is_immutable:
             continue
 
         f_tokens = tokenize(fact_text(fact))
@@ -78,8 +87,10 @@ def gate_facts(
         predicate = str(fact.get("predicate", "")).lower()
         if any(k in predicate for k in ("nama", "name", "dipanggil", "panggilan")):
             score += 0.5
+        if is_immutable:
+            score += 10.0 if is_id_probe else 0.75
 
-        if has_image and score <= 0:
+        if has_image and score <= 0 and not is_immutable:
             continue
         scored.append((score, fact.get("confidence", 0), fact))
 
